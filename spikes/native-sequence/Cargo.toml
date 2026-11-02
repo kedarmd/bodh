@@ -1,0 +1,19 @@
+[package]
+name = "bodh-sequence-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = ["desktop"]
+desktop = ["dep:gpui"]
+
+[dependencies]
+gpui = { version = "=0.2.2", optional = true }
+
+[[bin]]
+name = "bodh-sequence-spike"
+required-features = ["desktop"]
+
+[profile.dev]
+debug = 0
