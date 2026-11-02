@@ -221,6 +221,7 @@ fn main() {
                         .into(),
                     ),
                     focus: !diagnostic,
+                    show: !diagnostic,
                     titlebar: Some(TitlebarOptions {
                         title: Some("Bodh · native sequence spike #2".into()),
                         ..Default::default()
@@ -252,7 +253,7 @@ fn main() {
                 },
             )
             .expect("open native spike window");
-        if std::env::args().any(|arg| arg == "--profile") {
+        if diagnostic {
             profile::run(handle, cx);
         }
         cx.on_window_closed(|cx| cx.quit()).detach();

@@ -5,15 +5,20 @@ use std::time::Instant;
 pub fn run(handle: WindowHandle<Demo>, cx: &mut App) {
     let handle: AnyWindowHandle = handle.into();
     cx.defer(move |cx| {
+        handle
+            .update(cx, |_, window, _| {
+                println!("native CPU viewport: {:?}", window.viewport_size())
+            })
+            .unwrap();
         let mut slow = false;
         for active in 0..3 {
             for resize in [false, true] {
                 let mut samples = Vec::new();
                 for frame in 0..12 {
-                    handle
+                    let start = Instant::now();
+                    let clear = handle
                         .update(cx, |root, window, cx| {
                             let entity = root.downcast::<Demo>().unwrap();
-                            let start = Instant::now();
                             entity.update(cx, |view, cx| {
                                 view.active = active;
                                 if resize {
@@ -27,12 +32,13 @@ pub fn run(handle: WindowHandle<Demo>, cx: &mut App) {
                                 cx.notify();
                             });
                             window.refresh();
-                            let _ = window.draw(cx);
-                            if frame >= 2 {
-                                samples.push(start.elapsed().as_secs_f64() * 1000.);
-                            }
+                            window.draw(cx)
                         })
                         .unwrap();
+                    clear.clear();
+                    if frame >= 2 {
+                        samples.push(start.elapsed().as_secs_f64() * 1000.);
+                    }
                 }
                 samples.sort_by(f64::total_cmp);
                 let p50 = samples[samples.len() / 2];

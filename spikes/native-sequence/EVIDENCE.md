@@ -2,7 +2,7 @@
 
 ## Decision
 
-Use the small custom deterministic Rust sequence renderer for this spike. No inspected dependency qualifies as a direct replacement for the exact semantics. This does not establish a production performance budget or freeze numeric contract caps.
+The small custom deterministic Rust sequence renderer is the candidate for this spike; it is not an accepted product renderer. The initial live trial failed the interaction-performance gate. No inspected dependency qualifies as a direct replacement for the exact semantics. This does not establish a production performance budget or freeze numeric contract caps.
 
 ## Dependency comparison
 
@@ -43,7 +43,7 @@ Release layout/hit timings are measured by `examples/measure.rs`; they exclude G
 - The demo trusts handcrafted data. It is not a schema validator: empty/invalid references, alt branch cardinality, arbitrary malformed inputs and real Git diff/source mapping belong to later shared services.
 - Source is an embedded fixture pair with equal line counts. The changed-line comparison is intentionally not a rename/insertion/deletion mapper. Head/base fixture identity is explicit; there is no fabricated Git SHA.
 - Layout reserves a conservative monospace character budget rather than measuring shaped glyphs. International text, unbroken strings, font substitution and accessibility scaling need further measurement before a production text algorithm is selected.
-- All rows/elements are constructed on each render. The 1,000-row sample is not evidence that much larger flows remain interactive. Virtualization and hit-indexing remain engineering follow-ups if measurements justify them.
+- The initial renderer constructed all rows/elements on each render and tessellated full-height dashed lifelines. User feedback exposed severe lag. The follow-up caches immutable geometry and builds labels/hit targets only for the actual viewport during native prepaint, with paths clipped before tessellation. Larger-flow limits still require measurement.
 - At small window widths the minimum 260-pixel source pane leaves little diagram space; horizontal scrolling preserves geometry and hit targets. This is an observed design tradeoff, not a hidden participant cap.
 - No persistence across restarts, syntax highlighting, remote PR acquisition or production source validation is claimed by this bounded spike.
 - User reported a termination during clicking; successful interaction feedback is still pending. See the reliability record below. Do not mark the issue complete.
@@ -81,7 +81,7 @@ Vulkan reports Intel UHD Graphics (ICL GT1), Mesa 26.2.3-arch3.1, Vulkan API 1.4
 
 **User feedback received:** “The app just crashed, couldn't verify it”; last action: “I was clicking on some blocks of the sequence diagram.” The tool-owned launch exited with SIGKILL (status 137), without a Rust panic or recorded core dump. Kernel logs are not readable in this environment. The original failure has not been deterministically reproduced; neither the 1,000-step switch harness nor the thirty-click replay reproduced termination. A crash fix is therefore **not claimed**.
 
-The app was relaunched as an independent transient user service to separate application lifetime from the tool's background session:
+The initial debug app was relaunched as an independent transient user service to separate application lifetime from the tool's background session:
 
 ```sh
 systemd-run --user --unit=bodh-sequence-spike --collect \
@@ -98,3 +98,37 @@ This service remained active through subsequent clicking, flow switching, light/
 Final checks: `cargo check --locked --all-targets` passed; full desktop-enabled `cargo test --locked` passed (four behavior tests, no failures); formatting and `git diff --check` passed. No production caps, reliable large-flow input-latency guarantee or broad Linux support are inferred from these results.
 
 **Acceptance remains open:** the user could not complete interaction verification because of the reported termination. Preserve this runnable branch and reliability evidence; obtain successful interaction feedback and investigate any reproducible recurrence before treating the spike gate as satisfied.
+
+
+## Performance and visual feedback follow-up
+
+The user reported that the 1,000-step option slowed the app, and that selection and pane resizing were also laggy in the other flows. They also found the UI dated and questioned whether it represented the intended product direction. This rejects the initial interaction experience; a surviving process is not an adequate performance test.
+
+The outlined controls, monospace application chrome and technical status text are an **unapproved diagnostic harness**, not the product design system or a proposal for Bodh's finished UI. No product visual direction was accepted through this spike. A native GPUI renderer does not require this styling.
+
+Diagnosis used the new `--profile` command against the actual GPUI redraw path. The initial probe omitted per-frame arena cleanup; review caught that and both baseline/fixed runs were repeated with the same corrected harness. Preliminary figures from that first probe are superseded by the corrected results below. The corrected timer includes view state updates, native layout, text/path painting, and element arena cleanup after each draw. It does **not** measure physical input dispatch, GPU submission, compositor presentation or perceived latency. Ten samples per operation follow two warmup draws; p95 is nearest-rank (the maximum for ten samples). The 16.7 ms diagnostic reference is not a schema limit or frozen product performance promise.
+
+Confirmed causes/fixes:
+
+- A clipping mask did not prevent tessellation of offscreen dashed lifelines. Paths now cover only visible lifeline spans, retaining dash phase while scrolling; offscreen interaction paths are skipped.
+- The original view rebuilt and laid out all labels/hit regions and cloned the whole fixture flow. Immutable flow/geometry is now cached; a custom native element creates only viewport-intersecting children during prepaint. Scrolling re-evaluates the actual content mask, so it cannot keep an obsolete row-to-source map.
+- Selection/pane drag avoid invalidating the whole view for unchanged selections or clamped/subpixel width changes.
+- Reproduction now uses `cargo run --release`; debug text/layout costs are not used as a proxy for optimized interaction performance.
+
+The new public renderer-boundary regression verifies partial-row viewport intersections and original source identity at the last row. The full suite passes with five behavior tests. The Standards and Spec follow-up reviews each have zero remaining code findings after the profiling lifecycle correction.
+
+### Corrected redraw measurements
+
+Same machine, 1280×800 native CPU viewport, no concurrent compilation for the release comparison. Baseline is `8de16ba` with the corrected profiling module transplanted into a temporary package with a distinct Cargo package name; fixed is the viewport renderer. Both use the same locked dependencies and release optimization. Diagnostic windows are hidden to avoid disturbing the user's desktop; GPUI still executes the native layout/text/path painting pipeline. This measures CPU redraw preparation, not display presentation.
+
+| Flow | Release selection p50 before → after | Release pane-resize p50 before → after | Fixed selection / resize p95 |
+| --- | --- | --- | --- |
+| Ordinary 7 steps | 1.438 → 1.389 ms | 0.658 → 0.610 ms | 2.856 / 1.585 ms |
+| 120 steps | 10.238 → 1.456 ms | 9.582 → 0.515 ms | 2.279 / 0.576 ms |
+| 1,000 steps | 93.785 → 1.458 ms | 91.774 → 0.595 ms | 2.110 / 0.821 ms |
+
+Raw release runs: [before](evidence/redraw-before-release.txt), [after](evidence/redraw-after-release.txt). The same optimized build still exceeded the diagnostic budget for the original 1,000-step renderer, so release optimization alone was insufficient; viewport-bounded work is necessary. Conversely, the small flow's source selection was already fast in release: the initial debug launch contributed substantially to its perceived lag.
+
+Corrected debug runs ([before](evidence/redraw-before-debug.txt), [after](evidence/redraw-after-debug.txt)) were taken during concurrent release compilation and are not controlled latency comparisons. They show the scaling problem but should not be mixed with the final optimized timings. Earlier commentary with preliminary figures is superseded by the corrected release comparison above.
+
+The optimized viewport renderer was relaunched as `bodh-sequence-spike.service` using `target/release/bodh-sequence-spike`; a fresh [native render capture](evidence/viewport-renderer.png) confirms the ordinary diagram/source layout remains intact. The service's fresh observed memory was about 154 MiB current / 158 MiB peak, a point observation rather than a long-run memory guarantee. The user has been asked to retry selection, pane dragging and the 1,000-step flow. That live acceptance, native scrolling/hit-testing after virtualization, and any recurrence of the earlier termination remain open. The dated visual treatment is recorded as rejected/unapproved and has not been promoted to a product design direction.
