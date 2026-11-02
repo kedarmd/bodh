@@ -1,12 +1,27 @@
 use bodh_sequence_spike::{Flow, Kind, SOURCE, Scene, demo, stress};
 use gpui::{prelude::*, *};
 
+struct FlowState {
+    flow: Flow,
+    selected: usize,
+    scroll: ScrollHandle,
+    inspector_scroll: ScrollHandle,
+}
+
+impl FlowState {
+    fn new(flow: Flow) -> Self {
+        Self {
+            flow,
+            selected: 0,
+            scroll: ScrollHandle::new(),
+            inspector_scroll: ScrollHandle::new(),
+        }
+    }
+}
+
 struct Demo {
-    flows: Vec<Flow>,
+    flows: Vec<FlowState>,
     active: usize,
-    selected: Vec<usize>,
-    scroll: Vec<ScrollHandle>,
-    inspector_scroll: Vec<ScrollHandle>,
     dark: bool,
     inspector_width: f32,
     dragging: bool,
@@ -23,9 +38,9 @@ struct Palette {
 }
 impl Demo {
     fn reveal(&self) {
-        let scene = Scene::layout(&self.flows[self.active]);
-        let row = &scene.rows[self.selected[self.active]];
-        self.scroll[self.active].set_offset(point(
+        let scene = Scene::layout(&self.flows[self.active].flow);
+        let row = &scene.rows[self.flows[self.active].selected];
+        self.flows[self.active].scroll.set_offset(point(
             px(-(row.rect.x - 40.).max(0.)),
             px(-(row.rect.y - 90.).max(0.)),
         ));
@@ -50,8 +65,10 @@ impl Demo {
         }
     }
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.selected[self.active] = index;
-        self.inspector_scroll[self.active].set_offset(point(px(0.), px(0.)));
+        self.flows[self.active].selected = index;
+        self.flows[self.active]
+            .inspector_scroll
+            .set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 }
@@ -82,9 +99,13 @@ fn stroke(
 impl Render for Demo {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = self.palette();
-        let flow = &self.flows[self.active];
+        let inspector_width = self.inspector_width.clamp(
+            260.,
+            (f32::from(_window.viewport_size().width) * 0.7).max(260.),
+        );
+        let flow = &self.flows[self.active].flow;
         let scene = Scene::layout(flow);
-        let selected = self.selected[self.active];
+        let selected = self.flows[self.active].selected;
         let interactions = flow.interactions();
         let source = interactions[selected].source.clone();
         let explanation = interactions[selected].explanation.clone();
@@ -261,7 +282,7 @@ impl Render for Demo {
                         palette.muted
                     }))
                     .cursor_pointer()
-                    .child(flow.title.clone())
+                    .child(flow.flow.title.clone())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.active = index;
                         window.focus(&this.focus);
@@ -284,8 +305,8 @@ impl Render for Demo {
         );
         div().id("spike").track_focus(&self.focus).size_full().flex().flex_col().bg(rgb(palette.bg)).text_color(rgb(palette.text)).font_family("DejaVu Sans Mono").text_size(px(14.))
             .on_key_down(cx.listener(|this,event: &KeyDownEvent,window,cx| {
-                let count = this.flows[this.active].interactions().len();
-                let current = this.selected[this.active];
+                let count = this.flows[this.active].flow.interactions().len();
+                let current = this.flows[this.active].selected;
                 match event.keystroke.key.as_str() {
                     "down" | "right" => {this.select((current+1)%count,cx);this.reveal();},
                     "up" | "left" => {this.select((current+count-1)%count,cx);this.reveal();},
@@ -307,19 +328,19 @@ impl Render for Demo {
             .child(toolbar)
             .child(div().p_2().text_color(rgb(palette.muted)).child("DISPOSABLE SPIKE · Click / arrows: source · Tab: flow · T: theme · Drag divider / [ ]: pane width"))
             .child(div().flex().flex_1().min_h_0().overflow_hidden()
-                .child(div().id(("diagram-scroll",self.active)).track_scroll(&self.scroll[self.active]).overflow_scroll().flex_1().min_w_0().h_full().child(diagram))
+                .child(div().id(("diagram-scroll",self.active)).track_scroll(&self.flows[self.active].scroll).overflow_scroll().flex_1().min_w_0().h_full().child(diagram))
                 .child(div().id("divider").w(px(8.)).h_full().flex_shrink_0().bg(rgb(palette.muted)).cursor_col_resize().on_mouse_down(MouseButton::Left,cx.listener(|this,_,_,_|this.dragging=true)))
-                .child(div().id(("inspector",self.active)).track_scroll(&self.inspector_scroll[self.active]).w(px(self.inspector_width)).h_full().flex_shrink_0().overflow_scroll().bg(rgb(palette.panel)).p_3()
+                .child(div().id(("inspector",self.active)).track_scroll(&self.flows[self.active].inspector_scroll).w(px(inspector_width)).h_full().flex_shrink_0().overflow_scroll().bg(rgb(palette.panel)).p_3()
                     .child(div().mb_2().child(format!("Pinned fixture · review.rs:{}–{}",source.start,source.end)))
-                    .child(div().mb_2().child(explanation))
                     .child(div().mb_2().text_color(rgb(palette.muted)).child("Embedded at compile time · head fixture · line 14 changed"))
-                    .children(SOURCE.lines().enumerate().map(|(index,line)| {
+                    .children(SOURCE.lines().enumerate().filter(|(index,_)| (source.start.saturating_sub(3)..source.end+2).contains(index)).map(|(index,line)| {
                         let relevant = (source.start..=source.end).contains(&(index+1));
                         div().flex().min_w(px(640.)).border_l_2().border_color(if relevant {rgb(palette.text).into()} else {transparent_black()})
                             .bg(rgb(if relevant {palette.bg} else {palette.panel}))
                             .child(div().w(px(40.)).flex_shrink_0().text_color(rgb(palette.muted)).child(format!("{:>3}",index+1)))
                             .child(div().whitespace_nowrap().child(line.to_string()))
-                    }))))
+                    }))
+                    .child(div().mt_3().child(explanation))))
             .child(div().p_2().border_t_1().child(format!("Selected {} · {} · {} × {} logical px · [changed] + heavy stroke = direct diff intersection",selected+1,if self.focus.is_focused(_window) {"keyboard focus"} else {"pointer focus"},scene.width,scene.height)))
     }
 }
@@ -345,11 +366,11 @@ fn main() {
                     let focus = cx.focus_handle();
                     window.focus(&focus);
                     Demo {
-                        flows: vec![demo(), stress(12, 120), stress(24, 1000)],
+                        flows: vec![demo(), stress(12, 120), stress(24, 1000)]
+                            .into_iter()
+                            .map(FlowState::new)
+                            .collect(),
                         active: 0,
-                        selected: vec![0; 3],
-                        scroll: (0..3).map(|_| ScrollHandle::new()).collect(),
-                        inspector_scroll: (0..3).map(|_| ScrollHandle::new()).collect(),
                         dark: true,
                         inspector_width: 420.,
                         dragging: false,

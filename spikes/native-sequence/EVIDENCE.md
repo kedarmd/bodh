@@ -46,4 +46,55 @@ Release layout/hit timings are measured by `examples/measure.rs`; they exclude G
 - All rows/elements are constructed on each render. The 1,000-row sample is not evidence that much larger flows remain interactive. Virtualization and hit-indexing remain engineering follow-ups if measurements justify them.
 - At small window widths the minimum 260-pixel source pane leaves little diagram space; horizontal scrolling preserves geometry and hit targets. This is an observed design tradeoff, not a hidden participant cap.
 - No persistence across restarts, syntax highlighting, remote PR acquisition or production source validation is claimed by this bounded spike.
-- User feedback on the demonstrated interactions is pending. Do not mark the issue complete until it is recorded.
+- User reported a termination during clicking; successful interaction feedback is still pending. See the reliability record below. Do not mark the issue complete.
+
+## Release measurement run
+
+Single release run on the environment above, while the first desktop build was compiling (not a statistically controlled benchmark):
+
+| Participants / steps | Scene logical pixels | Layout | Exhaustive row hit checks |
+| --- | --- | --- | --- |
+| 3 / 7 long-label steps | 840 × 1,516 | 2.679 μs | 465 ns |
+| 12 / 120 | 3,000 × 25,122 | 6.468 μs | 13.741 μs |
+| 24 / 1,000 | 5,880 × 213,366 | 65.323 μs | 729.214 μs |
+| 48 / 10,000 | 11,640 × 2,155,994 | 895.199 μs | 80.081 ms |
+
+The 10,000-step result illustrates that fast geometry allocation does not imply fast exhaustive querying or practical GUI rendering. It is a core measurement only; that size is not offered as a GUI fixture or asserted as a supported limit.
+
+## Code review
+
+Reviewed against starting commit `7f19442` using separate Standards and Spec review agents.
+
+### Standards
+
+No documented-standard violations. One initial Data Clumps heuristic (parallel per-flow vectors) was fixed by grouping selection and scroll handles with their flow. Follow-up: zero remaining findings.
+
+### Spec
+
+Two initial findings: retained inspector width could exceed a resized viewport; resetting inspector scroll could hide selected lines. Fixed by clamping effective width on every render and placing the selected source excerpt before explanation. Follow-up: zero remaining code findings. Native visual verification and human interaction feedback are separate acceptance work.
+
+## Native observations and reliability feedback
+
+Live GPUI/Wayland rendering was inspected at 1280×800, the compositor's tiled 947×1016, and a floating 640×480. Captures: [dark selected](evidence/dark-selected.png), [light selected](evidence/light-selected.png), [120-step stress](evidence/stress-120.png), [640×480 resize](evidence/resize-640.png). These are real native window crops, not generated mockups. Long labels wrap above their arrows; neutral conditional frames remain independent of changed/selected interactions. The smallest capture deliberately shows horizontal clipping of the scrollable diagram and source, while keeping the selected source range visible. Pane resizing retains its width preference but clamps its effective width to the current viewport.
+
+Vulkan reports Intel UHD Graphics (ICL GT1), Mesa 26.2.3-arch3.1, Vulkan API 1.4.354. The direct native flow-switch harness delivered two Tab events (logged flow 0 then flow 1) and kept the 1,000-step flow alive for ten seconds at about 96 MiB peak process RSS. Thirty native mouse clicks on the ordinary flow selected different interaction blocks and left the app alive with the expected source excerpt. These are smoke observations, not latency or comprehensive navigation tests. A separate attempted smoke run did not deliver both focus events and was rejected as inconclusive rather than counted as passing.
+
+**User feedback received:** “The app just crashed, couldn't verify it”; last action: “I was clicking on some blocks of the sequence diagram.” The tool-owned launch exited with SIGKILL (status 137), without a Rust panic or recorded core dump. Kernel logs are not readable in this environment. The original failure has not been deterministically reproduced; neither the 1,000-step switch harness nor the thirty-click replay reproduced termination. A crash fix is therefore **not claimed**.
+
+The app was relaunched as an independent transient user service to separate application lifetime from the tool's background session:
+
+```sh
+systemd-run --user --unit=bodh-sequence-spike --collect \
+  --working-directory="$PWD/spikes/native-sequence" \
+  "$PWD/spikes/native-sequence/target/debug/bodh-sequence-spike"
+systemctl --user status bodh-sequence-spike
+journalctl --user -u bodh-sequence-spike --no-pager
+# To stop the demonstration:
+systemctl --user stop bodh-sequence-spike
+```
+
+This service remained active through subsequent clicking, flow switching, light/dark changes and window resizing. Observed service cgroup memory was approximately 244 MiB current and 1.04 GiB peak (includes GPU/driver allocations and is distinct from process RSS). Moving the launch outside the tool session is a diagnostic isolation step, not proof that the app caused or fixed the prior SIGKILL.
+
+Final checks: `cargo check --locked --all-targets` passed; full desktop-enabled `cargo test --locked` passed (four behavior tests, no failures); formatting and `git diff --check` passed. No production caps, reliable large-flow input-latency guarantee or broad Linux support are inferred from these results.
+
+**Acceptance remains open:** the user could not complete interaction verification because of the reported termination. Preserve this runnable branch and reliability evidence; obtain successful interaction feedback and investigate any reproducible recurrence before treating the spike gate as satisfied.

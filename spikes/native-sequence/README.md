@@ -30,4 +30,4 @@ cargo check --locked --manifest-path spikes/native-sequence/Cargo.toml --all-tar
 cargo test --locked --manifest-path spikes/native-sequence/Cargo.toml
 ```
 
-Feedback requested on the running demonstration: can you distinguish changed, selected and supporting interactions; does selecting a return/self-call show the expected source; does switching flows/resizing preserve your place? Record observed problems against these interactions rather than reopening the approved product scope. User feedback remains an acceptance gate until received.
+Feedback requested on the running demonstration: can you distinguish changed, selected and supporting interactions; does selecting a return/self-call show the expected source; does switching flows/resizing preserve your place? Record observed problems against these interactions rather than reopening the approved product scope. The first user trial reported a termination during clicking; successful interaction feedback and reliability acceptance remain open. See the evidence report for diagnostic results and the independent service launch.
