@@ -80,6 +80,12 @@ pub struct Rect {
     pub h: f32,
 }
 impl Rect {
+    pub fn intersects(&self, other: Rect) -> bool {
+        self.x < other.x + other.w
+            && other.x < self.x + self.w
+            && self.y < other.y + other.h
+            && other.y < self.y + self.h
+    }
     pub fn contains(&self, x: f32, y: f32) -> bool {
         x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
     }
@@ -195,6 +201,15 @@ impl Scene {
         });
         *index += 1;
         *y += h + 12.;
+    }
+    pub fn visible_rows(&self, viewport: Rect) -> impl Iterator<Item = &Row> {
+        let start = self
+            .rows
+            .partition_point(|r| r.rect.y + r.rect.h <= viewport.y);
+        self.rows[start..]
+            .iter()
+            .take_while(move |r| r.rect.y < viewport.y + viewport.h)
+            .filter(move |r| r.rect.intersects(viewport))
     }
     pub fn hit(&self, x: f32, y: f32) -> Option<usize> {
         self.rows

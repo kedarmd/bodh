@@ -80,3 +80,27 @@ fn self_call_on_the_last_participant_stays_inside_the_scrollable_scene() {
     let row = scene.rows.last().unwrap();
     assert!(row.rect.x + row.rect.w <= scene.width);
 }
+
+#[test]
+fn viewport_culling_keeps_partial_rows_and_original_source_identity() {
+    use bodh_sequence_spike::{Rect, stress};
+    let flow = stress(12, 120);
+    let scene = Scene::layout(&flow);
+    let visible: Vec<_> = scene
+        .visible_rows(Rect {
+            x: 0.,
+            y: 90.,
+            w: 840.,
+            h: 400.,
+        })
+        .map(|r| r.interaction)
+        .collect();
+    assert_eq!(visible, [0, 1]);
+    let last = scene.rows.last().unwrap();
+    let visible: Vec<_> = scene
+        .visible_rows(last.rect)
+        .map(|r| r.interaction)
+        .collect();
+    assert_eq!(visible, [119]);
+    assert_eq!(flow.interactions()[119].source.start, 17);
+}
