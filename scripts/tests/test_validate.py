@@ -40,7 +40,8 @@ class ValidationRunnerTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
         subprocess.run(
             ["git", "-C", str(self.root), "-c", "user.name=Runner test", "-c",
-             "user.email=runner@example.invalid", "commit", "-q", "--allow-empty", "-m", "fixture"],
+             "user.email=runner@example.invalid", "-c", "commit.gpgsign=false", "-c",
+             "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty", "-m", "fixture"],
             check=True,
         )
 

@@ -31,7 +31,7 @@ For GUI automation, use a dedicated graphical session when available. Validate t
 
 ## Performance evidence
 
-Use `./scripts/validate profile` in the recorded Linux graphical environment. The diagnostic reports a viewport and per-flow selection/resize samples. Its frame-budget result is diagnostic output, not a CI assertion or a frozen product/data-size limit; exceeding it currently does not change the process exit code.
+Use `./scripts/validate profile` in the recorded Linux graphical environment. The diagnostic reports its viewport, fixture names, participant/interaction counts, warmup/sample counts and per-flow selection/resize timings. Its frame-budget result is diagnostic output, not a CI assertion or a frozen product/data-size limit; exceeding it currently does not change the process exit code.
 
 Distinguish three measurements:
 

@@ -12,6 +12,18 @@ pub fn run(handle: WindowHandle<Demo>, cx: &mut App) {
             .unwrap();
         let mut slow = false;
         for active in 0..3 {
+            handle
+                .update(cx, |root, _, cx| {
+                    let entity = root.downcast::<Demo>().unwrap();
+                    let flow = &entity.read(cx).flows[active];
+                    println!(
+                        "workload flow={active} title={:?} participants={} interactions={} warmup=2 samples=10",
+                        flow.flow.title,
+                        flow.flow.participants.len(),
+                        flow.scene.rows.len(),
+                    );
+                })
+                .unwrap();
             for resize in [false, true] {
                 let mut samples = Vec::new();
                 for frame in 0..12 {
