@@ -5,3 +5,6 @@ docs/
 
 # Python runner regression tests
 __pycache__/
+
+# Application build output
+/target/

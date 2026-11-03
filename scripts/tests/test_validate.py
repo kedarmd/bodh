@@ -64,11 +64,11 @@ class ValidationRunnerTests(unittest.TestCase):
         result = self.run_mode()
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = self.cargo_commands()
-        self.assertEqual([args[0] for _, args, _ in commands], ["fmt", "check", "clippy", "test"])
-        for _, args, cwd in commands:
+        self.assertEqual([args[0] for _, args, _ in commands], ["fmt", "check", "clippy", "test", "fmt", "check", "clippy", "test"])
+        for index, (_, args, cwd) in enumerate(commands):
             self.assertEqual(cwd, str(self.root))
             self.assertEqual(args[args.index("--manifest-path") + 1],
-                             str(self.root / "spikes/native-sequence/Cargo.toml"))
+                             str(self.root / ("Cargo.toml" if index < 4 else "spikes/native-sequence/Cargo.toml")))
         self.assertIn("Working tree: dirty", result.stdout)
 
     def test_failed_lint_stops_before_tests(self):
@@ -83,7 +83,7 @@ class ValidationRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = self.cargo_commands()
         self.assertEqual([args[0] for _, args, _ in commands],
-                         ["fmt", "check", "clippy", "test", "check", "clippy", "test"])
+                         ["fmt", "check", "clippy", "test", "fmt", "check", "clippy", "test", "check", "clippy", "test"])
         self.assertNotIn("--no-default-features", commands[-1][1])
 
     def test_gui_and_profile_use_locked_release_cargo_run_even_on_failure(self):

@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "context": {
+    "pr": {
+      "host": "github.com",
+      "owner": "example",
+      "repository": "demo",
+      "number": 7
+    },
+    "context_id": "fixture",
+    "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "merge_base_sha": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "overview": {
+    "implementation_summary": "No semantic assertions yet",
+    "key_changes": [],
+    "intent_assessments": []
+  },
+  "diagrams": [],
+  "findings": [],
+  "follow_up": [],
+  "coverage": {
+    "examined_areas": [],
+    "checks": [],
+    "excluded_areas": [],
+    "limitations": []
+  }
+}

@@ -36,7 +36,8 @@ fi
 printf 'System: '; uname -srm
 rustc --version
 cargo --version
-printf 'Cargo target: %s\n' "${CARGO_TARGET_DIR:-$repo_root/spikes/native-sequence/target}"
+printf 'Application Cargo target: %s\n' "${CARGO_TARGET_DIR:-$repo_root/target}"
+printf 'Spike Cargo target: %s\n' "${CARGO_TARGET_DIR:-$repo_root/spikes/native-sequence/target}"
 
 case "$mode" in
   core|desktop)
@@ -44,6 +45,10 @@ case "$mode" in
     python3 -m unittest discover -s scripts/tests -v
     python3 -m unittest discover -s spikes/pr-capabilities -v
     python3 -m py_compile spikes/pr-capabilities/harness.py
+    cargo fmt --manifest-path "$repo_root/Cargo.toml" --all --check
+    cargo check --locked --manifest-path "$repo_root/Cargo.toml" --all-targets
+    cargo clippy --locked --manifest-path "$repo_root/Cargo.toml" --all-targets -- -D warnings
+    cargo test --locked --manifest-path "$repo_root/Cargo.toml"
     cargo fmt --manifest-path "$manifest" --all --check
     cargo check --locked --manifest-path "$manifest" --no-default-features --all-targets
     cargo clippy --locked --manifest-path "$manifest" --no-default-features --all-targets -- -D warnings
