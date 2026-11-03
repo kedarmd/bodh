@@ -172,6 +172,7 @@ def local_trial(root):
     git(fork, 'config', 'user.email', 'fixture@example.invalid')
     (fork / 'edit.txt').write_bytes(b'one\nnew\nthree\n' + b'unchanged\n' * 12)
     (fork / 'rename.txt').rename(fork / 'renamed.txt')
+    (fork / 'renamed.txt').write_bytes(b'rename content\nchanged content\n' + b'rename content\n' * 6)
     (fork / 'deleted.txt').unlink()
     (fork / 'added.txt').write_bytes(b'new file\n')
     (fork / 'crlf.txt').write_bytes(b'new\r\nline\r\n')
@@ -261,6 +262,8 @@ def discussions(query):
                 if not cursor or cursor in seen:
                     raise ValueError('missing or repeated pagination cursor')
                 seen.add(cursor)
+        except subprocess.TimeoutExpired:
+            error = 'request timeout; connection incomplete'
         except (RuntimeError, ValueError, KeyError, TypeError) as exc:
             error = str(exc)
         ids = [node['id'] for node in nodes if node is not None]

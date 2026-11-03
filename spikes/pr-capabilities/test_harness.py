@@ -1,5 +1,6 @@
 """Behavior checks at the spike's acquisition and discussion boundaries."""
 import tempfile
+import subprocess
 from pathlib import Path
 import unittest
 import harness
@@ -18,6 +19,10 @@ class AcquisitionTests(unittest.TestCase):
         self.assertIn({'old': 2, 'new': None, 'kind': 'delete'}, anchors['edit.txt']['lines'])
         self.assertIn({'old': None, 'new': 2, 'kind': 'add'}, anchors['edit.txt']['lines'])
         self.assertEqual(anchors['renamed.txt']['old_path'], 'rename.txt')
+        self.assertIn({'old': 2, 'new': None, 'kind': 'delete'}, anchors['renamed.txt']['lines'])
+        self.assertIn({'old': None, 'new': 2, 'kind': 'add'}, anchors['renamed.txt']['lines'])
+        self.assertTrue(harness.eligible(anchors['renamed.txt'], 'old', 1, 3))
+        self.assertTrue(harness.eligible(anchors['renamed.txt'], 'new', 1, 3, suggestion=True))
         self.assertEqual(anchors['binary.bin']['unsupported'], 'binary')
         self.assertEqual(anchors['module']['unsupported'], 'submodule')
         self.assertTrue(report['crlf_preserved'])
@@ -40,6 +45,22 @@ class DiscussionTests(unittest.TestCase):
         self.assertTrue(result['complete'])
         self.assertEqual([c['id'] for c in result['threads'][1]['comments']], ['T2C1', 'T2C2'])
         self.assertEqual(len(calls), 6)
+
+    def test_timeout_retains_preceding_page_and_identifies_incomplete_connection(self):
+        def query(kind, cursor, thread=None):
+            if cursor is not None:
+                raise subprocess.TimeoutExpired('gh', 120)
+            if kind == 'comments':
+                return {'nodes': [], 'totalCount': 0,
+                        'pageInfo': {'hasNextPage': False, 'endCursor': None}}
+            return {'nodes': [{'id': 'T1'}], 'totalCount': 2,
+                    'pageInfo': {'hasNextPage': True, 'endCursor': 'next'}}
+        result = harness.discussions(query)
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['threads'][0]['id'], 'T1')
+        self.assertEqual(result['connections'][0]['fetched'], 1)
+        self.assertEqual(result['connections'][0]['expected'], 2)
+        self.assertIn('timeout', result['connections'][0]['error'])
 
     def test_reports_partial_data_and_cursor_failure_without_claiming_complete(self):
         def query(kind, cursor, thread=None):

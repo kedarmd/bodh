@@ -19,7 +19,7 @@
       "before": {
         "head": "d578ead39c07329eaf5998f9c49780765a274b52",
         "branch": "refs/heads/main",
-        "index": "6ae4510c056790a823ca59096b20c118f4fea3f858af0d86b17ec7cae794abbf",
+        "index": "36f3df8f6d7d5b390adbfb71ada13a28f4bfa6594705582d0654ac05e4f81045",
         "files": {
           "binary.bin": [
             33188,
@@ -54,7 +54,7 @@
       "success": {
         "head": "d578ead39c07329eaf5998f9c49780765a274b52",
         "branch": "refs/heads/main",
-        "index": "6ae4510c056790a823ca59096b20c118f4fea3f858af0d86b17ec7cae794abbf",
+        "index": "36f3df8f6d7d5b390adbfb71ada13a28f4bfa6594705582d0654ac05e4f81045",
         "files": {
           "binary.bin": [
             33188,
@@ -89,7 +89,7 @@
       "failure": {
         "head": "d578ead39c07329eaf5998f9c49780765a274b52",
         "branch": "refs/heads/main",
-        "index": "6ae4510c056790a823ca59096b20c118f4fea3f858af0d86b17ec7cae794abbf",
+        "index": "36f3df8f6d7d5b390adbfb71ada13a28f4bfa6594705582d0654ac05e4f81045",
         "files": {
           "binary.bin": [
             33188,
@@ -124,7 +124,7 @@
       "cancelled": {
         "head": "d578ead39c07329eaf5998f9c49780765a274b52",
         "branch": "refs/heads/main",
-        "index": "6ae4510c056790a823ca59096b20c118f4fea3f858af0d86b17ec7cae794abbf",
+        "index": "36f3df8f6d7d5b390adbfb71ada13a28f4bfa6594705582d0654ac05e4f81045",
         "files": {
           "binary.bin": [
             33188,
@@ -159,10 +159,10 @@
     },
     "missing_before": true,
     "base": "2c9caf4c9dec3aaf1e032965f7e78f27b260bca0",
-    "head": "2906f42964e2281a510025ff887b3e6eb43dd6e4",
+    "head": "44eeb22c1609bfcd11e24441a0dd38a2aa133840",
     "merge_base": "d578ead39c07329eaf5998f9c49780765a274b52",
     "source_base": "d578ead39c07329eaf5998f9c49780765a274b52",
-    "context": "4167aa7dde9c46e893e34fbcfbbaf57b81d89654103d80e3665aadcafb33ebd8",
+    "context": "f676c84ffdf814a35cce5a8cb07a9addad90189ae5966c1f58acf4c238164b8c",
     "deterministic": true,
     "crlf_preserved": true,
     "missing_newline_preserved": true,
@@ -281,9 +281,40 @@
       },
       "renamed.txt": {
         "old_path": "rename.txt",
-        "status": "R100",
+        "status": "R086",
         "unsupported": null,
-        "lines": []
+        "lines": [
+          {
+            "old": 1,
+            "new": 1,
+            "kind": "context"
+          },
+          {
+            "old": 2,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 2,
+            "kind": "add"
+          },
+          {
+            "old": 3,
+            "new": 3,
+            "kind": "context"
+          },
+          {
+            "old": 4,
+            "new": 4,
+            "kind": "context"
+          },
+          {
+            "old": 5,
+            "new": 5,
+            "kind": "context"
+          }
+        ]
       }
     }
   },
