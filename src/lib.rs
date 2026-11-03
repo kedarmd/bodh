@@ -14,6 +14,10 @@ pub struct ContractError {
     pub code: String,
     pub message: String,
     pub pointer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
 }
 impl ContractError {
     pub fn new(code: &str, message: &str, pointer: &str) -> Self {
@@ -21,12 +25,15 @@ impl ContractError {
             code: code.into(),
             message: message.into(),
             pointer: pointer.into(),
+            line: None,
+            column: None,
         }
     }
 }
 
 pub fn schema() -> Value {
-    let mut schema = serde_json::to_value(schemars::schema_for!(ReviewResult)).expect("schema serializes");
+    let mut schema =
+        serde_json::to_value(schemars::schema_for!(ReviewResult)).expect("schema serializes");
     bound_schema(&mut schema);
     schema
 }
@@ -39,8 +46,23 @@ pub fn validate_structure(input: &[u8]) -> Result<ReviewResult, ContractError> {
             "",
         ));
     }
-    let value: Value = serde_json::from_slice(input)
-        .map_err(|_| ContractError::new("MALFORMED_JSON", "Expected one JSON document", ""))?;
+    let value: Value = serde_json::from_slice(input).map_err(|error| {
+        let mut failure = ContractError::new("MALFORMED_JSON", "Expected one JSON document", "");
+        failure.line = Some(error.line());
+        failure.column = Some(error.column());
+        failure
+    })?;
+    if value
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .is_some_and(|v| v != "1.0")
+    {
+        return Err(ContractError::new(
+            "UNSUPPORTED_SCHEMA_VERSION",
+            "Supported schema version is 1.0",
+            "/schema_version",
+        ));
+    }
     let validator = jsonschema::validator_for(&schema()).expect("generated schema compiles");
     if let Err(error) = validator.validate(&value) {
         return Err(ContractError::new(
@@ -65,36 +87,61 @@ pub fn describe() -> Value {
 fn bound_schema(value: &mut Value) {
     match value {
         Value::Object(object) => {
-            if object.get("type").is_some_and(|t| t == "string" || t.as_array().is_some_and(|a| a.iter().any(|v| v == "string"))) {
+            if object.get("type").is_some_and(|t| {
+                t == "string"
+                    || t.as_array()
+                        .is_some_and(|a| a.iter().any(|v| v == "string"))
+            }) {
                 object.insert("maxLength".into(), json!(MAX_STRING_CHARS));
             }
             if object.get("type").is_some_and(|t| t == "array") {
                 object.insert("maxItems".into(), json!(MAX_COLLECTION_ITEMS));
             }
-            for child in object.values_mut() { bound_schema(child); }
+            for child in object.values_mut() {
+                bound_schema(child);
+            }
         }
-        Value::Array(array) => for child in array { bound_schema(child); },
+        Value::Array(array) => {
+            for child in array {
+                bound_schema(child);
+            }
+        }
         _ => (),
     }
 }
 
 fn bounded_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     let text = <String as serde::Deserialize>::deserialize(d)?;
-    if text.chars().count() > MAX_STRING_CHARS { return Err(serde::de::Error::custom("string exceeds character limit")); }
+    if text.chars().count() > MAX_STRING_CHARS {
+        return Err(serde::de::Error::custom("string exceeds character limit"));
+    }
     Ok(text)
 }
-fn bounded_list<'de, T: serde::Deserialize<'de>, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<T>, D::Error> {
+fn bounded_list<'de, T: serde::Deserialize<'de>, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<T>, D::Error> {
     let list = <Vec<T> as serde::Deserialize>::deserialize(d)?;
-    if list.len() > MAX_COLLECTION_ITEMS { return Err(serde::de::Error::custom("collection exceeds item limit")); }
+    if list.len() > MAX_COLLECTION_ITEMS {
+        return Err(serde::de::Error::custom("collection exceeds item limit"));
+    }
     Ok(list)
 }
 fn bounded_text_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
     let list: Vec<String> = bounded_list(d)?;
-    if list.iter().any(|s| s.chars().count() > MAX_STRING_CHARS) { return Err(serde::de::Error::custom("string exceeds character limit")); }
+    if list.iter().any(|s| s.chars().count() > MAX_STRING_CHARS) {
+        return Err(serde::de::Error::custom("string exceeds character limit"));
+    }
     Ok(list)
 }
-fn bounded_optional_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+fn bounded_optional_text<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<String>, D::Error> {
     let text = <Option<String> as serde::Deserialize>::deserialize(d)?;
-    if text.as_ref().is_some_and(|s| s.chars().count() > MAX_STRING_CHARS) { return Err(serde::de::Error::custom("string exceeds character limit")); }
+    if text
+        .as_ref()
+        .is_some_and(|s| s.chars().count() > MAX_STRING_CHARS)
+    {
+        return Err(serde::de::Error::custom("string exceeds character limit"));
+    }
     Ok(text)
 }
