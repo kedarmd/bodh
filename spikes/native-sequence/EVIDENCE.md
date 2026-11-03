@@ -139,3 +139,8 @@ The optimized viewport renderer was relaunched as `bodh-sequence-spike.service` 
 The user subsequently reported: “its much much better. The selection and resizing felt smooth, did not experience any lag or crashes.” This supplies successful live feedback for selection/resizing responsiveness and records no crash during that trial. It does not establish the root cause of the original SIGKILL or a general crash-free guarantee. The earlier failed trials remain in the record.
 
 The interaction-performance feedback gate is satisfied for the optimized build. Explicit native scrolling/hit-testing verification after virtualization remains a separate QA item; product visual design remains unapproved and outside this diagnostic UI's acceptance.
+
+
+### Final spike acceptance
+
+The user confirmed completion of the remaining native scrolling QA after the checklist covering partial rows, horizontal scrolling and source selection after flow switching was presented. Together with the successful smooth-selection/resizing trial, this completes issue #2's bounded feasibility acceptance. Preserve the runnable spike branch and measured limitations. The original SIGKILL root cause remains unproven, and the diagnostic visual styling remains unapproved for the product.
