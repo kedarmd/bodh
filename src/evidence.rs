@@ -71,6 +71,17 @@ pub fn validate_evidence(
     control: &OperationControl,
 ) -> Result<ReviewResult, ContractError> {
     let result = crate::validate_structure(input)?;
+    if prepared
+        .original_description
+        .as_ref()
+        .is_some_and(|text| text.chars().count() > crate::MAX_STRING_CHARS)
+    {
+        return Err(ContractError::new(
+            "PREPARED_CONTEXT_INVALID",
+            "Original description exceeds the supported character bound",
+            "/original_description",
+        ));
+    }
     if result.context != prepared.context {
         return Err(ContractError::new(
             "CONTEXT_MISMATCH",
@@ -318,8 +329,11 @@ fn git(
             let _ = err.join();
             return Err(failure);
         }
-        if completed.is_some() && out.is_finished() && err.is_finished() {
-            break completed.expect("completed status");
+        if let Some(status) = completed
+            && out.is_finished()
+            && err.is_finished()
+        {
+            break status;
         }
         match child.try_wait() {
             Ok(Some(status)) => completed = Some(status),
