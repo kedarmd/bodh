@@ -1,5 +1,7 @@
 //! Shared headless review contract. Structural validation does not certify evidence.
+mod diff;
 mod evidence;
+pub use diff::*;
 mod findings;
 pub use findings::*;
 mod model;

@@ -157,3 +157,63 @@ fn scoped_finding_and_suggestion_ids_and_overview_relationships_resolve_before_u
     alternatives["findings"][0]["suggestions"] = json!([comment.clone(), comment]);
     assert_eq!(f.validate(&alternatives).unwrap_err().code, "ID_DUPLICATE");
 }
+#[test]
+fn inline_comments_use_exact_old_new_hunks_while_unchanged_source_remains_readable() {
+    let f = Fixture::new();
+    let v = f.result();
+    let before = f.snapshot();
+    for revision in ["head", "base"] {
+        let mut good = v.clone();
+        good["findings"][0]["suggestions"] = json!([{"kind":"text_comment","id":"comment","body":"Keep the draft","source":source("source.txt",revision,1,3)}]);
+        f.validate(&good).unwrap();
+    }
+    let mut bad = v.clone();
+    bad["findings"][0]["suggestions"] = json!([{"kind":"text_comment","id":"comment","body":"Keep the draft","source":source("source.txt","head",20,20)}]);
+    assert_eq!(f.validate(&bad).unwrap_err().code, "INLINE_ANCHOR_INVALID");
+    let index =
+        bodh::diff_index(&f.repo, &f.prepared.context, &OperationControl::default()).unwrap();
+    assert_eq!(index.files.len(), 1);
+    assert_eq!(index.files[0].old_path.as_deref(), Some("source.txt"));
+    assert_eq!(index.files[0].new_path.as_deref(), Some("source.txt"));
+    assert_eq!(
+        index.files[0].hunks,
+        vec![bodh::DiffHunk {
+            old_start: 1,
+            old_lines: 5,
+            new_start: 1,
+            new_lines: 5
+        }]
+    );
+    assert_eq!(f.snapshot(), before);
+}
+#[test]
+fn replacements_require_head_hunk_spans_and_byte_exact_original_lines() {
+    let f = Fixture::new();
+    let v = f.result();
+    let mut good = v.clone();
+    good["findings"][0]["suggestions"] = json!([{"kind":"code_replacement","id":"fix","body":"Retain drafts until confirmed","source":source("source.txt","head",1,3),"original_text":"old 1\nnew 2\nold 3\n","replacement":"replacement\n"}]);
+    f.validate(&good).unwrap();
+    for (pointer, value, code) in [
+        (
+            "/findings/0/suggestions/0/source/revision",
+            json!("base"),
+            "REPLACEMENT_SIDE_INVALID",
+        ),
+        (
+            "/findings/0/suggestions/0/original_text",
+            json!("dirty original\n"),
+            "REPLACEMENT_ORIGINAL_MISMATCH",
+        ),
+        (
+            "/findings/0/suggestions/0/source/end_line",
+            json!(20),
+            "INLINE_ANCHOR_INVALID",
+        ),
+    ] {
+        let mut bad = good.clone();
+        *bad.pointer_mut(pointer).unwrap() = value;
+        assert_eq!(f.validate(&bad).unwrap_err().code, code);
+    }
+    good["findings"][0]["suggestions"][0]["replacement"] = json!("");
+    f.validate(&good).unwrap();
+}

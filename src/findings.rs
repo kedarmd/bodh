@@ -9,6 +9,11 @@ pub fn validate_findings(
     control: &OperationControl,
 ) -> Result<ReviewResult, ContractError> {
     let result = crate::validate_evidence(input, prepared, repository, control)?;
+    let index = if result.findings.iter().any(|f| !f.suggestions.is_empty()) {
+        Some(crate::diff_index(repository, &prepared.context, control)?)
+    } else {
+        None
+    };
     let mut ids = HashSet::new();
     for (i, f) in result.findings.iter().enumerate() {
         let p = format!("/findings/{i}");
@@ -66,6 +71,35 @@ pub fn validate_findings(
                 ));
             }
             require_text(body, &format!("{p}/suggestions/{j}/body"))?;
+            let source = match suggestion {
+                crate::Suggestion::TextComment { source, .. }
+                | crate::Suggestion::CodeReplacement { source, .. } => source,
+            };
+            if matches!(suggestion, crate::Suggestion::CodeReplacement { .. })
+                && source.revision != crate::Revision::Head
+            {
+                return Err(ContractError::new(
+                    "REPLACEMENT_SIDE_INVALID",
+                    "Code replacements require a head-side diff range",
+                    &format!("{p}/suggestions/{j}/source/revision"),
+                ));
+            }
+            let original = read_source(repository, &prepared.context, source, control)
+                .map_err(|e| at(e, &format!("{p}/suggestions/{j}/source")))?;
+            index
+                .as_ref()
+                .expect("suggestions create index")
+                .validate_anchor(source)
+                .map_err(|e| at(e, &format!("{p}/suggestions/{j}/source")))?;
+            if let crate::Suggestion::CodeReplacement { original_text, .. } = suggestion
+                && original_text != &original
+            {
+                return Err(ContractError::new(
+                    "REPLACEMENT_ORIGINAL_MISMATCH",
+                    "Original text must equal the exact pinned head span including line endings",
+                    &format!("{p}/suggestions/{j}/original_text"),
+                ));
+            }
         }
     }
 
