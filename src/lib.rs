@@ -1,5 +1,7 @@
 //! Shared headless review contract. Structural validation does not certify evidence.
+mod evidence;
 mod model;
+pub use evidence::*;
 pub use model::*;
 use serde::Serialize;
 use serde_json::{Value, json};
