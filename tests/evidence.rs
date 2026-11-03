@@ -314,3 +314,36 @@ fn oversized_committed_blobs_have_an_explicit_bound() {
     assert_eq!(error.code, "SOURCE_TOO_LARGE");
     assert_eq!(f.snapshot(), before);
 }
+
+#[test]
+fn key_changes_and_coverage_require_explained_nonempty_content() {
+    let f = Fixture::new();
+    let good = serde_json::to_value(f.result()).unwrap();
+    for (pointer, value) in [
+        ("/overview/key_changes/0/evidence", json!([])),
+        ("/overview/key_changes/0/evidence/0/explanation", json!(" ")),
+        (
+            "/coverage/checks",
+            json!([{"name":"tests","status":"not_run","details":""}]),
+        ),
+        (
+            "/coverage/excluded_areas",
+            json!([{"area":"UI","reason":" "}]),
+        ),
+        ("/coverage/limitations", json!([""])),
+    ] {
+        let mut bad = good.clone();
+        *bad.pointer_mut(pointer).unwrap() = value;
+        assert_eq!(
+            validate_evidence(
+                &serde_json::to_vec(&bad).unwrap(),
+                &f.prepared,
+                &f.repo,
+                &OperationControl::default()
+            )
+            .unwrap_err()
+            .code,
+            "EVIDENCE_CONTENT_INVALID"
+        );
+    }
+}

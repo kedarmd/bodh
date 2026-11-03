@@ -79,6 +79,7 @@ pub fn validate_evidence(
         ));
     }
     validate_prepared_context(repository, &prepared.context, control)?;
+    validate_content(&result)?;
     for (i, change) in result.overview.key_changes.iter().enumerate() {
         for (j, evidence) in change.evidence.iter().enumerate() {
             read_source(repository, &prepared.context, &evidence.source, control).map_err(
@@ -406,6 +407,62 @@ fn validate_prepared_context(
             "Preparation must contain the unique base/head merge-base",
             "/context/merge_base_sha",
         ));
+    }
+    Ok(())
+}
+
+fn require_text(text: &str, pointer: &str) -> Result<(), ContractError> {
+    if text.trim().is_empty() {
+        return Err(ContractError::new(
+            "EVIDENCE_CONTENT_INVALID",
+            "Expected nonempty explanatory text",
+            pointer,
+        ));
+    }
+    Ok(())
+}
+fn validate_content(result: &ReviewResult) -> Result<(), ContractError> {
+    require_text(
+        &result.overview.implementation_summary,
+        "/overview/implementation_summary",
+    )?;
+    for (i, change) in result.overview.key_changes.iter().enumerate() {
+        let p = format!("/overview/key_changes/{i}");
+        require_text(&change.summary, &format!("{p}/summary"))?;
+        if change.evidence.is_empty() {
+            return Err(ContractError::new(
+                "EVIDENCE_CONTENT_INVALID",
+                "A key change needs source evidence",
+                &format!("{p}/evidence"),
+            ));
+        }
+        for (j, e) in change.evidence.iter().enumerate() {
+            require_text(&e.explanation, &format!("{p}/evidence/{j}/explanation"))?;
+        }
+    }
+    for (i, a) in result.overview.intent_assessments.iter().enumerate() {
+        let p = format!("/overview/intent_assessments/{i}");
+        require_text(&a.explanation, &format!("{p}/explanation"))?;
+        for (j, e) in a.evidence.iter().enumerate() {
+            require_text(&e.explanation, &format!("{p}/evidence/{j}/explanation"))?;
+        }
+    }
+    for (i, area) in result.coverage.examined_areas.iter().enumerate() {
+        require_text(area, &format!("/coverage/examined_areas/{i}"))?;
+    }
+    for (i, check) in result.coverage.checks.iter().enumerate() {
+        require_text(&check.name, &format!("/coverage/checks/{i}/name"))?;
+        require_text(&check.details, &format!("/coverage/checks/{i}/details"))?;
+    }
+    for (i, area) in result.coverage.excluded_areas.iter().enumerate() {
+        require_text(&area.area, &format!("/coverage/excluded_areas/{i}/area"))?;
+        require_text(
+            &area.reason,
+            &format!("/coverage/excluded_areas/{i}/reason"),
+        )?;
+    }
+    for (i, limitation) in result.coverage.limitations.iter().enumerate() {
+        require_text(limitation, &format!("/coverage/limitations/{i}"))?;
     }
     Ok(())
 }
