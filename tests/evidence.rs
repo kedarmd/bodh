@@ -122,3 +122,64 @@ fn review_evidence_reads_pinned_merge_base_and_head_without_touching_dirty_check
     );
     assert_eq!(f.snapshot(), before);
 }
+
+#[test]
+fn evidence_requires_an_exact_valid_preparation_and_real_commit_graph() {
+    let f = Fixture::new();
+    let mut result = f.result();
+    result.context.pr.number = 8;
+    assert_eq!(
+        validate_evidence(
+            &serde_json::to_vec(&result).unwrap(),
+            &f.prepared,
+            &f.repo,
+            &OperationControl::default()
+        )
+        .unwrap_err()
+        .code,
+        "CONTEXT_MISMATCH"
+    );
+    let mut prepared = f.prepared.clone();
+    prepared.context.pr.host = "GITHUB.COM".into();
+    result.context = prepared.context.clone();
+    assert_eq!(
+        validate_evidence(
+            &serde_json::to_vec(&result).unwrap(),
+            &prepared,
+            &f.repo,
+            &OperationControl::default()
+        )
+        .unwrap_err()
+        .code,
+        "PR_IDENTITY_INVALID"
+    );
+    let mut prepared = f.prepared.clone();
+    prepared.context.head_sha = "f".repeat(40);
+    result.context = prepared.context.clone();
+    result.overview.key_changes.clear();
+    assert_eq!(
+        validate_evidence(
+            &serde_json::to_vec(&result).unwrap(),
+            &prepared,
+            &f.repo,
+            &OperationControl::default()
+        )
+        .unwrap_err()
+        .code,
+        "GIT_OBJECT_UNAVAILABLE"
+    );
+    let mut prepared = f.prepared.clone();
+    prepared.context.merge_base_sha = prepared.context.base_sha.clone();
+    result.context = prepared.context.clone();
+    assert_eq!(
+        validate_evidence(
+            &serde_json::to_vec(&result).unwrap(),
+            &prepared,
+            &f.repo,
+            &OperationControl::default()
+        )
+        .unwrap_err()
+        .code,
+        "PREPARED_CONTEXT_INVALID"
+    );
+}

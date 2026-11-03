@@ -28,6 +28,7 @@ pub fn validate_evidence(
             "/context",
         ));
     }
+    validate_prepared_context(repository, &prepared.context)?;
     for (i, change) in result.overview.key_changes.iter().enumerate() {
         for (j, evidence) in change.evidence.iter().enumerate() {
             read_source(repository, &prepared.context, &evidence.source, control).map_err(
@@ -176,4 +177,70 @@ fn git(repository: &Path, args: &[&str]) -> Result<Vec<u8>, ContractError> {
         ));
     }
     Ok(output.stdout)
+}
+
+fn validate_prepared_context(
+    repository: &Path,
+    context: &ReviewContext,
+) -> Result<(), ContractError> {
+    let pr = &context.pr;
+    let segment = |s: &str| {
+        !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
+    if pr.number == 0
+        || !pr.host.split('.').all(segment)
+        || !segment(&pr.owner)
+        || pr.repository.is_empty()
+        || matches!(pr.repository.as_str(), "." | "..")
+        || !pr.repository.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_' | b'.')
+        })
+    {
+        return Err(ContractError::new(
+            "PR_IDENTITY_INVALID",
+            "Preparation requires normalized lowercase GitHub host/owner/repository and a positive PR number",
+            "/context/pr",
+        ));
+    }
+    if context.context_id.trim().is_empty() {
+        return Err(ContractError::new(
+            "PREPARED_CONTEXT_INVALID",
+            "Preparation requires a context identity",
+            "/context/context_id",
+        ));
+    }
+    for (field, revision) in [
+        ("base_sha", &context.base_sha),
+        ("head_sha", &context.head_sha),
+        ("merge_base_sha", &context.merge_base_sha),
+    ] {
+        if !valid_sha(revision) {
+            return Err(ContractError::new(
+                "REVISION_INVALID",
+                "Pinned revisions must be full lowercase object IDs",
+                &format!("/context/{field}"),
+            ));
+        }
+        if git(repository, &["cat-file", "-t", revision])? != b"commit\n" {
+            return Err(ContractError::new(
+                "REVISION_INVALID",
+                "Pinned revision must identify a commit",
+                &format!("/context/{field}"),
+            ));
+        }
+    }
+    let merge_base = git(
+        repository,
+        &["merge-base", "--all", &context.base_sha, &context.head_sha],
+    )?;
+    if merge_base != format!("{}\n", context.merge_base_sha).as_bytes() {
+        return Err(ContractError::new(
+            "PREPARED_CONTEXT_INVALID",
+            "Preparation must contain the unique base/head merge-base",
+            "/context/merge_base_sha",
+        ));
+    }
+    Ok(())
 }
