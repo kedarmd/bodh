@@ -132,3 +132,10 @@ Raw release runs: [before](evidence/redraw-before-release.txt), [after](evidence
 Corrected debug runs ([before](evidence/redraw-before-debug.txt), [after](evidence/redraw-after-debug.txt)) were taken during concurrent release compilation and are not controlled latency comparisons. They show the scaling problem but should not be mixed with the final optimized timings. Earlier commentary with preliminary figures is superseded by the corrected release comparison above.
 
 The optimized viewport renderer was relaunched as `bodh-sequence-spike.service` using `target/release/bodh-sequence-spike`; a fresh [native render capture](evidence/viewport-renderer.png) confirms the ordinary diagram/source layout remains intact. The service's fresh observed memory was about 154 MiB current / 158 MiB peak, a point observation rather than a long-run memory guarantee. The user has been asked to retry selection, pane dragging and the 1,000-step flow. That live acceptance, native scrolling/hit-testing after virtualization, and any recurrence of the earlier termination remain open. The dated visual treatment is recorded as rejected/unapproved and has not been promoted to a product design direction.
+
+
+### Successful user trial of the optimized build
+
+The user subsequently reported: “its much much better. The selection and resizing felt smooth, did not experience any lag or crashes.” This supplies successful live feedback for selection/resizing responsiveness and records no crash during that trial. It does not establish the root cause of the original SIGKILL or a general crash-free guarantee. The earlier failed trials remain in the record.
+
+The interaction-performance feedback gate is satisfied for the optimized build. Explicit native scrolling/hit-testing verification after virtualization remains a separate QA item; product visual design remains unapproved and outside this diagnostic UI's acceptance.

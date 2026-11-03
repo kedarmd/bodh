@@ -30,7 +30,7 @@ cargo check --locked --manifest-path spikes/native-sequence/Cargo.toml --all-tar
 cargo test --locked --manifest-path spikes/native-sequence/Cargo.toml
 ```
 
-Feedback requested on the running demonstration: can you distinguish changed, selected and supporting interactions; does selecting a return/self-call show the expected source; does switching flows/resizing preserve your place? Record observed problems against these interactions rather than reopening the approved product scope. The first user trial reported a termination during clicking; successful interaction feedback and reliability acceptance remain open. See the evidence report for diagnostic results and the independent service launch.
+Feedback requested on the running demonstration: can you distinguish changed, selected and supporting interactions; does selecting a return/self-call show the expected source; does switching flows/resizing preserve your place? Record observed problems against these interactions rather than reopening the approved product scope. The first user trial reported a termination during clicking. After viewport optimization and a release launch, the user reported smooth selection/resizing without lag or crashes in that trial. See the evidence report for retained limitations and remaining native scrolling QA.
 
 The current typography, outlined controls and diagnostic status text are **unapproved spike UI**, not the proposed Bodh visual design. This experiment evaluates native rendering/source interaction; it does not establish the product design system.
 
