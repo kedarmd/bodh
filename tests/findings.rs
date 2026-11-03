@@ -457,3 +457,61 @@ fn related_threads_must_be_observed_and_incomplete_absence_is_explicit() {
         );
     }
 }
+#[test]
+fn cli_reports_shared_finding_errors_without_claiming_complete_semantic_validation() {
+    use std::{io::Write, process::Stdio};
+    let f = Fixture::new();
+    let context = f.repo.join("prepared.json");
+    std::fs::write(&context, serde_json::to_vec(&f.prepared).unwrap()).unwrap();
+    let invoke = |value: &Value, flags: &[&str]| {
+        let mut process = Command::new(env!("CARGO_BIN_EXE_bodh"))
+            .args([
+                "validate",
+                "--json",
+                "--input",
+                "-",
+                "--findings-only",
+                "--context",
+            ])
+            .arg(&context)
+            .arg("--repository")
+            .arg(&f.repo)
+            .args(flags)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        process
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(value).unwrap())
+            .unwrap();
+        let out = process.wait_with_output().unwrap();
+        (
+            out.status.code().unwrap(),
+            serde_json::from_slice::<Value>(&out.stdout).unwrap(),
+        )
+    };
+    let good = f.result();
+    let (exit, envelope) = invoke(&good, &[]);
+    assert_eq!(exit, 0, "{envelope}");
+    assert_eq!(envelope["protocol_version"], "1.0");
+    assert_eq!(envelope["data"]["semantic_validation_complete"], false);
+    assert_eq!(envelope["data"]["validation"], "findings_and_evidence");
+    let mut bad = good.clone();
+    bad["findings"][0]["impact"] = json!("");
+    let (exit, envelope) = invoke(&bad, &[]);
+    assert_eq!(exit, 2);
+    assert_eq!(envelope["error"]["code"], "FINDING_CONTENT_INVALID");
+    assert_eq!(envelope["error"]["pointer"], "/findings/0/impact");
+    let (exit, envelope) = invoke(&good, &["--evidence-only"]);
+    assert_eq!(exit, 2);
+    assert_eq!(envelope["error"]["code"], "INVALID_ARGUMENTS");
+    let mut stale = good.clone();
+    stale["context"]["context_id"] = json!("old");
+    let (exit, envelope) = invoke(&stale, &[]);
+    assert_eq!(exit, 3);
+    assert_eq!(envelope["error"]["code"], "CONTEXT_MISMATCH");
+}
