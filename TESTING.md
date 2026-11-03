@@ -1,6 +1,6 @@
 # Validation and GUI evaluation
 
-The current runner targets `spikes/native-sequence`. Add future harnesses explicitly as they are implemented. Run it from any directory using its path; it resolves the repository root itself.
+The current runner targets `spikes/native-sequence` and the headless `spikes/pr-capabilities` behavioral harness. Live read-only GitHub compatibility acquisition is opt-in; see [the capability reproduction command](spikes/pr-capabilities/README.md). Add future harnesses explicitly as they are implemented. Run it from any directory using its path; it resolves the repository root itself.
 
 | Command from the repository root | Purpose |
 | --- | --- |

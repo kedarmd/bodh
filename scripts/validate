@@ -42,6 +42,8 @@ case "$mode" in
   core|desktop)
     bash -n scripts/validate
     python3 -m unittest discover -s scripts/tests -v
+    python3 -m unittest discover -s spikes/pr-capabilities -v
+    python3 -m py_compile spikes/pr-capabilities/harness.py
     cargo fmt --manifest-path "$manifest" --all --check
     cargo check --locked --manifest-path "$manifest" --no-default-features --all-targets
     cargo clippy --locked --manifest-path "$manifest" --no-default-features --all-targets -- -D warnings

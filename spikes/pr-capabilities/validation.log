@@ -1,0 +1,53 @@
+Validation mode: core
+Revision: f4e42e06870a349e73df764753add0f06dbb49db
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Cargo target: /home/kedarmd/dev/bodh/spikes/native-sequence/target
+test_core_runs_from_another_directory_with_quoted_manifest (test_validate.ValidationRunnerTests.test_core_runs_from_another_directory_with_quoted_manifest) ... ok
+test_desktop_includes_native_checks_without_launching_gui (test_validate.ValidationRunnerTests.test_desktop_includes_native_checks_without_launching_gui) ... ok
+test_failed_lint_stops_before_tests (test_validate.ValidationRunnerTests.test_failed_lint_stops_before_tests) ... ok
+test_gui_and_profile_use_locked_release_cargo_run_even_on_failure (test_validate.ValidationRunnerTests.test_gui_and_profile_use_locked_release_cargo_run_even_on_failure) ... ok
+test_invalid_mode_runs_no_tools (test_validate.ValidationRunnerTests.test_invalid_mode_runs_no_tools) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 1.162s
+
+OK
+test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes (test_harness.AcquisitionTests.test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes) ... ok
+test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility (test_harness.AnchorTests.test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility) ... ok
+test_pages_threads_and_each_threads_replies_independently (test_harness.DiscussionTests.test_pages_threads_and_each_threads_replies_independently) ... ok
+test_reports_partial_data_and_cursor_failure_without_claiming_complete (test_harness.DiscussionTests.test_reports_partial_data_and_cursor_failure_without_claiming_complete) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.364s
+
+OK
+    Finished `dev` profile [unoptimized] target(s) in 0.09s
+    Finished `dev` profile [unoptimized] target(s) in 0.10s
+    Finished `test` profile [unoptimized] target(s) in 0.11s
+     Running unittests src/lib.rs (spikes/native-sequence/target/debug/deps/bodh_sequence_spike-bb480cfa987549a1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (spikes/native-sequence/target/debug/deps/navigation-9ae367915ce5b8dd)
+
+running 5 tests
+test clicking_an_interaction_resolves_its_exact_immutable_source ... ok
+test alternatives_share_one_conditional_frame ... ok
+test self_call_on_the_last_participant_stays_inside_the_scrollable_scene ... ok
+test viewport_culling_keeps_partial_rows_and_original_source_identity ... ok
+test every_visible_hit_resolves_in_order_across_conditionals_and_stress_layouts ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests bodh_sequence_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Validation passed: core
