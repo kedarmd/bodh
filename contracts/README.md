@@ -1,6 +1,6 @@
 # Bodh review contract (provisional v1)
 
-Issue #9 delivers **structural validation only**. It does not certify source evidence, claims, publication anchors, scoped references, prepared state or semantic truth. Those checks arrive in #10–12; the complete v1 agreement gate remains open. This package launches no GUI, daemon, AI or Git/gh process, and writes no workspace or remote state.
+Issue #9 delivers structural validation; #10 adds **partial evidence validation** against a supplied immutable fixture preparation and real Git blobs. Publication anchors, finding/discussion relationships, diagrams and follow-up semantics remain #11–12; the complete v1 agreement gate remains open. These checks do not certify semantic truth. Evidence validation invokes installed Git read commands; it launches no GUI, daemon or AI, invokes no gh request and writes no workspace or remote state.
 
 Run from the checkout:
 
@@ -31,7 +31,7 @@ The 1,000-step native fixture and Git/gh spike's explicit unsupported large-cont
 
 `--json` may appear before or after command arguments, once. All current output already uses JSON envelopes, including without that flag. Stdout contains exactly one JSON object and newline; stderr contains diagnostics. Success: `{"protocol_version":"1.0","ok":true,"data":...}`. Failure: `{"protocol_version":"1.0","ok":false,"error":{"code":"...","message":"...","pointer":"..."}}`. Errors may add one-based `line` and `column` for malformed JSON. A pointer is an RFC 6901 instance location (empty means the document or a strict-parser error); schema union failures may point at the containing object. Messages do not echo submitted content, credentials or command arguments.
 
-Current symbolic failures: `INVALID_ARGUMENTS`, `INPUT_UNREADABLE`, `INPUT_TOO_LARGE`, `MALFORMED_JSON`, `UNSUPPORTED_SCHEMA_VERSION`, `CONTRACT_INVALID`. File input `-` means stdin. UTF-8 command arguments are required. The `--structural` flag is mandatory until complete validation is implemented, preventing a caller from mistaking structure acceptance for completed review validation. Success explicitly reports `validation: structural_only` and `semantic_validation_available: false`.
+Current symbolic failures: `INVALID_ARGUMENTS`, `INPUT_UNREADABLE`, `INPUT_TOO_LARGE`, `MALFORMED_JSON`, `UNSUPPORTED_SCHEMA_VERSION`, `CONTRACT_INVALID`. File input `-` means stdin. UTF-8 command arguments are required. A partial-stage flag (`--structural` or the fixture-only `--evidence-only`) is mandatory until complete validation is implemented, preventing a caller from mistaking partial acceptance for completed review validation. Success explicitly reports `validation: structural_only` and `semantic_validation_available: false`.
 
 Exit categories reserved across CLI operations:
 
@@ -44,7 +44,7 @@ Exit categories reserved across CLI operations:
 | 5 | Network/uncertain outcome |
 | 10 | Internal failure |
 
-Only 0/2 occur in this slice. The remaining categories must be used by later shared-service adapters rather than reporting their failures as success or inventing adapter-specific exit numbers.
+Structural validation uses 0/2. Evidence validation also uses 3 for context mismatch, 4 for unavailable Git/tool/objects, 5 for cancellation/deadline and 10 for process/read failures. Unsupported content, bounds and invalid evidence remain input/contract failures (2). Later adapters must preserve these categories.
 
 The continuation vocabulary reserves `prepare`, `inspect`, full `validate`, `commit`, `authorize-replacement` and optional `open`. Planned transport, to fixture-freeze at #12:
 
@@ -62,3 +62,22 @@ These commands are reserved, not implemented or advertised as available. Reposit
 ## Executable evidence
 
 `cargo test --locked` exercises strict schema/Rust/service/CLI acceptance of the empty and all-variant fixtures, every object location's unknown-field rejection, unsupported versions/unions/enums/required fields, exact size boundaries, JSON/file/argument errors and protocol envelopes. The CLI tests use actual child processes. `./scripts/validate` additionally runs formatting, check/Clippy and existing spike checks. See `v1/EVIDENCE.md` for the recorded run and scope.
+
+## Immutable evidence fixture workflow — #10
+
+The public shared `validate_evidence(input, prepared, repository, control)` service extends structural validation with exact context binding, normalized PR identity, commit/merge-base consistency, overview evidence, exact original-description quote occurrences and explained coverage. `read_source(repository, context, source, control)` returns exact UTF-8 commit-blob lines with their original LF/CRLF delimiters; an absent final newline creates no extra empty line. Unchanged source can be read even when it is outside an eligible diff hunk; reading is not permission to publish there.
+
+```sh
+cargo test --locked --test evidence
+bodh --json validate --input result.json --evidence-only --context fixture-context.json --repository /path/to/checkout
+```
+
+The second command needs a **trusted fixture**, not an agent-authored authority for a real PR. Its strict context file is `{ "context": <the exact ReviewContext object>, "original_description": <original text or null> }`; `original_description` may be omitted. This service does not acquire/verify remote PR authority or derive a production context hash. It verifies full lowercase SHA-1/SHA-256 IDs identify actual commits and that the stated merge-base is the unique merge-base of pinned base/head. Production acquisition/persistence and `--prepared <id>` follow in #13; this fixture command never modifies active review state. `context_id` is a binding to the supplied fixture, not a concurrency token. Exact quotes use case-sensitive contiguous original text and one-based character-boundary occurrences (including overlapping occurrences).
+
+PR host/owner/repository are normalized lowercase ASCII identifiers and PR number is positive. Host is a DNS-style sequence, owner uses letters/digits/hyphens, repository additionally permits `_`/`.`. Host/API compatibility is not proven by identifier parsing. Missing commits fail explicitly; shallow histories and a non-unique/mismatched merge-base are rejected. No fallback to dirty source or latest target occurs. Git replace refs, legacy grafts and ambient `GIT_*` redirection are ignored. Git argv uses literal pathspecs, immutable object IDs, no shell and no working-tree/index operation; no diff/textconv hook is invoked by blob reads.
+
+Only regular UTF-8 blobs have supported source lines. Binary NUL, invalid UTF-8, symlink/tree/gitlink entries and LF/CRLF LFS pointers fail explicitly. Absolute, traversal, empty, backslash and control-character paths fail; literal spaces and Git pathspec metacharacters are supported. Positive inclusive line ranges must exist in the exact blob. Each Git stdout stream is capped at 8 MiB; diagnostic streams at 64 KiB. Source bounds and supported content are provisional policies, not performance guarantees. Original description uses the existing 65,536-character bound.
+
+`OperationControl` is cloneable; cancellation of one clone stops the operation. It defaults to a 30-second overall deadline, checked before/during Git calls and before return. The CLI permits `--timeout-ms <0..120000>` for bounded fixtures. Git runs in a dedicated Unix process group; a cancellation/deadline kills the group, reaps its leader and drains its pipes. A parent that exits while descendants retain pipes cannot evade that deadline. Cancellation through this service does not establish GUI or terminal interrupt handling; later orchestration must bind its cancellation input to the control. This Linux-native implementation uses Unix process groups.
+
+Evidence success reports `validation: evidence_only`, `semantic_validation_complete: false` and the remaining finding/anchor/diagram/follow-up checks. Validation does not infer test execution or claim alignment truth: check enums and explanatory content are checked, supplied passed/failed observations are not rerun. Review-result schema/types are unchanged by this slice. See [#10 evidence](v1/EVIDENCE-10.md).

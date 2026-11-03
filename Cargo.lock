@@ -63,6 +63,7 @@ name = "bodh"
 version = "0.1.0"
 dependencies = [
  "jsonschema",
+ "libc",
  "schemars",
  "serde",
  "serde_json",

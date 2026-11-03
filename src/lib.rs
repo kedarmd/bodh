@@ -1,5 +1,7 @@
 //! Shared headless review contract. Structural validation does not certify evidence.
+mod evidence;
 mod model;
+pub use evidence::*;
 pub use model::*;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -81,7 +83,7 @@ pub fn validate_structure(input: &[u8]) -> Result<ReviewResult, ContractError> {
 }
 
 pub fn describe() -> Value {
-    json!({"schema_version":"1.0","status":"provisional","validation":"structural_only","semantic_validation_available":false,"limits":{"input_bytes":MAX_INPUT_BYTES,"string_characters":MAX_STRING_CHARS,"collection_items":MAX_COLLECTION_ITEMS},"commands":["contract describe","contract schema","validate --input <file> --structural"],"reserved_commands":["prepare","inspect","validate --prepared <preparation-id>","commit","authorize-replacement","open"],"exit_categories":{"success":0,"input_contract":2,"stale_state":3,"auth_access":4,"network_uncertain":5,"internal":10}})
+    json!({"schema_version":"1.0","status":"provisional","validation":"structural_only","semantic_validation_available":false,"evidence_validation_available":true,"limits":{"input_bytes":MAX_INPUT_BYTES,"string_characters":MAX_STRING_CHARS,"collection_items":MAX_COLLECTION_ITEMS},"commands":["contract describe","contract schema","validate --input <file> --structural","validate --input <file> --evidence-only --context <fixture.json> --repository <checkout>"],"reserved_commands":["prepare","inspect","validate --prepared <preparation-id>","commit","authorize-replacement","open"],"exit_categories":{"success":0,"input_contract":2,"stale_state":3,"auth_access":4,"network_uncertain":5,"internal":10}})
 }
 
 fn bound_schema(value: &mut Value) {
