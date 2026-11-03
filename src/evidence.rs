@@ -1,7 +1,18 @@
 //! Immutable evidence validation shared by CLI and future workspace consumers.
 use crate::{ContractError, ReviewContext, ReviewResult, Revision, SourceRef};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, process::Command};
+use std::os::unix::process::CommandExt;
+use std::{
+    io::Read,
+    path::Path,
+    process::{Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 /// A trusted preparation snapshot. Loading this fixture does not acquire remote context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,8 +22,47 @@ pub struct PreparedEvidenceContext {
     #[serde(default, deserialize_with = "crate::bounded_optional_text")]
     pub original_description: Option<String>,
 }
-#[derive(Debug, Default)]
-pub struct OperationControl;
+#[derive(Debug, Clone)]
+pub struct OperationControl {
+    started: Instant,
+    timeout: Duration,
+    cancelled: Arc<AtomicBool>,
+}
+impl Default for OperationControl {
+    fn default() -> Self {
+        Self::with_timeout(Duration::from_secs(30))
+    }
+}
+impl OperationControl {
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            timeout,
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+    pub fn check(&self) -> Result<(), ContractError> {
+        if self.cancelled.load(Ordering::Relaxed) {
+            return Err(ContractError::new(
+                "CANCELLED",
+                "Operation was cancelled",
+                "",
+            ));
+        }
+        if self.started.elapsed() >= self.timeout {
+            return Err(ContractError::new(
+                "OPERATION_TIMEOUT",
+                "Operation exceeded its time limit",
+                "",
+            ));
+        }
+        Ok(())
+    }
+}
+pub const MAX_SOURCE_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn validate_evidence(
     input: &[u8],
@@ -28,7 +78,7 @@ pub fn validate_evidence(
             "/context",
         ));
     }
-    validate_prepared_context(repository, &prepared.context)?;
+    validate_prepared_context(repository, &prepared.context, control)?;
     for (i, change) in result.overview.key_changes.iter().enumerate() {
         for (j, evidence) in change.evidence.iter().enumerate() {
             read_source(repository, &prepared.context, &evidence.source, control).map_err(
@@ -80,7 +130,7 @@ pub fn read_source(
     repository: &Path,
     context: &ReviewContext,
     source: &SourceRef,
-    _control: &OperationControl,
+    control: &OperationControl,
 ) -> Result<String, ContractError> {
     if source.path.is_empty()
         || source.path.starts_with('/')
@@ -115,7 +165,7 @@ pub fn read_source(
             "",
         ));
     }
-    if git(repository, &["cat-file", "-t", revision])? != b"commit\n" {
+    if git(repository, control, &["cat-file", "-t", revision])? != b"commit\n" {
         return Err(ContractError::new(
             "REVISION_INVALID",
             "Pinned revision must identify a commit",
@@ -124,6 +174,7 @@ pub fn read_source(
     }
     let entry = git(
         repository,
+        control,
         &[
             "ls-tree",
             "-rz",
@@ -159,7 +210,7 @@ pub fn read_source(
     }
     let blob = std::str::from_utf8(fields[2])
         .map_err(|_| ContractError::new("GIT_FAILED", "Invalid tree entry", ""))?;
-    let bytes = git(repository, &["cat-file", "blob", blob])?;
+    let bytes = git(repository, control, &["cat-file", "blob", blob])?;
     if bytes.contains(&0)
         || bytes.starts_with(b"version https://git-lfs.github.com/spec/v1\n")
         || bytes.starts_with(b"version https://git-lfs.github.com/spec/v1\r\n")
@@ -189,31 +240,112 @@ fn valid_sha(sha: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
-fn git(repository: &Path, args: &[&str]) -> Result<Vec<u8>, ContractError> {
-    let output = Command::new("git")
-        .arg("--no-pager")
-        .arg("--no-replace-objects")
-        .arg("-C")
+fn git(
+    repository: &Path,
+    control: &OperationControl,
+    args: &[&str],
+) -> Result<Vec<u8>, ContractError> {
+    control.check()?;
+    let mut command = Command::new("git");
+    command
+        .args(["--no-pager", "--no-replace-objects", "-C"])
         .arg(repository)
         .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    // Ambient Git redirection must not select a different repository or index.
+    for (name, _) in std::env::vars_os() {
+        if name.as_encoded_bytes().starts_with(b"GIT_") {
+            command.env_remove(name);
+        }
+    }
+    command
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .map_err(|_| {
-            ContractError::new("GIT_UNAVAILABLE", "Installed git could not be started", "")
-        })?;
-    if !output.status.success() {
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_GRAFT_FILE", "/dev/null");
+    let mut child = command.spawn().map_err(|_| {
+        ContractError::new("GIT_UNAVAILABLE", "Installed git could not be started", "")
+    })?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let out = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout
+            .take(MAX_SOURCE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes);
+        (result, bytes)
+    });
+    let err = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stderr.take(65_537).read_to_end(&mut bytes);
+        (result, bytes)
+    });
+    let status = loop {
+        if let Err(failure) = control.check() {
+            // The child is a dedicated process-group leader. Reap all descendants before joining readers.
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            let _ = child.wait();
+            let _ = out.join();
+            let _ = err.join();
+            return Err(failure);
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => thread::sleep(Duration::from_millis(2)),
+            Err(_) => {
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.wait();
+                let _ = out.join();
+                let _ = err.join();
+                return Err(ContractError::new(
+                    "GIT_FAILED",
+                    "Cannot await Git operation",
+                    "",
+                ));
+            }
+        }
+    };
+    let (outcome, bytes) = out
+        .join()
+        .map_err(|_| ContractError::new("GIT_FAILED", "Cannot read Git output", ""))?;
+    let (diagnostics, error_bytes) = err
+        .join()
+        .map_err(|_| ContractError::new("GIT_FAILED", "Cannot read Git diagnostics", ""))?;
+    if bytes.len() > MAX_SOURCE_BYTES || error_bytes.len() > 65_536 {
+        return Err(ContractError::new(
+            "SOURCE_TOO_LARGE",
+            "Git output exceeds the supported bound",
+            "",
+        ));
+    }
+    if outcome.is_err() || diagnostics.is_err() {
+        return Err(ContractError::new(
+            "GIT_FAILED",
+            "Cannot read Git output",
+            "",
+        ));
+    }
+    if !status.success() {
         return Err(ContractError::new(
             "GIT_OBJECT_UNAVAILABLE",
             "Pinned Git object or tree is unavailable",
             "",
         ));
     }
-    Ok(output.stdout)
+    Ok(bytes)
 }
 
 fn validate_prepared_context(
     repository: &Path,
     context: &ReviewContext,
+    control: &OperationControl,
 ) -> Result<(), ContractError> {
     let pr = &context.pr;
     let segment = |s: &str| {
@@ -255,7 +387,7 @@ fn validate_prepared_context(
                 &format!("/context/{field}"),
             ));
         }
-        if git(repository, &["cat-file", "-t", revision])? != b"commit\n" {
+        if git(repository, control, &["cat-file", "-t", revision])? != b"commit\n" {
             return Err(ContractError::new(
                 "REVISION_INVALID",
                 "Pinned revision must identify a commit",
@@ -265,6 +397,7 @@ fn validate_prepared_context(
     }
     let merge_base = git(
         repository,
+        control,
         &["merge-base", "--all", &context.base_sha, &context.head_sha],
     )?;
     if merge_base != format!("{}\n", context.merge_base_sha).as_bytes() {

@@ -247,3 +247,70 @@ fn intent_quotes_are_exact_contiguous_original_claim_occurrences() {
         "/overview/intent_assessments/0/evidence/0/source/end_line"
     );
 }
+
+#[test]
+fn cancellation_timeout_and_blob_limits_fail_without_checkout_mutation() {
+    use std::time::Duration;
+    let f = Fixture::new();
+    let before = f.snapshot();
+    let control = OperationControl::default();
+    control.cancel();
+    assert_eq!(
+        validate_evidence(
+            &serde_json::to_vec(&f.result()).unwrap(),
+            &f.prepared,
+            &f.repo,
+            &control
+        )
+        .unwrap_err()
+        .code,
+        "CANCELLED"
+    );
+    let timeout = OperationControl::with_timeout(Duration::ZERO);
+    assert_eq!(
+        read_source(
+            &f.repo,
+            &f.prepared.context,
+            &SourceRef {
+                path: "source.txt".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1
+            },
+            &timeout
+        )
+        .unwrap_err()
+        .code,
+        "OPERATION_TIMEOUT"
+    );
+    assert_eq!(f.snapshot(), before);
+}
+
+#[test]
+fn oversized_committed_blobs_have_an_explicit_bound() {
+    let f = Fixture::new();
+    std::fs::write(
+        f.repo.join("large.txt"),
+        vec![b'x'; bodh::MAX_SOURCE_BYTES + 1],
+    )
+    .unwrap();
+    git(&f.repo, &["add", "large.txt"]);
+    git(&f.repo, &["commit", "-m", "large fixture"]);
+    let mut context = f.prepared.context.clone();
+    context.head_sha = git(&f.repo, &["rev-parse", "HEAD"]);
+    let before = f.snapshot();
+    let error = read_source(
+        &f.repo,
+        &context,
+        &SourceRef {
+            path: "large.txt".into(),
+            revision: Revision::Head,
+            start_line: 1,
+            end_line: 1,
+        },
+        &OperationControl::default(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "SOURCE_TOO_LARGE");
+    assert_eq!(f.snapshot(), before);
+}
