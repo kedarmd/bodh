@@ -2,3 +2,6 @@ docs/
 
 # Disposable Rust spike build output
 /spikes/native-sequence/target/
+
+# Python runner regression tests
+__pycache__/

@@ -172,7 +172,7 @@ impl Render for Demo {
                 match event.keystroke.key.as_str() {
                     "down" | "right" => {this.select((current+1)%count,cx);this.reveal();},
                     "up" | "left" => {this.select((current+count-1)%count,cx);this.reveal();},
-                    "t" => {this.dark=!this.dark;cx.notify();},
+                    "t" => {this.dark = !this.dark;cx.notify();},
                     "tab" => {this.active=(this.active+1)%this.flows.len();cx.notify();},
                     "[" => {this.inspector_width=(this.inspector_width-40.).max(260.);cx.notify();},
                     "]" => {this.inspector_width=(this.inspector_width+40.).min(f32::from(window.viewport_size().width)*0.7);cx.notify();},
