@@ -17,26 +17,84 @@ pub struct ContractError {
 }
 impl ContractError {
     pub fn new(code: &str, message: &str, pointer: &str) -> Self {
-        Self { code: code.into(), message: message.into(), pointer: pointer.into() }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            pointer: pointer.into(),
+        }
     }
 }
 
 pub fn schema() -> Value {
-    serde_json::to_value(schemars::schema_for!(ReviewResult)).expect("schema serializes")
+    let mut schema = serde_json::to_value(schemars::schema_for!(ReviewResult)).expect("schema serializes");
+    bound_schema(&mut schema);
+    schema
 }
 
 pub fn validate_structure(input: &[u8]) -> Result<ReviewResult, ContractError> {
     if input.len() > MAX_INPUT_BYTES {
-        return Err(ContractError::new("INPUT_TOO_LARGE", "Input exceeds 8 MiB", ""));
+        return Err(ContractError::new(
+            "INPUT_TOO_LARGE",
+            "Input exceeds 8 MiB",
+            "",
+        ));
     }
-    let value: Value = serde_json::from_slice(input).map_err(|_| ContractError::new("MALFORMED_JSON", "Expected one JSON document", ""))?;
+    let value: Value = serde_json::from_slice(input)
+        .map_err(|_| ContractError::new("MALFORMED_JSON", "Expected one JSON document", ""))?;
     let validator = jsonschema::validator_for(&schema()).expect("generated schema compiles");
     if let Err(error) = validator.validate(&value) {
-        return Err(ContractError::new("CONTRACT_INVALID", "Submission does not match the review schema", &error.instance_path().to_string()));
+        return Err(ContractError::new(
+            "CONTRACT_INVALID",
+            "Submission does not match the review schema",
+            &error.instance_path().to_string(),
+        ));
     }
-    serde_json::from_slice(input).map_err(|_| ContractError::new("CONTRACT_INVALID", "Submission does not match strict Rust representation", ""))
+    serde_json::from_slice(input).map_err(|_| {
+        ContractError::new(
+            "CONTRACT_INVALID",
+            "Submission does not match strict Rust representation",
+            "",
+        )
+    })
 }
 
 pub fn describe() -> Value {
     json!({"schema_version":"1.0","status":"provisional","validation":"structural_only","semantic_validation_available":false,"limits":{"input_bytes":MAX_INPUT_BYTES,"string_characters":MAX_STRING_CHARS,"collection_items":MAX_COLLECTION_ITEMS},"commands":["contract describe","contract schema","validate --input <file> --structural"],"reserved_commands":["prepare","inspect","validate --prepared <preparation-id>","commit","authorize-replacement","open"],"exit_categories":{"success":0,"input_contract":2,"stale_state":3,"auth_access":4,"network_uncertain":5,"internal":10}})
+}
+
+fn bound_schema(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            if object.get("type").is_some_and(|t| t == "string" || t.as_array().is_some_and(|a| a.iter().any(|v| v == "string"))) {
+                object.insert("maxLength".into(), json!(MAX_STRING_CHARS));
+            }
+            if object.get("type").is_some_and(|t| t == "array") {
+                object.insert("maxItems".into(), json!(MAX_COLLECTION_ITEMS));
+            }
+            for child in object.values_mut() { bound_schema(child); }
+        }
+        Value::Array(array) => for child in array { bound_schema(child); },
+        _ => (),
+    }
+}
+
+fn bounded_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let text = <String as serde::Deserialize>::deserialize(d)?;
+    if text.chars().count() > MAX_STRING_CHARS { return Err(serde::de::Error::custom("string exceeds character limit")); }
+    Ok(text)
+}
+fn bounded_list<'de, T: serde::Deserialize<'de>, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<T>, D::Error> {
+    let list = <Vec<T> as serde::Deserialize>::deserialize(d)?;
+    if list.len() > MAX_COLLECTION_ITEMS { return Err(serde::de::Error::custom("collection exceeds item limit")); }
+    Ok(list)
+}
+fn bounded_text_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let list: Vec<String> = bounded_list(d)?;
+    if list.iter().any(|s| s.chars().count() > MAX_STRING_CHARS) { return Err(serde::de::Error::custom("string exceeds character limit")); }
+    Ok(list)
+}
+fn bounded_optional_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let text = <Option<String> as serde::Deserialize>::deserialize(d)?;
+    if text.as_ref().is_some_and(|s| s.chars().count() > MAX_STRING_CHARS) { return Err(serde::de::Error::custom("string exceeds character limit")); }
+    Ok(text)
 }
