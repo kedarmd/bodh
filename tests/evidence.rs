@@ -542,3 +542,63 @@ fn cli_timeout_covers_descendants_retaining_output_pipes() {
     assert_eq!(body["error"]["code"], "OPERATION_TIMEOUT");
     assert_eq!(f.snapshot(), before);
 }
+
+#[test]
+fn pinned_reads_ignore_replace_refs_and_legacy_grafts_and_reject_shallow_history() {
+    let f = Fixture::new();
+    std::fs::write(f.repo.join("source.txt"), "substitute\n").unwrap();
+    git(&f.repo, &["add", "source.txt"]);
+    git(&f.repo, &["commit", "-m", "substitute"]);
+    let substitute = git(&f.repo, &["rev-parse", "HEAD"]);
+    git(
+        &f.repo,
+        &["replace", &f.prepared.context.head_sha, &substitute],
+    );
+    std::fs::create_dir_all(f.repo.join(".git/info")).unwrap();
+    std::fs::write(
+        f.repo.join(".git/info/grafts"),
+        format!("{}\n", f.prepared.context.head_sha),
+    )
+    .unwrap();
+    let before = f.snapshot();
+    validate_evidence(
+        &serde_json::to_vec(&f.result()).unwrap(),
+        &f.prepared,
+        &f.repo,
+        &OperationControl::default(),
+    )
+    .unwrap();
+    let source = SourceRef {
+        path: "source.txt".into(),
+        revision: Revision::Head,
+        start_line: 2,
+        end_line: 2,
+    };
+    assert_eq!(
+        read_source(
+            &f.repo,
+            &f.prepared.context,
+            &source,
+            &OperationControl::default()
+        )
+        .unwrap(),
+        "head\r\n"
+    );
+    assert_eq!(f.snapshot(), before);
+    std::fs::write(
+        f.repo.join(".git/shallow"),
+        format!("{}\n", f.prepared.context.head_sha),
+    )
+    .unwrap();
+    assert_eq!(
+        validate_evidence(
+            &serde_json::to_vec(&f.result()).unwrap(),
+            &f.prepared,
+            &f.repo,
+            &OperationControl::default()
+        )
+        .unwrap_err()
+        .code,
+        "GIT_HISTORY_UNSUPPORTED"
+    );
+}

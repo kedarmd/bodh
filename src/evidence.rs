@@ -123,6 +123,7 @@ pub fn validate_evidence(
             )?;
         }
     }
+    control.check()?;
     Ok(result)
 }
 
@@ -374,6 +375,18 @@ fn validate_prepared_context(
     context: &ReviewContext,
     control: &OperationControl,
 ) -> Result<(), ContractError> {
+    if git(
+        repository,
+        control,
+        &["rev-parse", "--is-shallow-repository"],
+    )? != b"false\n"
+    {
+        return Err(ContractError::new(
+            "GIT_HISTORY_UNSUPPORTED",
+            "Complete history is required; deepen or unshallow explicitly before validation",
+            "/context",
+        ));
+    }
     let pr = &context.pr;
     let segment = |s: &str| {
         !s.is_empty()
