@@ -191,6 +191,8 @@ pub fn diff_index(
                         repository,
                         control,
                         &[
+                            "-c",
+                            "diff.suppressBlankEmpty=false",
                             "diff",
                             "--no-ext-diff",
                             "--no-textconv",

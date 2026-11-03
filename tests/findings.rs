@@ -515,3 +515,31 @@ fn cli_reports_shared_finding_errors_without_claiming_complete_semantic_validati
     assert_eq!(exit, 3);
     assert_eq!(envelope["error"]["code"], "CONTEXT_MISMATCH");
 }
+#[test]
+fn repository_diff_presentation_settings_cannot_change_canonical_hunk_mapping() {
+    let mut f = Fixture::new();
+    std::fs::write(f.repo.join("source.txt"), "one\n\nold\nfour\nfive\n").unwrap();
+    git(&f.repo, &["add", "source.txt"]);
+    git(&f.repo, &["commit", "-m", "blank base"]);
+    let base = git(&f.repo, &["rev-parse", "HEAD"]);
+    std::fs::write(f.repo.join("source.txt"), "one\n\nnew\nfour\nfive\n").unwrap();
+    git(&f.repo, &["add", "source.txt"]);
+    git(&f.repo, &["commit", "-m", "blank head"]);
+    f.prepared.context.base_sha = base.clone();
+    f.prepared.context.merge_base_sha = base;
+    f.prepared.context.head_sha = git(&f.repo, &["rev-parse", "HEAD"]);
+    git(&f.repo, &["config", "diff.suppressBlankEmpty", "true"]);
+    git(&f.repo, &["config", "diff.context", "0"]);
+    git(&f.repo, &["config", "diff.algorithm", "histogram"]);
+    let index =
+        bodh::diff_index(&f.repo, &f.prepared.context, &OperationControl::default()).unwrap();
+    assert_eq!(
+        index.files[0].hunks,
+        vec![bodh::DiffHunk {
+            old_start: 1,
+            old_lines: 5,
+            new_start: 1,
+            new_lines: 5
+        }]
+    );
+}
