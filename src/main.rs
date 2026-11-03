@@ -19,7 +19,10 @@ fn read_input(path: &str) -> Result<Vec<u8>, ContractError> {
     Ok(input)
 }
 fn run() -> Result<Value, ContractError> {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.into_string().map_err(|_| arguments()))
+        .collect::<Result<_, _>>()?;
     if args.iter().filter(|a| *a == "--json").count() > 1 {
         return Err(arguments());
     }

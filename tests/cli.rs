@@ -62,3 +62,16 @@ fn malformed_input_includes_location_without_echoing_untrusted_text() {
     assert!(!stderr.contains("secret-token"));
     assert!(!body.to_string().contains("secret-token"));
 }
+
+#[cfg(unix)]
+#[test]
+fn non_unicode_arguments_produce_the_protocol_error_instead_of_panicking() {
+    use std::os::unix::ffi::OsStringExt;
+    let output = Command::new(env!("CARGO_BIN_EXE_bodh"))
+        .arg(std::ffi::OsString::from_vec(vec![255]))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["error"]["code"], "INVALID_ARGUMENTS");
+}

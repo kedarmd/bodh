@@ -136,6 +136,7 @@ fn negative_contract_corpus_agrees_across_all_public_interfaces() {
             bodh::validate_structure(&serde_json::to_vec(&invalid).unwrap()).is_err(),
             "{pointer}"
         );
+        assert_cli_rejects(&invalid);
     }
     for field in [
         "context",
@@ -150,6 +151,7 @@ fn negative_contract_corpus_agrees_across_all_public_interfaces() {
         assert!(!validator.is_valid(&invalid));
         assert!(serde_json::from_value::<bodh::ReviewResult>(invalid.clone()).is_err());
         assert!(bodh::validate_structure(&serde_json::to_vec(&invalid).unwrap()).is_err());
+        assert_cli_rejects(&invalid);
     }
 }
 
@@ -174,4 +176,27 @@ fn committed_canonical_schema_cannot_drift_from_rust() {
     let committed: Value =
         serde_json::from_str(include_str!("../contracts/v1/review.schema.json")).unwrap();
     assert_eq!(bodh::schema(), committed);
+}
+
+fn assert_cli_rejects(value: &Value) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut process = Command::new(env!("CARGO_BIN_EXE_bodh"))
+        .args(["validate", "--input", "-", "--structural", "--json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    process
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(value).unwrap())
+        .unwrap();
+    let output = process.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["ok"], false);
+    assert!(envelope["error"]["pointer"].is_string());
 }
