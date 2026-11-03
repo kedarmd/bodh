@@ -217,3 +217,243 @@ fn replacements_require_head_hunk_spans_and_byte_exact_original_lines() {
     good["findings"][0]["suggestions"][0]["replacement"] = json!("");
     f.validate(&good).unwrap();
 }
+#[test]
+fn additions_deletions_edited_renames_and_exact_crlf_ranges_have_literal_anchors() {
+    use std::os::unix::fs::symlink;
+    let mut f = Fixture::new();
+    let long = (1..=20)
+        .map(|i| format!("rename {i}\n"))
+        .collect::<String>();
+    let pure = (1..=20).map(|i| format!("pure {i}\n")).collect::<String>();
+    let split = (1..=40).map(|i| format!("line {i}\n")).collect::<String>();
+    for (name, bytes) in [
+        ("old name.txt", long.as_bytes()),
+        ("pure old.txt", pure.as_bytes()),
+        ("deleted.txt", b"gone one\ngone two"),
+        ("crlf.txt", b"one\r\nold\r\nlast"),
+        ("binary.bin", b"old\0binary"),
+        (
+            "pointer.txt",
+            b"version https://git-lfs.github.com/spec/v1\noid sha256:abcd\nsize 9\n",
+        ),
+        ("split.txt", split.as_bytes()),
+    ] {
+        std::fs::write(f.repo.join(name), bytes).unwrap();
+    }
+    symlink("old name.txt", f.repo.join("link.txt")).unwrap();
+    git(
+        &f.repo,
+        &[
+            "add",
+            "old name.txt",
+            "pure old.txt",
+            "deleted.txt",
+            "crlf.txt",
+            "binary.bin",
+            "pointer.txt",
+            "split.txt",
+            "link.txt",
+        ],
+    );
+    git(
+        &f.repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000",
+            &f.prepared.context.head_sha,
+            "submodule",
+        ],
+    );
+    git(&f.repo, &["commit", "-m", "variant base"]);
+    let base = git(&f.repo, &["rev-parse", "HEAD"]);
+    git(&f.repo, &["mv", "old name.txt", "new name.txt"]);
+    git(&f.repo, &["mv", "pure old.txt", "pure new.txt"]);
+    git(&f.repo, &["rm", "deleted.txt"]);
+    std::fs::write(
+        f.repo.join("new name.txt"),
+        long.replace("rename 2\n", "edited 2\n"),
+    )
+    .unwrap();
+    std::fs::write(f.repo.join("added.txt"), "new one\nnew two\n").unwrap();
+    std::fs::write(f.repo.join("crlf.txt"), "one\r\nnew\r\nlast").unwrap();
+    std::fs::write(f.repo.join("binary.bin"), b"new\0binary").unwrap();
+    std::fs::write(
+        f.repo.join("pointer.txt"),
+        b"version https://git-lfs.github.com/spec/v1\r\noid sha256:efgh\r\nsize 9\r\n",
+    )
+    .unwrap();
+    std::fs::write(
+        f.repo.join("split.txt"),
+        split
+            .replace("line 2\n", "edit 2\n")
+            .replace("line 35\n", "edit 35\n"),
+    )
+    .unwrap();
+    std::fs::remove_file(f.repo.join("link.txt")).unwrap();
+    symlink("new name.txt", f.repo.join("link.txt")).unwrap();
+    git(
+        &f.repo,
+        &[
+            "add",
+            "new name.txt",
+            "added.txt",
+            "crlf.txt",
+            "binary.bin",
+            "pointer.txt",
+            "split.txt",
+            "link.txt",
+        ],
+    );
+    git(
+        &f.repo,
+        &["update-index", "--cacheinfo", "160000", &base, "submodule"],
+    );
+    git(&f.repo, &["commit", "-m", "variant head"]);
+    let head = git(&f.repo, &["rev-parse", "HEAD"]);
+    f.prepared.context.base_sha = base.clone();
+    f.prepared.context.merge_base_sha = base;
+    f.prepared.context.head_sha = head;
+    let marker = f.repo.join("HELPER_RAN");
+    let helper = f.repo.join("helper.sh");
+    std::fs::write(
+        &helper,
+        format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(
+        &f.repo,
+        &["config", "diff.external", helper.to_str().unwrap()],
+    );
+    git(
+        &f.repo,
+        &["config", "diff.owned.textconv", helper.to_str().unwrap()],
+    );
+    std::fs::write(f.repo.join(".gitattributes"), "* diff=owned\n").unwrap();
+    let before = f.snapshot();
+    let v = f.result();
+    for (path, side, start, end) in [
+        ("new name.txt", "head", 1, 3),
+        ("old name.txt", "base", 1, 3),
+        ("added.txt", "head", 1, 2),
+        ("deleted.txt", "base", 1, 2),
+    ] {
+        let mut good = v.clone();
+        good["findings"][0]["suggestions"] = json!([{"kind":"text_comment","id":"choice","body":"Review this span","source":source(path,side,start,end)}]);
+        f.validate(&good).unwrap();
+    }
+    let mut crlf = v.clone();
+    crlf["findings"][0]["suggestions"] = json!([{"kind":"code_replacement","id":"fix","body":"Keep CRLF","source":source("crlf.txt","head",2,3),"original_text":"new\r\nlast","replacement":""}]);
+    f.validate(&crlf).unwrap();
+    crlf["findings"][0]["suggestions"][0]["original_text"] = json!("new\nlast");
+    assert_eq!(
+        f.validate(&crlf).unwrap_err().code,
+        "REPLACEMENT_ORIGINAL_MISMATCH"
+    );
+    for (path, side, start, end, code) in [
+        ("pure new.txt", "head", 1, 1, "INLINE_ANCHOR_INVALID"),
+        ("split.txt", "head", 2, 35, "INLINE_ANCHOR_INVALID"),
+        ("binary.bin", "head", 1, 1, "SOURCE_CONTENT_UNSUPPORTED"),
+        ("pointer.txt", "head", 1, 1, "SOURCE_CONTENT_UNSUPPORTED"),
+        ("link.txt", "head", 1, 1, "SOURCE_CONTENT_UNSUPPORTED"),
+        ("submodule", "head", 1, 1, "SOURCE_CONTENT_UNSUPPORTED"),
+        ("old name.txt", "head", 1, 1, "SOURCE_UNAVAILABLE"),
+        ("new name.txt", "base", 1, 1, "SOURCE_UNAVAILABLE"),
+    ] {
+        let mut bad = v.clone();
+        bad["findings"][0]["suggestions"] = json!([{"kind":"text_comment","id":"choice","body":"Review this span","source":source(path,side,start,end)}]);
+        assert_eq!(f.validate(&bad).unwrap_err().code, code, "{path}");
+    }
+    let index =
+        bodh::diff_index(&f.repo, &f.prepared.context, &OperationControl::default()).unwrap();
+    let renamed = index
+        .files
+        .iter()
+        .find(|file| file.new_path.as_deref() == Some("new name.txt"))
+        .unwrap();
+    assert_eq!(renamed.old_path.as_deref(), Some("old name.txt"));
+    assert!(renamed.status.starts_with('R'));
+    assert_eq!(
+        renamed.hunks,
+        vec![bodh::DiffHunk {
+            old_start: 1,
+            old_lines: 5,
+            new_start: 1,
+            new_lines: 5
+        }]
+    );
+    assert_eq!(
+        index
+            .files
+            .iter()
+            .find(|file| file.new_path.as_deref() == Some("added.txt"))
+            .unwrap()
+            .hunks,
+        vec![bodh::DiffHunk {
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: 2
+        }]
+    );
+    assert_eq!(
+        index
+            .files
+            .iter()
+            .find(|file| file.old_path.as_deref() == Some("deleted.txt"))
+            .unwrap()
+            .hunks,
+        vec![bodh::DiffHunk {
+            old_start: 1,
+            old_lines: 2,
+            new_start: 0,
+            new_lines: 0
+        }]
+    );
+    assert_eq!(
+        index
+            .files
+            .iter()
+            .find(|file| file.new_path.as_deref() == Some("submodule"))
+            .unwrap()
+            .unsupported_reason
+            .as_deref(),
+        Some("non_regular_entry")
+    );
+    assert_eq!(f.snapshot(), before);
+    assert!(!marker.exists());
+}
+#[test]
+fn related_threads_must_be_observed_and_incomplete_absence_is_explicit() {
+    let mut f = Fixture::new();
+    let mut v = f.result();
+    v["findings"][0]["related_thread_ids"] = json!(["PRRT_actual"]);
+    assert_eq!(f.validate(&v).unwrap_err().code, "DISCUSSIONS_INCOMPLETE");
+    f.prepared=serde_json::from_value(json!({"context":f.prepared.context,"discussions":{"thread_ids":["PRRT_actual"],"complete":false,"failures":[{"connection":"threads","reason":"page 2 unavailable"}]}})).unwrap();
+    f.validate(&v).unwrap();
+    v["findings"][0]["related_thread_ids"] = json!(["PRRT_missing"]);
+    assert_eq!(f.validate(&v).unwrap_err().code, "DISCUSSIONS_INCOMPLETE");
+    f.prepared=serde_json::from_value(json!({"context":f.prepared.context,"discussions":{"thread_ids":["PRRT_actual"],"complete":true,"failures":[]}})).unwrap();
+    assert_eq!(f.validate(&v).unwrap_err().code, "THREAD_REFERENCE_INVALID");
+    v["findings"][0]["related_thread_ids"] = json!(["PRRT_actual", "PRRT_actual"]);
+    assert_eq!(
+        f.validate(&v).unwrap_err().code,
+        "THREAD_REFERENCE_DUPLICATE"
+    );
+    for observation in [
+        json!({"thread_ids":["PRRT_actual","PRRT_actual"],"complete":true,"failures":[]}),
+        json!({"thread_ids":[],"complete":false,"failures":[]}),
+        json!({"thread_ids":[],"complete":true,"failures":[{"connection":"threads","reason":"failed"}]}),
+    ] {
+        f.prepared =
+            serde_json::from_value(json!({"context":f.prepared.context,"discussions":observation}))
+                .unwrap();
+        assert_eq!(
+            f.validate(&f.result()).unwrap_err().code,
+            "PREPARED_CONTEXT_INVALID"
+        );
+    }
+}

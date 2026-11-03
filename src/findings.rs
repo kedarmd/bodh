@@ -14,6 +14,7 @@ pub fn validate_findings(
     } else {
         None
     };
+    let thread_ids = prepared.discussions.validate()?;
     let mut ids = HashSet::new();
     for (i, f) in result.findings.iter().enumerate() {
         let p = format!("/findings/{i}");
@@ -55,6 +56,34 @@ pub fn validate_findings(
         for (j, l) in f.locations.iter().enumerate() {
             read_source(repository, &prepared.context, &l.source, control)
                 .map_err(|e| at(e, &format!("{p}/locations/{j}/source")))?;
+        }
+        let mut related = HashSet::new();
+        for (j, id) in f.related_thread_ids.iter().enumerate() {
+            if !related.insert(id.as_str()) {
+                return Err(ContractError::new(
+                    "THREAD_REFERENCE_DUPLICATE",
+                    "Related discussion IDs must be distinct",
+                    &format!("{p}/related_thread_ids/{j}"),
+                ));
+            }
+            if !thread_ids.contains(id.as_str()) {
+                let (code, message) = if prepared.discussions.complete {
+                    (
+                        "THREAD_REFERENCE_INVALID",
+                        "Thread ID is absent from the complete prepared observation",
+                    )
+                } else {
+                    (
+                        "DISCUSSIONS_INCOMPLETE",
+                        "Thread ID is unobserved; inspect the prepared discussion connection failures",
+                    )
+                };
+                return Err(ContractError::new(
+                    code,
+                    message,
+                    &format!("{p}/related_thread_ids/{j}"),
+                ));
+            }
         }
         let mut choices = HashSet::new();
         for (j, suggestion) in f.suggestions.iter().enumerate() {

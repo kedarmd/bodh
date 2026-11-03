@@ -21,6 +21,8 @@ pub struct PreparedEvidenceContext {
     pub context: ReviewContext,
     #[serde(default, deserialize_with = "crate::bounded_optional_text")]
     pub original_description: Option<String>,
+    #[serde(default)]
+    pub discussions: crate::DiscussionObservation,
 }
 #[derive(Debug, Clone)]
 pub struct OperationControl {
