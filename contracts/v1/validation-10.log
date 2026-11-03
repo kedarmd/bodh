@@ -1,0 +1,119 @@
+Validation mode: core
+Revision: 273db475eb1c6bdc8eb7b50652e236583cf82b7f
+Working tree: clean
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-9/target
+Spike Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-9/target
+test_core_runs_from_another_directory_with_quoted_manifest (test_validate.ValidationRunnerTests.test_core_runs_from_another_directory_with_quoted_manifest) ... ok
+test_desktop_includes_native_checks_without_launching_gui (test_validate.ValidationRunnerTests.test_desktop_includes_native_checks_without_launching_gui) ... ok
+test_failed_lint_stops_before_tests (test_validate.ValidationRunnerTests.test_failed_lint_stops_before_tests) ... ok
+test_gui_and_profile_use_locked_release_cargo_run_even_on_failure (test_validate.ValidationRunnerTests.test_gui_and_profile_use_locked_release_cargo_run_even_on_failure) ... ok
+test_invalid_mode_runs_no_tools (test_validate.ValidationRunnerTests.test_invalid_mode_runs_no_tools) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 1.762s
+
+OK
+test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes (test_harness.AcquisitionTests.test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes) ... ok
+test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility (test_harness.AnchorTests.test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility) ... ok
+test_pages_threads_and_each_threads_replies_independently (test_harness.DiscussionTests.test_pages_threads_and_each_threads_replies_independently) ... ok
+test_reports_partial_data_and_cursor_failure_without_claiming_complete (test_harness.DiscussionTests.test_reports_partial_data_and_cursor_failure_without_claiming_complete) ... ok
+test_timeout_retains_preceding_page_and_identifies_incomplete_connection (test_harness.DiscussionTests.test_timeout_retains_preceding_page_and_identifies_incomplete_connection) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.500s
+
+OK
+    Checking bodh v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-10)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.78s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+   Compiling bodh v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-10)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.34s
+     Running unittests src/lib.rs (/home/kedarmd/dev/bodh-worktrees/ticket-9/target/debug/deps/bodh-8dafd7c136458558)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/home/kedarmd/dev/bodh-worktrees/ticket-9/target/debug/deps/bodh-d51da9358d43f067)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/home/kedarmd/dev/bodh-worktrees/ticket-9/target/debug/deps/cli-b7a5233072ca3392)
+
+running 3 tests
+test malformed_input_includes_location_without_echoing_untrusted_text ... ok
+test non_unicode_arguments_produce_the_protocol_error_instead_of_panicking ... ok
+test cli_discovers_schema_and_rejects_bad_input_without_a_gui ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/contract.rs (/home/kedarmd/dev/bodh-worktrees/ticket-9/target/debug/deps/contract-4ead9fbc3c3bf682)
+
+running 7 tests
+test unsupported_versions_have_a_stable_error_and_pointer ... ok
+test committed_canonical_schema_cannot_drift_from_rust ... ok
+test discover_and_validate_an_empty_structural_result_without_a_workspace ... ok
+test exact_limits_accept_without_truncation_and_oversized_documents_fail ... ok
+test schema_and_strict_rust_reject_oversized_strings_and_collections ... ok
+test negative_contract_corpus_agrees_across_all_public_interfaces ... ok
+test complete_fixture_corpus_agrees_with_schema_rust_service_and_cli ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+
+     Running tests/evidence.rs (/home/kedarmd/dev/bodh-worktrees/ticket-9/target/debug/deps/evidence-9c7fc315be15ab68)
+
+running 10 tests
+test cancellation_timeout_and_blob_limits_fail_without_checkout_mutation ... ok
+test cli_timeout_covers_descendants_retaining_output_pipes ... ok
+test pinned_reads_ignore_replace_refs_and_legacy_grafts_and_reject_shallow_history ... ok
+test evidence_requires_an_exact_valid_preparation_and_real_commit_graph ... ok
+test oversized_committed_blobs_have_an_explicit_bound ... ok
+test review_evidence_reads_pinned_merge_base_and_head_without_touching_dirty_checkout ... ok
+test cli_evidence_validation_uses_shared_rules_and_ignores_ambient_git_redirection ... ok
+test key_changes_and_coverage_require_explained_nonempty_content ... ok
+test unsafe_or_unsupported_source_locators_fail_without_using_worktree_content ... ok
+test intent_quotes_are_exact_contiguous_original_claim_occurrences ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+   Doc-tests bodh
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-10/spikes/native-sequence)
+    Finished `dev` profile [unoptimized] target(s) in 0.40s
+    Checking bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-10/spikes/native-sequence)
+    Finished `dev` profile [unoptimized] target(s) in 0.30s
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-10/spikes/native-sequence)
+    Finished `test` profile [unoptimized] target(s) in 0.68s
+     Running unittests src/lib.rs (/home/kedarmd/dev/bodh-worktrees/ticket-9/target/debug/deps/bodh_sequence_spike-bb480cfa987549a1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/dev/bodh-worktrees/ticket-9/target/debug/deps/navigation-9ae367915ce5b8dd)
+
+running 5 tests
+test alternatives_share_one_conditional_frame ... ok
+test clicking_an_interaction_resolves_its_exact_immutable_source ... ok
+test self_call_on_the_last_participant_stays_inside_the_scrollable_scene ... ok
+test viewport_culling_keeps_partial_rows_and_original_source_identity ... ok
+test every_visible_hit_resolves_in_order_across_conditionals_and_stress_layouts ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests bodh_sequence_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Validation passed: core
