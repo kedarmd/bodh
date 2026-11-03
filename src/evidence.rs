@@ -126,6 +126,27 @@ pub fn validate_evidence(
     Ok(result)
 }
 
+/// Parses a bounded fixture preparation; production preparation acquisition follows separately.
+pub fn parse_prepared_evidence(input: &[u8]) -> Result<PreparedEvidenceContext, ContractError> {
+    if input.len() > crate::MAX_INPUT_BYTES {
+        return Err(ContractError::new(
+            "INPUT_TOO_LARGE",
+            "Preparation exceeds 8 MiB",
+            "",
+        ));
+    }
+    serde_json::from_slice(input).map_err(|error| {
+        let mut failure = ContractError::new(
+            "PREPARED_CONTEXT_INVALID",
+            "Expected a strict preparation context and optional original description",
+            "",
+        );
+        failure.line = Some(error.line());
+        failure.column = Some(error.column());
+        failure
+    })
+}
+
 /// Returns exact UTF-8 commit-blob lines, including original LF/CRLF delimiters.
 pub fn read_source(
     repository: &Path,
@@ -284,9 +305,10 @@ fn git(
         let result = stderr.take(65_537).read_to_end(&mut bytes);
         (result, bytes)
     });
+    let mut completed = None;
     let status = loop {
         if let Err(failure) = control.check() {
-            // The child is a dedicated process-group leader. Reap all descendants before joining readers.
+            // Terminate the dedicated process group, reap its leader, then join readers.
             unsafe {
                 libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
@@ -295,9 +317,12 @@ fn git(
             let _ = err.join();
             return Err(failure);
         }
+        if completed.is_some() && out.is_finished() && err.is_finished() {
+            break completed.expect("completed status");
+        }
         match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => thread::sleep(Duration::from_millis(2)),
+            Ok(Some(status)) => completed = Some(status),
+            Ok(None) => (),
             Err(_) => {
                 unsafe {
                     libc::kill(-(child.id() as i32), libc::SIGKILL);
@@ -312,6 +337,7 @@ fn git(
                 ));
             }
         }
+        thread::sleep(Duration::from_millis(2));
     };
     let (outcome, bytes) = out
         .join()

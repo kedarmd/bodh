@@ -347,3 +347,198 @@ fn key_changes_and_coverage_require_explained_nonempty_content() {
         );
     }
 }
+
+#[test]
+fn unsafe_or_unsupported_source_locators_fail_without_using_worktree_content() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    std::fs::write(f.repo.join("binary.bin"), b"a\0b").unwrap();
+    std::fs::write(
+        f.repo.join("pointer.txt"),
+        b"version https://git-lfs.github.com/spec/v1\r\noid sha256:abcd\r\nsize 9\r\n",
+    )
+    .unwrap();
+    std::fs::write(f.repo.join("empty.txt"), b"").unwrap();
+    std::fs::write(f.repo.join("utf8.txt"), [0xff]).unwrap();
+    std::fs::write(f.repo.join(":(glob)*.txt"), "literal\n").unwrap();
+    symlink("source.txt", f.repo.join("link.txt")).unwrap();
+    git(
+        &f.repo,
+        &[
+            "add",
+            "binary.bin",
+            "pointer.txt",
+            "empty.txt",
+            "utf8.txt",
+            ":(literal):(glob)*.txt",
+            "link.txt",
+        ],
+    );
+    git(&f.repo, &["commit", "-m", "content variants"]);
+    let mut context = f.prepared.context.clone();
+    context.head_sha = git(&f.repo, &["rev-parse", "HEAD"]);
+    let before = f.snapshot();
+    for (path, code) in [
+        ("../source.txt", "SOURCE_PATH_INVALID"),
+        ("/source.txt", "SOURCE_PATH_INVALID"),
+        ("./source.txt", "SOURCE_PATH_INVALID"),
+        ("dir//source.txt", "SOURCE_PATH_INVALID"),
+        ("dir/../source.txt", "SOURCE_PATH_INVALID"),
+        ("source.txt/", "SOURCE_PATH_INVALID"),
+        ("source.txt\\other", "SOURCE_PATH_INVALID"),
+        ("link.txt", "SOURCE_CONTENT_UNSUPPORTED"),
+        ("binary.bin", "SOURCE_CONTENT_UNSUPPORTED"),
+        ("pointer.txt", "SOURCE_CONTENT_UNSUPPORTED"),
+        ("utf8.txt", "SOURCE_CONTENT_UNSUPPORTED"),
+        ("empty.txt", "SOURCE_RANGE_INVALID"),
+        ("untracked.txt", "SOURCE_UNAVAILABLE"),
+        (".git/config", "SOURCE_UNAVAILABLE"),
+    ] {
+        let error = read_source(
+            &f.repo,
+            &context,
+            &SourceRef {
+                path: path.into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1,
+            },
+            &OperationControl::default(),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, code, "{path}");
+    }
+    assert_eq!(
+        read_source(
+            &f.repo,
+            &context,
+            &SourceRef {
+                path: ":(glob)*.txt".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1
+            },
+            &OperationControl::default()
+        )
+        .unwrap(),
+        "literal\n"
+    );
+    for (start_line, end_line) in [(0, 1), (2, 1), (4, 4)] {
+        assert_eq!(
+            read_source(
+                &f.repo,
+                &context,
+                &SourceRef {
+                    path: "source.txt".into(),
+                    revision: Revision::Head,
+                    start_line,
+                    end_line
+                },
+                &OperationControl::default()
+            )
+            .unwrap_err()
+            .code,
+            "SOURCE_RANGE_INVALID"
+        );
+    }
+    assert_eq!(f.snapshot(), before);
+}
+
+fn cli(f: &Fixture, input: &[u8], extra: &[(&str, &std::ffi::OsStr)]) -> (i32, serde_json::Value) {
+    use std::{io::Write, process::Stdio};
+    let context = f.repo.join("prepared.json");
+    std::fs::write(&context, serde_json::to_vec(&f.prepared).unwrap()).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_bodh"));
+    command
+        .args(["validate", "--input", "-", "--evidence-only", "--context"])
+        .arg(context)
+        .arg("--repository")
+        .arg(&f.repo)
+        .arg("--json")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (name, value) in extra {
+        command.env(name, value);
+    }
+    let mut process = command.spawn().unwrap();
+    process.stdin.take().unwrap().write_all(input).unwrap();
+    let output = process.wait_with_output().unwrap();
+    (
+        output.status.code().unwrap(),
+        serde_json::from_slice(&output.stdout).expect("one envelope"),
+    )
+}
+#[test]
+fn cli_evidence_validation_uses_shared_rules_and_ignores_ambient_git_redirection() {
+    use std::ffi::OsStr;
+    let f = Fixture::new();
+    let bytes = serde_json::to_vec(&f.result()).unwrap();
+    let (exit, body) = cli(
+        &f,
+        &bytes,
+        &[
+            ("GIT_DIR", OsStr::new("/definitely/missing")),
+            ("GIT_WORK_TREE", OsStr::new("/definitely/missing")),
+            ("GIT_CONFIG_COUNT", OsStr::new("invalid")),
+            ("GIT_INDEX_FILE", OsStr::new("/definitely/missing/index")),
+        ],
+    );
+    assert_eq!(exit, 0, "{body}");
+    assert_eq!(body["data"]["validation"], "evidence_only");
+    assert_eq!(body["data"]["semantic_validation_complete"], false);
+    let mut bad = f.result();
+    bad.context.context_id = "stale".into();
+    let (exit, body) = cli(&f, &serde_json::to_vec(&bad).unwrap(), &[]);
+    assert_eq!(exit, 3);
+    assert_eq!(body["error"]["code"], "CONTEXT_MISMATCH");
+    let (exit, body) = cli(&f, &bytes, &[("PATH", OsStr::new("/definitely/missing"))]);
+    assert_eq!(exit, 4);
+    assert_eq!(body["error"]["code"], "GIT_UNAVAILABLE");
+}
+
+#[test]
+fn cli_timeout_covers_descendants_retaining_output_pipes() {
+    use std::{
+        io::Write,
+        os::unix::fs::PermissionsExt,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let f = Fixture::new();
+    let context = f.repo.join("prepared.json");
+    std::fs::write(&context, serde_json::to_vec(&f.prepared).unwrap()).unwrap();
+    let bin = f.repo.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    // Parent exits immediately but its descendant retains stdout/stderr for 800 ms.
+    std::fs::write(bin.join("git"), "#!/bin/sh\n/bin/sleep 0.8 &\nexit 0\n").unwrap();
+    std::fs::set_permissions(bin.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let before = f.snapshot();
+    let started = Instant::now();
+    let mut p = Command::new(env!("CARGO_BIN_EXE_bodh"))
+        .args(["validate", "--input", "-", "--evidence-only", "--context"])
+        .arg(context)
+        .arg("--repository")
+        .arg(&f.repo)
+        .args(["--timeout-ms", "100"])
+        .env("PATH", bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    p.stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&f.result()).unwrap())
+        .unwrap();
+    let output = p.wait_with_output().unwrap();
+    assert!(
+        started.elapsed() < Duration::from_millis(600),
+        "deadline excludes a child retaining the pipes"
+    );
+    assert_eq!(output.status.code(), Some(5));
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["error"]["code"], "OPERATION_TIMEOUT");
+    assert_eq!(f.snapshot(), before);
+}
