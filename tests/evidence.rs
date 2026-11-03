@@ -183,3 +183,67 @@ fn evidence_requires_an_exact_valid_preparation_and_real_commit_graph() {
         "PREPARED_CONTEXT_INVALID"
     );
 }
+
+#[test]
+fn intent_quotes_are_exact_contiguous_original_claim_occurrences() {
+    let f = Fixture::new();
+    let mut v = serde_json::to_value(f.result()).unwrap();
+    v["overview"]["intent_assessments"] = json!([{"quote":"Preserve drafts.","occurrence":2,"status":"partial","explanation":"Head retains the branch","evidence":[{"source":{"path":"source.txt","revision":"head","start_line":2,"end_line":2},"explanation":"Pinned implementation"}],"finding_ids":[]}]);
+    validate_evidence(
+        &serde_json::to_vec(&v).unwrap(),
+        &f.prepared,
+        &f.repo,
+        &OperationControl::default(),
+    )
+    .unwrap();
+    for (field, value, code) in [
+        (
+            "quote",
+            json!("preserve drafts."),
+            "DESCRIPTION_QUOTE_INVALID",
+        ),
+        ("occurrence", json!(3), "DESCRIPTION_QUOTE_INVALID"),
+        ("occurrence", json!(0), "DESCRIPTION_QUOTE_INVALID"),
+        ("quote", json!(""), "DESCRIPTION_QUOTE_INVALID"),
+    ] {
+        let mut bad = v.clone();
+        bad["overview"]["intent_assessments"][0][field] = value;
+        assert_eq!(
+            validate_evidence(
+                &serde_json::to_vec(&bad).unwrap(),
+                &f.prepared,
+                &f.repo,
+                &OperationControl::default()
+            )
+            .unwrap_err()
+            .code,
+            code
+        );
+    }
+    let mut prepared = f.prepared.clone();
+    prepared.original_description = None;
+    assert_eq!(
+        validate_evidence(
+            &serde_json::to_vec(&v).unwrap(),
+            &prepared,
+            &f.repo,
+            &OperationControl::default()
+        )
+        .unwrap_err()
+        .code,
+        "DESCRIPTION_UNAVAILABLE"
+    );
+    let mut bad = v.clone();
+    bad["overview"]["intent_assessments"][0]["evidence"][0]["source"]["end_line"] = json!(99);
+    assert_eq!(
+        validate_evidence(
+            &serde_json::to_vec(&bad).unwrap(),
+            &f.prepared,
+            &f.repo,
+            &OperationControl::default()
+        )
+        .unwrap_err()
+        .pointer,
+        "/overview/intent_assessments/0/evidence/0/source/end_line"
+    );
+}

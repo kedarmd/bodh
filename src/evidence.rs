@@ -40,6 +40,38 @@ pub fn validate_evidence(
             )?;
         }
     }
+    for (i, assessment) in result.overview.intent_assessments.iter().enumerate() {
+        let pointer = format!("/overview/intent_assessments/{i}");
+        let description = prepared.original_description.as_ref().ok_or_else(|| {
+            ContractError::new(
+                "DESCRIPTION_UNAVAILABLE",
+                "No original description is available for claim validation",
+                &format!("{pointer}/quote"),
+            )
+        })?;
+        if assessment.quote.is_empty()
+            || assessment.occurrence == 0
+            || description
+                .char_indices()
+                .filter(|(offset, _)| description[*offset..].starts_with(&assessment.quote))
+                .nth(assessment.occurrence.saturating_sub(1) as usize)
+                .is_none()
+        {
+            return Err(ContractError::new(
+                "DESCRIPTION_QUOTE_INVALID",
+                "Quote must be exact contiguous original text at the one-based occurrence",
+                &format!("{pointer}/quote"),
+            ));
+        }
+        for (j, evidence) in assessment.evidence.iter().enumerate() {
+            read_source(repository, &prepared.context, &evidence.source, control).map_err(
+                |mut e| {
+                    e.pointer = format!("{pointer}/evidence/{j}/source{}", e.pointer);
+                    e
+                },
+            )?;
+        }
+    }
     Ok(result)
 }
 
