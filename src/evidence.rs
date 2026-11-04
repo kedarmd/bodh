@@ -21,6 +21,8 @@ pub struct PreparedEvidenceContext {
     pub context: ReviewContext,
     #[serde(default, deserialize_with = "crate::bounded_optional_text")]
     pub original_description: Option<String>,
+    #[serde(default)]
+    pub discussions: crate::DiscussionObservation,
 }
 #[derive(Debug, Clone)]
 pub struct OperationControl {
@@ -274,7 +276,7 @@ fn valid_sha(sha: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
-fn git(
+pub(crate) fn git(
     repository: &Path,
     control: &OperationControl,
     args: &[&str],
@@ -384,7 +386,7 @@ fn git(
     Ok(bytes)
 }
 
-fn validate_prepared_context(
+pub(crate) fn validate_prepared_context(
     repository: &Path,
     context: &ReviewContext,
     control: &OperationControl,

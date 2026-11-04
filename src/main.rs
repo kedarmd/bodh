@@ -27,7 +27,10 @@ fn run() -> Result<Value, ContractError> {
         return Err(arguments());
     }
     args.retain(|a| a != "--json");
-    if args.first().is_some_and(|a| a == "validate") && args.iter().any(|a| a == "--evidence-only")
+    if args.first().is_some_and(|a| a == "validate")
+        && args
+            .iter()
+            .any(|a| matches!(a.as_str(), "--evidence-only" | "--findings-only"))
     {
         return evidence_validation(&args[1..]);
     }
@@ -53,7 +56,7 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
     let mut options = std::collections::BTreeMap::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
-        if arg == "--evidence-only" {
+        if matches!(arg.as_str(), "--evidence-only" | "--findings-only") {
             if options.insert(arg.as_str(), "").is_some() {
                 return Err(arguments());
             }
@@ -70,6 +73,10 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
             return Err(arguments());
         }
     }
+    if options.contains_key("--findings-only") == options.contains_key("--evidence-only") {
+        return Err(arguments());
+    }
+    let findings = options.contains_key("--findings-only");
     let input = options.get("--input").ok_or_else(arguments)?;
     let context = options.get("--context").ok_or_else(arguments)?;
     if *input == "-" && *context == "-" {
@@ -86,15 +93,28 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
     }
     let prepared = bodh::parse_prepared_evidence(&read_input(context)?)?;
     let control = bodh::OperationControl::with_timeout(std::time::Duration::from_millis(timeout));
-    bodh::validate_evidence(
-        &read_input(input)?,
-        &prepared,
-        std::path::Path::new(repository),
-        &control,
-    )?;
-    Ok(
-        json!({"valid":true,"validation":"evidence_only","semantic_validation_complete":false,"remaining_checks":["findings_and_anchors","diagrams_and_follow_up"]}),
-    )
+    let bytes = read_input(input)?;
+    if findings {
+        bodh::validate_findings(
+            &bytes,
+            &prepared,
+            std::path::Path::new(repository),
+            &control,
+        )?;
+        Ok(
+            json!({"valid":true,"validation":"findings_and_evidence","semantic_validation_complete":false,"remaining_checks":["diagrams_and_follow_up"]}),
+        )
+    } else {
+        bodh::validate_evidence(
+            &bytes,
+            &prepared,
+            std::path::Path::new(repository),
+            &control,
+        )?;
+        Ok(
+            json!({"valid":true,"validation":"evidence_only","semantic_validation_complete":false,"remaining_checks":["findings_and_anchors","diagrams_and_follow_up"]}),
+        )
+    }
 }
 fn exit_category(error: &ContractError) -> i32 {
     match error.code.as_str() {
@@ -108,7 +128,7 @@ fn exit_category(error: &ContractError) -> i32 {
 fn arguments() -> ContractError {
     ContractError::new(
         "INVALID_ARGUMENTS",
-        "Use contract describe/schema, validate --input <file|-> --structural, or validate --input <file|-> --evidence-only --context <fixture.json> --repository <checkout> [--timeout-ms <0..120000>]; optional --json",
+        "Use contract describe/schema, validate --input <file|-> --structural, or validate --input <file|-> <--evidence-only|--findings-only> --context <fixture.json> --repository <checkout> [--timeout-ms <0..120000>]; optional --json",
         "",
     )
 }
