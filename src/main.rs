@@ -28,9 +28,12 @@ fn run() -> Result<Value, ContractError> {
     }
     args.retain(|a| a != "--json");
     if args.first().is_some_and(|a| a == "validate")
-        && args
-            .iter()
-            .any(|a| matches!(a.as_str(), "--evidence-only" | "--findings-only"))
+        && args.iter().any(|a| {
+            matches!(
+                a.as_str(),
+                "--evidence-only" | "--findings-only" | "--complete-fixture"
+            )
+        })
     {
         return evidence_validation(&args[1..]);
     }
@@ -56,7 +59,10 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
     let mut options = std::collections::BTreeMap::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
-        if matches!(arg.as_str(), "--evidence-only" | "--findings-only") {
+        if matches!(
+            arg.as_str(),
+            "--evidence-only" | "--findings-only" | "--complete-fixture"
+        ) {
             if options.insert(arg.as_str(), "").is_some() {
                 return Err(arguments());
             }
@@ -73,10 +79,17 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
             return Err(arguments());
         }
     }
-    if options.contains_key("--findings-only") == options.contains_key("--evidence-only") {
+    let modes = ["--findings-only", "--evidence-only", "--complete-fixture"];
+    if modes
+        .iter()
+        .filter(|mode| options.contains_key(**mode))
+        .count()
+        != 1
+    {
         return Err(arguments());
     }
     let findings = options.contains_key("--findings-only");
+    let complete = options.contains_key("--complete-fixture");
     let input = options.get("--input").ok_or_else(arguments)?;
     let context = options.get("--context").ok_or_else(arguments)?;
     if *input == "-" && *context == "-" {
@@ -94,7 +107,17 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
     let prepared = bodh::parse_prepared_evidence(&read_input(context)?)?;
     let control = bodh::OperationControl::with_timeout(std::time::Duration::from_millis(timeout));
     let bytes = read_input(input)?;
-    if findings {
+    if complete {
+        bodh::validate_complete(
+            &bytes,
+            &prepared,
+            std::path::Path::new(repository),
+            &control,
+        )?;
+        Ok(
+            json!({"valid":true,"validation":"complete_fixture_context","semantic_validation_complete":true,"preparation_authority":"fixture_only"}),
+        )
+    } else if findings {
         bodh::validate_findings(
             &bytes,
             &prepared,
@@ -128,7 +151,7 @@ fn exit_category(error: &ContractError) -> i32 {
 fn arguments() -> ContractError {
     ContractError::new(
         "INVALID_ARGUMENTS",
-        "Use contract describe/schema, validate --input <file|-> --structural, or validate --input <file|-> <--evidence-only|--findings-only> --context <fixture.json> --repository <checkout> [--timeout-ms <0..120000>]; optional --json",
+        "Use contract describe/schema, validate --input <file|-> --structural, or validate --input <file|-> <--evidence-only|--findings-only|--complete-fixture> --context <fixture.json> --repository <checkout> [--timeout-ms <0..120000>]; optional --json",
         "",
     )
 }

@@ -50,7 +50,9 @@ pub(crate) fn validate_diagrams(
             }
         }
 
-        let mut step_ids = HashSet::new();
+        // Participant and step references share a scoped ID namespace per diagram.
+        let mut step_ids: HashSet<String> =
+            participants.iter().map(|id| (*id).to_owned()).collect();
         let mut known_messages = HashMap::new();
         validate_top_steps(
             &diagram.steps,
@@ -66,6 +68,7 @@ pub(crate) fn validate_diagrams(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_top_steps(
     steps: &[Step],
     participants: &HashSet<&str>,
@@ -143,13 +146,14 @@ fn validate_top_steps(
                         &format!("{item}/participant"),
                     ));
                 }
-                validate_optional_source(
+                validate_code_source(
                     source.as_ref(),
                     context,
                     repository,
                     control,
                     &format!("{item}/source"),
                 )?;
+                messages.insert(id.clone(), (participant.clone(), participant.clone()));
             }
             Step::Note {
                 id,
@@ -252,6 +256,7 @@ fn validate_top_steps(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_simple_steps(
     steps: &[SimpleStep],
     participants: &HashSet<&str>,
@@ -329,13 +334,14 @@ fn validate_simple_steps(
                         &format!("{item}/participant"),
                     ));
                 }
-                validate_optional_source(
+                validate_code_source(
                     source.as_ref(),
                     context,
                     repository,
                     control,
                     &format!("{item}/source"),
                 )?;
+                messages.insert(id.clone(), (participant.clone(), participant.clone()));
             }
             SimpleStep::Note {
                 id,
@@ -387,7 +393,7 @@ fn validate_message(
             &format!("{pointer}/to"),
         ));
     }
-    validate_optional_source(
+    validate_code_source(
         source,
         context,
         repository,
@@ -431,7 +437,7 @@ fn validate_return(
             &format!("{pointer}/from"),
         ));
     }
-    validate_optional_source(
+    validate_code_source(
         source,
         context,
         repository,
@@ -440,6 +446,7 @@ fn validate_return(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_note(
     id: &str,
     note_participants: &[String],
@@ -526,6 +533,27 @@ fn validate_optional_source(
             error
         })?;
     }
+    Ok(())
+}
+
+fn validate_code_source(
+    source: Option<&crate::SourceRef>,
+    context: &ReviewContext,
+    repository: &Path,
+    control: &OperationControl,
+    pointer: &str,
+) -> Result<(), ContractError> {
+    let source = source.ok_or_else(|| {
+        invalid(
+            "STEP_SOURCE_REQUIRED",
+            "Message, return and self-call steps need a pinned source reference",
+            pointer,
+        )
+    })?;
+    read_source(repository, context, source, control).map_err(|mut error| {
+        error.pointer = format!("{pointer}{}", error.pointer);
+        error
+    })?;
     Ok(())
 }
 
