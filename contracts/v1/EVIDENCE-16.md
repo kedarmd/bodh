@@ -8,13 +8,13 @@ The user-approved D2 baseline is recorded outside the repository at `/home/kedar
 
 ## Automated verification
 
-- `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passed after integrating `e12dbf2` (#14/#15) and the #16 implementation. The run exercised CLI/core, acquisition and discussion tests, GPUI check/Clippy/test targets. Full output is in [VALIDATE-16.log](VALIDATE-16.log). The runner started with #16 working-tree edits present.
+- `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passed on commit `27a6764` after integrating `e12dbf2` (#14/#15). The run exercised CLI/core, acquisition and discussion tests, GPUI check/Clippy/test targets. Full output is in [VALIDATE-16.log](VALIDATE-16.log).
 - Added native crate tests for title/number/author/lifecycle matching and preference save/reload; both passed in the desktop run.
 - `cargo fmt --manifest-path spikes/native-sequence/Cargo.toml --all --check` and `git diff --check` passed.
 
 ## Native launch and render
 
-- `CARGO_BUILD_JOBS=2 ./scripts/validate gui` compiled the optimized release app and launched it in the graphical session. At capture time, the runner had not exited because the app window remained open for inspection; successful process exit is still pending.
+- `CARGO_BUILD_JOBS=2 ./scripts/validate gui` compiled the optimized release app and launched it in the graphical session. The app window remains open for inspection; successful runner exit is still pending until the window is closed after the user's trial.
 - Runtime: Linux x86_64, Rust 1.99.0, GPUI 0.2.2, Hyprland/Wayland; monitor scale 1, 1920×1080. Native client PID 905174, Bodh class `bodh-review-workspace`, client geometry 947×1020 at compositor coordinates `(-955, 668)`.
 - [product-home.png](../../spikes/native-sequence/evidence/product-home.png) is a capture of only the Bodh client window at its live geometry. It shows the repository empty state, checkout path entry, Open Repository action, and recent-review empty state. Visual inspection found readable text and a clear primary path at this viewport.
 - No pointer or keyboard automation was run. The native window remains open for the user’s trial and screen acceptance. Home path entry, live GitHub listing, search/lifecycle, workspace resume, pinned source selection and finish entry have not been accepted through native interaction yet.
