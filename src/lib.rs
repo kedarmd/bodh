@@ -1,4 +1,5 @@
 //! Shared headless review contract. Structural validation does not certify evidence.
+mod acquisition;
 mod diagrams;
 mod diff;
 mod discussions;

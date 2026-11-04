@@ -253,13 +253,14 @@ pub fn prepare_local_pr_with_gh(
         .collect::<Vec<_>>();
     let mut matching = Vec::new();
     for name in remotes {
-        let urls = crate::evidence::git(root, control, &["remote", "get-url", "--all", name])?;
+        let key = format!("remote.{name}.url");
+        let urls = crate::evidence::git(root, control, &["config", "--get-all", &key])?;
         for url in std::str::from_utf8(&urls)
             .map_err(|_| state_error())?
             .lines()
         {
             if let Some((host, owner, repo)) = parse_remote(url)
-                && host == "github.com"
+                && supported_host(&host)
             {
                 matching.push((name.to_owned(), url.to_owned(), host, owner, repo));
             }
@@ -344,12 +345,69 @@ pub fn prepare_local_pr_with_gh(
     }
     let base = str_at(&["base", "sha"])?;
     let head = str_at(&["head", "sha"])?;
-    for sha in [&base, &head] {
-        crate::evidence::git(
-            root,
-            control,
-            &["cat-file", "-e", &format!("{sha}^{{commit}}")],
-        )?;
+    let base_ref = api
+        .get("base")
+        .and_then(|v| v.get("ref"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("__unavailable");
+    let head_ref = api
+        .get("head")
+        .and_then(|v| v.get("ref"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("__unavailable");
+    let acquisition_key = format!("{host}/{owner}/{repository}/{number}");
+    crate::acquisition::acquire_commit(
+        root,
+        control,
+        &url,
+        &format!("refs/heads/{base_ref}"),
+        &base,
+        &format!("{acquisition_key}/base"),
+    )?;
+    let head_acquired = crate::acquisition::acquire_commit(
+        root,
+        control,
+        &url,
+        &format!("refs/pull/{number}/head"),
+        &head,
+        &format!("{acquisition_key}/head"),
+    );
+    if let Err(primary_error) = head_acquired {
+        let fork_url = api
+            .get("head")
+            .and_then(|v| v.get("repo"))
+            .and_then(|v| v.get("clone_url"))
+            .and_then(serde_json::Value::as_str);
+        let head_full_name = api
+            .get("head")
+            .and_then(|v| v.get("repo"))
+            .and_then(|v| v.get("full_name"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_ascii_lowercase);
+        let fallback = match (fork_url.and_then(parse_remote), head_full_name) {
+            (Some((fork_host, fork_owner, fork_repo)), Some(full_name))
+                if fork_host == host && full_name == format!("{fork_owner}/{fork_repo}") =>
+            {
+                Some(crate::acquisition::acquire_commit(
+                    root,
+                    control,
+                    fork_url.expect("parsed clone URL exists"),
+                    &format!("refs/heads/{head_ref}"),
+                    &head,
+                    &format!("{acquisition_key}/head"),
+                ))
+            }
+            _ => None,
+        };
+        match fallback {
+            Some(Ok(())) => {}
+            Some(Err(error))
+                if matches!(error.code.as_str(), "CANCELLED" | "OPERATION_TIMEOUT") =>
+            {
+                return Err(error);
+            }
+            _ => return Err(primary_error),
+        }
     }
     let bases = crate::evidence::git(root, control, &["merge-base", "--all", &base, &head])?;
     let bases = std::str::from_utf8(&bases)
@@ -505,12 +563,23 @@ fn run_gh(
 }
 
 fn parse_remote(value: &str) -> Option<(String, String, String)> {
-    let (host, path) = if let Some(rest) = value
-        .strip_prefix("https://")
-        .or_else(|| value.strip_prefix("ssh://"))
-    {
+    let (host, path) = if let Some(rest) = value.strip_prefix("https://") {
         let (host, path) = rest.split_once('/')?;
         if host.contains('@') || host.contains(':') || path.contains(['?', '#', '%']) {
+            return None;
+        }
+        (host.to_ascii_lowercase(), path)
+    } else if let Some(rest) = value.strip_prefix("ssh://") {
+        let (authority, path) = rest.split_once('/')?;
+        let host = if let Some((user, host)) = authority.rsplit_once('@') {
+            if !matches!(user, "git" | "ssh") {
+                return None;
+            }
+            host
+        } else {
+            authority
+        };
+        if host.contains(['@', ':']) || path.contains(['?', '#', '%']) {
             return None;
         }
         (host.to_ascii_lowercase(), path)
@@ -533,7 +602,7 @@ fn parse_remote(value: &str) -> Option<(String, String, String)> {
     if parts.next().is_some()
         || [owner, repo].iter().any(|p| {
             p.is_empty()
-                || p.contains(['.', '%']) && *p == ".."
+                || matches!(*p, "." | "..")
                 || p.chars()
                     .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
         })
@@ -541,6 +610,23 @@ fn parse_remote(value: &str) -> Option<(String, String, String)> {
         return None;
     }
     Some((host, owner.to_ascii_lowercase(), repo.to_ascii_lowercase()))
+}
+fn supported_host(host: &str) -> bool {
+    !host.is_empty()
+        && host.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && part
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && part
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+        })
 }
 fn context_hash(context: &ReviewContext) -> String {
     let text = format!(
