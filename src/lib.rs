@@ -2,9 +2,11 @@
 mod acquisition;
 mod diagrams;
 mod diff;
+mod discussion_acquisition;
 mod discussions;
 mod evidence;
 pub use diff::*;
+pub use discussion_acquisition::*;
 pub use discussions::*;
 mod findings;
 pub use findings::*;

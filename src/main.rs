@@ -106,7 +106,10 @@ fn prepare_command(args: &[String]) -> Result<Value, ContractError> {
         std::path::Path::new(state),
         &control,
     )?;
-    Ok(serde_json::to_value(manifest).expect("manifest serializes"))
+    with_discussion_summary(
+        serde_json::to_value(manifest).expect("manifest serializes"),
+        state,
+    )
 }
 fn inspect_command(args: &[String]) -> Result<Value, ContractError> {
     let o = options(
@@ -129,7 +132,10 @@ fn inspect_command(args: &[String]) -> Result<Value, ContractError> {
     let state = o.get("--state").ok_or_else(arguments)?;
     let p = bodh::PreparationStore::open(std::path::Path::new(state))?.load(id)?;
     match kind.as_str() {
-        "manifest" => Ok(serde_json::to_value(bodh::PreparationManifest::from(p)).unwrap()),
+        "manifest" => with_discussion_summary(
+            serde_json::to_value(bodh::PreparationManifest::from(p)).unwrap(),
+            state,
+        ),
         "description" => Ok(json!({"available":p.description.is_some(),"text":p.description})),
         "files" => bodh::inspect_files(
             &p,
@@ -144,9 +150,9 @@ fn inspect_command(args: &[String]) -> Result<Value, ContractError> {
                 .map_err(|_| arguments())?
                 .unwrap_or(100),
         ),
-        "discussions" => Ok(
-            json!({"available":false,"complete":false,"reason":"DISCUSSIONS_NOT_ACQUIRED_IN_13"}),
-        ),
+        "discussions" => {
+            bodh::acquire_discussions(&p, std::path::Path::new(state), &inspect_control(&o)?)
+        }
         "previous" => Ok(json!({"available":false,"reason":"NO_PRIOR_RESULT"})),
         "source" => {
             let path = o.get("--path").ok_or_else(arguments)?;
@@ -192,6 +198,24 @@ fn inspect_command(args: &[String]) -> Result<Value, ContractError> {
         }
         _ => Err(arguments()),
     }
+}
+fn with_discussion_summary(mut manifest: Value, state: &str) -> Result<Value, ContractError> {
+    let preparation_id = manifest
+        .get("preparation_id")
+        .and_then(Value::as_str)
+        .ok_or_else(arguments)?;
+    let summary = bodh::latest_discussion_summary(std::path::Path::new(state), preparation_id)?;
+    if let Some(object) = manifest.as_object_mut() {
+        object.insert(
+            "discussions_complete".into(),
+            summary
+                .get("complete")
+                .cloned()
+                .unwrap_or(Value::Bool(false)),
+        );
+        object.insert("discussions".into(), summary);
+    }
+    Ok(manifest)
 }
 fn inspect_control(
     o: &std::collections::BTreeMap<String, String>,
