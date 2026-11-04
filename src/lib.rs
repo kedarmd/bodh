@@ -1,4 +1,5 @@
 //! Shared headless review contract. Structural validation does not certify evidence.
+mod diagrams;
 mod diff;
 mod discussions;
 mod evidence;
@@ -16,6 +17,18 @@ pub const PROTOCOL_VERSION: &str = "1.0";
 pub const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_STRING_CHARS: usize = 65_536;
 pub const MAX_COLLECTION_ITEMS: usize = 1_024;
+
+/// Validates the complete schema v1 result against its trusted prepared context.
+pub fn validate_complete(
+    input: &[u8],
+    prepared: &PreparedEvidenceContext,
+    repository: &std::path::Path,
+    control: &OperationControl,
+) -> Result<ReviewResult, ContractError> {
+    let result = validate_findings(input, prepared, repository, control)?;
+    diagrams::validate_diagrams(&result, &prepared.context, repository, control)?;
+    Ok(result)
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ContractError {

@@ -23,6 +23,35 @@ pub struct PreparedEvidenceContext {
     pub original_description: Option<String>,
     #[serde(default)]
     pub discussions: crate::DiscussionObservation,
+    /// `None` means that no prior result exists; `Some([])` is an available empty result.
+    #[serde(default, deserialize_with = "prior_concerns")]
+    pub prior_concerns: Option<Vec<PriorConcern>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PriorConcern {
+    #[serde(deserialize_with = "crate::bounded_text")]
+    pub id: String,
+    #[serde(deserialize_with = "crate::bounded_text")]
+    pub title: String,
+    #[serde(deserialize_with = "crate::bounded_text")]
+    pub summary: String,
+}
+
+fn prior_concerns<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<PriorConcern>>, D::Error> {
+    let concerns = Option::<Vec<PriorConcern>>::deserialize(d)?;
+    if concerns
+        .as_ref()
+        .is_some_and(|list| list.len() > crate::MAX_COLLECTION_ITEMS)
+    {
+        return Err(serde::de::Error::custom(
+            "prior-concern count exceeds item limit",
+        ));
+    }
+    Ok(concerns)
 }
 #[derive(Debug, Clone)]
 pub struct OperationControl {
