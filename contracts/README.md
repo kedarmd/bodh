@@ -1,6 +1,6 @@
 # Bodh review contract (v1 fixture validation)
 
-Issues #9–#12 freeze the v1 result shape and implement complete structural and semantic validation against a caller-supplied fixture preparation: source and overview evidence, diff anchors, suggestions, prepared discussion references, diagram semantics and follow-up assessments. `semantic_validation_complete: true` means every defined v1 contract check ran; it does not certify semantic truth, source quality, or completeness of the caller's preparation. Validation invokes installed Git read commands; it launches no GUI, daemon or AI, invokes no gh request and writes no workspace or remote state. Production preparation IDs, acquisition and persistence are #13 and are not implemented here.
+Issues #9–#12 freeze the v1 result shape and implement complete structural and semantic validation against a caller-supplied fixture preparation. Issue #13 adds an initial headless prepare/inspect path backed by SQLite; it supports GitHub.com PRs whose exact base/head commits already exist in a non-shallow matching checkout. Discussions and previous results are explicitly unavailable in this slice; see [#13 evidence](v1/EVIDENCE-13.md).
 
 Run from the checkout:
 
@@ -47,18 +47,18 @@ Exit categories reserved across CLI operations:
 
 Structural and complete fixture validation use 0/2 for success/input-contract errors. Evidence validation also uses 3 for context mismatch, 4 for unavailable Git/tool/objects, 5 for cancellation/deadline and 10 for process/read failures. Unsupported content, bounds and invalid evidence remain input/contract failures (2). Later adapters must preserve these categories.
 
-The continuation vocabulary reserves `prepare`, `inspect`, production `validate`, `commit`, `authorize-replacement` and optional `open`. Fixture-frozen transport (production commands remain unimplemented):
+The continuation vocabulary includes `prepare`, `inspect`, production `validate`, `commit`, `authorize-replacement` and optional `open`. Fixture-frozen transport:
 
 ```text
-prepare --repo <checkout> --pr <number> [--remote <name>]
-inspect --prepared <preparation-id> --kind <manifest|description|files|diff|source|discussions|previous> [...locator flags]
+prepare --repo <checkout> --pr <number> --state <database> [--remote <name>]
+inspect --prepared <preparation-id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database> [...locator flags]
 validate --prepared <preparation-id> --input <file>
 commit --prepared <preparation-id> --input <file|-> [--approval <grant-id>]
 authorize-replacement --prepared <preparation-id> [...human interaction]
 open --repo <checkout> --pr <number>
 ```
 
-These production commands are reserved, not implemented or advertised as available. Repository/host selection and source locator flags must remain explicit where ambiguous. Prepare returns an opaque preparation ID with the expected workspace generation and draft revision bound to that individual preparation. The result's deterministic `context.context_id` is separate and cannot act as a concurrency token. Later `validate`/`commit` use `--prepared` to retain that binding; repeated prepares cannot overwrite another preparation's expected generation. Human grants bind the same context/revisions with expiry and one-time use; no `--force` may fabricate approval. State-location options and exact inspect locators continue in #13's implementation agreement.
+`prepare --repo <checkout> --pr <number> --state <database> [--remote <name>]` requires exactly one matching GitHub.com remote unless selected explicitly. It uses installed authenticated `gh` for read-only REST metadata. It fails if the checkout is shallow or pinned commits are missing locally; it does not fetch or substitute moved refs. Each invocation stores its own preparation ID and metadata snapshot with an expected generation; deterministic SHA-256 context IDs identify immutable comparison inputs. `inspect` requires the same explicit `--state` path. Files are returned in pages of at most 100; diff patches are returned in 64 KiB UTF-8 pages for an indexed path; source reads use the stored checkout and pinned context. Discussions and previous results report unavailable. Publication and replacement authorization remain later work.
 
 ## Executable evidence
 
