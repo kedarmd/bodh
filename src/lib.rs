@@ -1,4 +1,5 @@
 //! Shared headless review contract. Structural validation does not certify evidence.
+mod diagrams;
 mod diff;
 mod discussions;
 mod evidence;
@@ -6,6 +7,7 @@ pub use diff::*;
 pub use discussions::*;
 mod findings;
 pub use findings::*;
+mod follow_up;
 mod model;
 pub use evidence::*;
 pub use model::*;
@@ -16,6 +18,19 @@ pub const PROTOCOL_VERSION: &str = "1.0";
 pub const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_STRING_CHARS: usize = 65_536;
 pub const MAX_COLLECTION_ITEMS: usize = 1_024;
+
+/// Validates the complete schema v1 result against its trusted prepared context.
+pub fn validate_complete(
+    input: &[u8],
+    prepared: &PreparedEvidenceContext,
+    repository: &std::path::Path,
+    control: &OperationControl,
+) -> Result<ReviewResult, ContractError> {
+    let result = validate_findings(input, prepared, repository, control)?;
+    diagrams::validate_diagrams(&result, &prepared.context, repository, control)?;
+    follow_up::validate_follow_up(&result, prepared, repository, control)?;
+    Ok(result)
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ContractError {
@@ -89,7 +104,7 @@ pub fn validate_structure(input: &[u8]) -> Result<ReviewResult, ContractError> {
 }
 
 pub fn describe() -> Value {
-    json!({"schema_version":"1.0","status":"provisional","validation":"structural_only","semantic_validation_available":false,"evidence_validation_available":true,"finding_validation_available":true,"limits":{"input_bytes":MAX_INPUT_BYTES,"string_characters":MAX_STRING_CHARS,"collection_items":MAX_COLLECTION_ITEMS},"commands":["contract describe","contract schema","validate --input <file> --structural","validate --input <file> --evidence-only --context <fixture.json> --repository <checkout>","validate --input <file> --findings-only --context <fixture.json> --repository <checkout>"],"reserved_commands":["prepare","inspect","validate --prepared <preparation-id>","commit","authorize-replacement","open"],"exit_categories":{"success":0,"input_contract":2,"stale_state":3,"auth_access":4,"network_uncertain":5,"internal":10}})
+    json!({"schema_version":"1.0","status":"frozen_contract_fixture_validation_complete","validation":"complete_fixture_context","semantic_validation_complete":true,"production_preparation_validation_available":false,"limits":{"input_bytes":MAX_INPUT_BYTES,"string_characters":MAX_STRING_CHARS,"collection_items":MAX_COLLECTION_ITEMS},"commands":["contract describe","contract schema","validate --input <file> --structural","validate --input <file> --evidence-only --context <fixture.json> --repository <checkout>","validate --input <file> --findings-only --context <fixture.json> --repository <checkout>","validate --input <file> --complete-fixture --context <fixture.json> --repository <checkout>"],"reserved_commands":["prepare --repo <checkout> --pr <number> [--remote <name>]","inspect --prepared <preparation-id> --kind <manifest|description|files|diff|source|discussions|previous> [...locator flags]","validate --prepared <preparation-id> --input <file>","commit --prepared <preparation-id> --input <file> [--approval <grant-id>]","authorize-replacement --prepared <preparation-id> [...human interaction]","open --repo <checkout> --pr <number>"],"exit_categories":{"success":0,"input_contract":2,"stale_state":3,"auth_access":4,"network_uncertain":5,"internal":10}})
 }
 
 fn bound_schema(value: &mut Value) {

@@ -22,7 +22,12 @@ fn cli_discovers_schema_and_rejects_bad_input_without_a_gui() {
     let (exit, body, stderr) = run(&["--json", "contract", "describe"], b"");
     assert_eq!(exit, 0, "{stderr}");
     assert_eq!(body["protocol_version"], "1.0");
-    assert_eq!(body["data"]["validation"], "structural_only");
+    assert_eq!(body["data"]["validation"], "complete_fixture_context");
+    assert_eq!(body["data"]["semantic_validation_complete"], true);
+    assert_eq!(
+        body["data"]["production_preparation_validation_available"],
+        false
+    );
     let (exit, schema, _) = run(&["contract", "schema", "--json"], b"");
     assert_eq!(exit, 0);
     assert_eq!(schema["data"]["additionalProperties"], false);
