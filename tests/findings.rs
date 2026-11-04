@@ -543,3 +543,55 @@ fn repository_diff_presentation_settings_cannot_change_canonical_hunk_mapping() 
         }]
     );
 }
+
+#[test]
+fn file_to_directory_changes_are_distinct_path_entries_with_correct_anchor_sides() {
+    let mut f = Fixture::new();
+    std::fs::remove_file(f.repo.join("source.txt")).unwrap();
+    std::fs::create_dir(f.repo.join("source.txt")).unwrap();
+    std::fs::write(f.repo.join("source.txt/child.txt"), "directory child\n").unwrap();
+    git(&f.repo, &["add", "-A"]);
+    git(&f.repo, &["commit", "-m", "file becomes directory"]);
+    f.prepared.context.head_sha = git(&f.repo, &["rev-parse", "HEAD"]);
+    let index =
+        bodh::diff_index(&f.repo, &f.prepared.context, &OperationControl::default()).unwrap();
+    let removed = index
+        .files
+        .iter()
+        .find(|file| file.old_path.as_deref() == Some("source.txt"))
+        .unwrap();
+    assert_eq!(removed.new_path, None);
+    assert_eq!(removed.hunks[0].old_start, 1);
+    assert_eq!(removed.hunks[0].old_lines, 40);
+    let added = index
+        .files
+        .iter()
+        .find(|file| file.new_path.as_deref() == Some("source.txt/child.txt"))
+        .unwrap();
+    assert_eq!(added.old_path, None);
+    assert_eq!(added.hunks[0].new_start, 1);
+    assert_eq!(added.hunks[0].new_lines, 1);
+}
+
+#[test]
+fn non_utf8_git_paths_are_reported_as_unsupported_without_becoming_anchors() {
+    use std::os::unix::ffi::OsStringExt;
+    let mut f = Fixture::new();
+    let hostile = std::ffi::OsString::from_vec(b"invalid-\xff-name".to_vec());
+    std::fs::write(f.repo.join(&hostile), "not addressable as UTF-8\n").unwrap();
+    let added = Command::new("git")
+        .arg("-C")
+        .arg(&f.repo)
+        .args(["add", "--"])
+        .arg(&hostile)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(added.status.success());
+    git(&f.repo, &["commit", "-m", "non utf8 filename"]);
+    f.prepared.context.head_sha = git(&f.repo, &["rev-parse", "HEAD"]);
+    let error =
+        bodh::diff_index(&f.repo, &f.prepared.context, &OperationControl::default()).unwrap_err();
+    assert_eq!(error.code, "DIFF_PATH_UNSUPPORTED");
+}

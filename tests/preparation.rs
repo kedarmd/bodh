@@ -81,7 +81,15 @@ fn prepares_ordinary_pr_from_pinned_local_commits_without_touching_checkout() {
     let response = format!(
         r#"{{"title":"first","body":"description","base":{{"repo":{{"full_name":"acme/widget"}},"sha":"{base}"}},"head":{{"sha":"{head}"}}}}"#
     );
-    std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s' '{response}'\n")).unwrap();
+    std::fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s' '{}'\n",
+            root.join("gh-args").display(),
+            response
+        ),
+    )
+    .unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
     let state = root.join("state.sqlite");
     let snapshot = || {
@@ -298,4 +306,171 @@ fn repeated_preparations_keep_distinct_ids_and_generation_bindings_after_reopen(
     };
     assert_eq!(reopened.load(&second_id).unwrap().title, "third title");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn acquires_missing_fork_head_from_the_explicit_fork_ref_without_touching_checkout_state() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!(
+        "bodh-fork-acquire-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let server = root.join("upstream.git");
+    Command::new("git")
+        .args(["init", "--bare", server.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let fork_server = root.join("fork.git");
+    Command::new("git")
+        .args(["init", "--bare", fork_server.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let source = root.join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    git(&source, &["init", "-b", "main"]);
+    std::fs::write(source.join("src.txt"), "base\n").unwrap();
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-m", "base"]);
+    let base = git(&source, &["rev-parse", "HEAD"]);
+    git(&source, &["checkout", "-b", "feature"]);
+    std::fs::write(source.join("src.txt"), "fork head\n").unwrap();
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-m", "fork head"]);
+    let head = git(&source, &["rev-parse", "HEAD"]);
+    git(&source, &["push", server.to_str().unwrap(), "main"]);
+    git(&source, &["push", fork_server.to_str().unwrap(), "feature"]);
+
+    let repo = root.join("checkout");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-b", "workspace"]);
+    std::fs::write(repo.join("local.txt"), "private base\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-m", "workspace"]);
+    git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "review",
+            "ssh://git@git.example.invalid/acme/widget.git",
+        ],
+    );
+    git(
+        &repo,
+        &[
+            "config",
+            &format!("url.file://{}.insteadOf", server.display()),
+            "ssh://git@git.example.invalid/acme/widget.git",
+        ],
+    );
+    git(
+        &repo,
+        &[
+            "config",
+            &format!("url.file://{}.insteadOf", fork_server.display()),
+            "ssh://git@git.example.invalid/someone/widget.git",
+        ],
+    );
+    let fake = root.join("gh");
+    let gh_args_path = root.join("gh-args");
+    let response = format!(
+        r#"{{"title":"fork","body":"desc","base":{{"repo":{{"full_name":"acme/widget","clone_url":"ssh://git@git.example.invalid/acme/widget.git"}},"ref":"main","sha":"{base}"}},"head":{{"repo":{{"full_name":"someone/widget","clone_url":"ssh://git@git.example.invalid/someone/widget.git"}},"ref":"feature","sha":"{head}"}}}}"#
+    );
+    std::fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s' '{response}'\n",
+            gh_args_path.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(repo.join("local.txt"), "dirty tracked\n").unwrap();
+    std::fs::write(repo.join("staged.txt"), "staged\n").unwrap();
+    git(&repo, &["add", "staged.txt"]);
+    std::fs::write(repo.join("untracked.txt"), "keep me\n").unwrap();
+    let state = root.join("state.sqlite");
+    let before = (
+        git(&repo, &["rev-parse", "HEAD"]),
+        git(&repo, &["symbolic-ref", "HEAD"]),
+        std::fs::read(repo.join(".git/index")).unwrap(),
+        std::fs::read(repo.join("local.txt")).unwrap(),
+        std::fs::read(repo.join("staged.txt")).unwrap(),
+        std::fs::read(repo.join("untracked.txt")).unwrap(),
+    );
+    let prepared = prepare_local_pr_with_gh(
+        &repo,
+        17,
+        Some("review"),
+        &state,
+        &OperationControl::default(),
+        &fake,
+    )
+    .unwrap();
+    let gh_args = std::fs::read_to_string(gh_args_path).unwrap();
+    assert!(gh_args.contains("--hostname\ngit.example.invalid\n"));
+    assert_eq!(prepared.context.base_sha, base);
+    assert_eq!(prepared.context.head_sha, head);
+    assert_eq!(prepared.changed_files.len(), 1);
+    assert_eq!(
+        prepared.changed_files[0].new_path.as_deref(),
+        Some("src.txt")
+    );
+    assert_eq!(before.0, git(&repo, &["rev-parse", "HEAD"]));
+    assert_eq!(before.1, git(&repo, &["symbolic-ref", "HEAD"]));
+    assert_eq!(before.2, std::fs::read(repo.join(".git/index")).unwrap());
+    assert_eq!(before.3, std::fs::read(repo.join("local.txt")).unwrap());
+    assert_eq!(before.4, std::fs::read(repo.join("staged.txt")).unwrap());
+    assert_eq!(before.5, std::fs::read(repo.join("untracked.txt")).unwrap());
+    let loaded = PreparationStore::open(&state)
+        .unwrap()
+        .load(&prepared.preparation_id)
+        .unwrap();
+    let pinned_source = bodh::read_source(
+        &repo,
+        &loaded.context,
+        &bodh::SourceRef {
+            path: "src.txt".into(),
+            revision: bodh::Revision::Head,
+            start_line: 1,
+            end_line: 1,
+        },
+        &OperationControl::default(),
+    )
+    .unwrap();
+    assert_eq!(pinned_source, "fork head\n");
+    git(
+        &source,
+        &[
+            "push",
+            server.to_str().unwrap(),
+            "feature:refs/pull/18/head",
+        ],
+    );
+    let via_pull_ref = prepare_local_pr_with_gh(
+        &repo,
+        18,
+        Some("review"),
+        &state,
+        &OperationControl::default(),
+        &fake,
+    )
+    .unwrap();
+    assert_eq!(via_pull_ref.context.head_sha, head);
+    git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "mirror",
+            "ssh://git@git.example.invalid/acme/widget.git",
+        ],
+    );
+    let ambiguous =
+        prepare_local_pr_with_gh(&repo, 17, None, &state, &OperationControl::default(), &fake)
+            .unwrap_err();
+    assert_eq!(ambiguous.code, "REMOTE_AMBIGUOUS");
+    let _ = std::fs::remove_dir_all(root);
 }
