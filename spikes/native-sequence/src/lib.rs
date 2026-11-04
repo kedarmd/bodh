@@ -1,4 +1,5 @@
 //! Disposable native rendering experiment, not the Bodh contract.
+pub mod preferences;
 
 pub const SOURCE: &str = include_str!("../fixtures/review.rs");
 pub const BASE_SOURCE: &str = include_str!("../fixtures/review.base.rs");
@@ -298,4 +299,84 @@ pub fn demo() -> Flow {
 }
 pub fn stress(participants: usize, steps: usize) -> Flow {
     Flow { title: format!("Stress · {participants} participants / {steps} steps"), participants: (0..participants).map(|i|format!("Participant {i:02}")).collect(), steps: (0..steps).map(|i| Step::Interaction(interaction(i%participants,(i+1)%participants,Kind::Message,"Long label: inspect immutable source without selecting an unrelated interaction, even after horizontal and vertical scrolling or resizing the adjacent source inspector",3+i%15,3+i%15))).collect() }
+}
+
+/// Shared local search predicate for the native pull-request browser.
+pub fn matches_pull_request(
+    number: u64,
+    title: &str,
+    author: &str,
+    state: &str,
+    query: &str,
+    lifecycle: &str,
+) -> bool {
+    let query = query.trim().to_lowercase();
+    let lifecycle_matches = match lifecycle {
+        "All" => true,
+        "Open" => state.eq_ignore_ascii_case("Open"),
+        "Closed" => state.eq_ignore_ascii_case("Closed") || state.eq_ignore_ascii_case("Merged"),
+        _ => false,
+    };
+    lifecycle_matches
+        && (query.is_empty()
+            || title.to_lowercase().contains(&query)
+            || number.to_string().contains(&query)
+            || author.to_lowercase().contains(&query))
+}
+
+#[cfg(test)]
+mod product_search_tests {
+    use super::matches_pull_request;
+
+    #[test]
+    fn browser_search_matches_title_number_author_and_lifecycle() {
+        assert!(matches_pull_request(
+            24,
+            "Improve cache",
+            "ana",
+            "OPEN",
+            "cache",
+            "All"
+        ));
+        assert!(matches_pull_request(
+            31,
+            "Fix source",
+            "devon",
+            "CLOSED",
+            "31",
+            "All"
+        ));
+        assert!(matches_pull_request(
+            31,
+            "Fix source",
+            "devon",
+            "CLOSED",
+            "DEVON",
+            "All"
+        ));
+        assert!(matches_pull_request(
+            24,
+            "Improve cache",
+            "ana",
+            "OPEN",
+            "",
+            "Open"
+        ));
+        assert!(!matches_pull_request(
+            24,
+            "Improve cache",
+            "ana",
+            "OPEN",
+            "",
+            "Closed"
+        ));
+        assert!(matches_pull_request(
+            32,
+            "Merged change",
+            "ana",
+            "MERGED",
+            "",
+            "Closed"
+        ));
+    }
 }

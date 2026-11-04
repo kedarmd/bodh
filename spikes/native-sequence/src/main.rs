@@ -1,7 +1,10 @@
+#![recursion_limit = "512"]
+
 use bodh_sequence_spike::{Flow, Kind, Rect, SOURCE, Scene, demo, stress};
 use gpui::{prelude::*, *};
 
 mod diagram;
+mod product;
 mod profile;
 
 struct FlowState {
@@ -207,7 +210,23 @@ impl Render for Demo {
     }
 }
 fn main() {
-    let diagnostic = std::env::args().any(|arg| arg == "--profile");
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let diagnostic = args
+        .iter()
+        .any(|arg| arg == "--profile" || arg == "--diagnostic");
+    if !diagnostic {
+        let repo = option_value(&args, "--repo");
+        let pr = option_value(&args, "--pr").and_then(|number| number.parse().ok());
+        if args.iter().any(|arg| arg == "--open") && (repo.is_none() || pr.is_none()) {
+            eprintln!("--open requires --repo <checkout> and --pr <number>");
+            std::process::exit(2);
+        }
+        Application::new().run(move |cx| {
+            product::open_product(cx, repo.clone(), pr);
+            cx.on_window_closed(|cx| cx.quit()).detach();
+        });
+        return;
+    }
     Application::new().run(move |cx| {
         let handle = cx
             .open_window(
@@ -261,4 +280,10 @@ fn main() {
             cx.activate(true);
         }
     });
+}
+
+fn option_value(args: &[String], name: &str) -> Option<String> {
+    args.windows(2)
+        .find(|pair| pair[0] == name)
+        .map(|pair| pair[1].clone())
 }
