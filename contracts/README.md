@@ -1,6 +1,6 @@
 # Bodh review contract (v1 fixture validation)
 
-Issues #9–#12 freeze the v1 result shape and implement complete structural and semantic validation against a caller-supplied fixture preparation. Issue #13 adds an initial headless prepare/inspect path backed by SQLite; it supports GitHub.com PRs whose exact base/head commits already exist in a non-shallow matching checkout. Discussions and previous results are explicitly unavailable in this slice; see [#13 evidence](v1/EVIDENCE-13.md).
+Issues #9–#12 freeze the v1 result shape and implement complete structural and semantic validation against a caller-supplied fixture preparation. Issues #13–#14 add headless prepare/inspect, SQLite persistence, and safe acquisition of exact base/head commits, including fork heads. Preparation selects an explicit matching DNS-host remote and supports advertised base branches, GitHub-style `refs/pull/<number>/head`, and explicit fork branch refs; it rejects shallow histories, moved/unavailable refs and non-unique merge bases. Discussions and previous results remain explicitly unavailable; see [#13 evidence](v1/EVIDENCE-13.md) and [#14 evidence](v1/EVIDENCE-14.md).
 
 Run from the checkout:
 
@@ -58,7 +58,7 @@ authorize-replacement --prepared <preparation-id> [...human interaction]
 open --repo <checkout> --pr <number>
 ```
 
-`prepare --repo <checkout> --pr <number> --state <database> [--remote <name>]` requires exactly one matching GitHub.com remote unless selected explicitly. It uses installed authenticated `gh` for read-only REST metadata. It fails if the checkout is shallow or pinned commits are missing locally; it does not fetch or substitute moved refs. Each invocation stores its own preparation ID and metadata snapshot with an expected generation; deterministic SHA-256 context IDs identify immutable comparison inputs. `inspect` requires the same explicit `--state` path. Files are returned in pages of at most 100; diff patches are returned in 64 KiB UTF-8 pages for an indexed path; source reads use the stored checkout and pinned context. Discussions and previous results report unavailable. Publication and replacement authorization remain later work.
+`prepare --repo <checkout> --pr <number> --state <database> [--remote <name>]` requires exactly one matching supported DNS-host remote unless selected explicitly. It uses installed `gh` for read-only REST metadata and Git credential-helper access. It fails on shallow history, unavailable or moved pinned objects, and ambiguous merge bases; it never substitutes a newer tip. Exact acquired commits are retained under Bodh-owned refs without checkout, branch, index or worktree changes. Each invocation stores its own preparation ID and metadata snapshot with an expected generation; deterministic SHA-256 context IDs identify immutable comparison inputs. `inspect` requires the same explicit `--state` path. Files are returned in pages of at most 100; diff patches are returned in 64 KiB UTF-8 pages for an indexed path; source reads use the stored checkout and pinned context. Discussions and previous results report unavailable. Host syntax and `--hostname` routing are tested locally; no live Enterprise compatibility is claimed. Publication and replacement authorization remain later work.
 
 ## Executable evidence
 
