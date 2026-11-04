@@ -37,6 +37,12 @@ fn run() -> Result<Value, ContractError> {
     {
         return evidence_validation(&args[1..]);
     }
+    if args.first().is_some_and(|a| a == "prepare") {
+        return prepare_command(&args[1..]);
+    }
+    if args.first().is_some_and(|a| a == "inspect") {
+        return inspect_command(&args[1..]);
+    }
     match args
         .iter()
         .map(String::as_str)
@@ -54,6 +60,153 @@ fn run() -> Result<Value, ContractError> {
         }
         _ => Err(arguments()),
     }
+}
+fn options(
+    args: &[String],
+    allowed: &[&str],
+) -> Result<std::collections::BTreeMap<String, String>, ContractError> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut it = args.iter();
+    while let Some(k) = it.next() {
+        if !allowed.contains(&k.as_str()) {
+            return Err(arguments());
+        }
+        let v = it.next().ok_or_else(arguments)?;
+        if out.insert(k.clone(), v.clone()).is_some() {
+            return Err(arguments());
+        }
+    }
+    Ok(out)
+}
+fn prepare_command(args: &[String]) -> Result<Value, ContractError> {
+    let o = options(
+        args,
+        &["--repo", "--pr", "--remote", "--state", "--timeout-ms"],
+    )?;
+    let repo = o.get("--repo").ok_or_else(arguments)?;
+    let pr = o
+        .get("--pr")
+        .ok_or_else(arguments)?
+        .parse::<u64>()
+        .map_err(|_| arguments())?;
+    let state = o.get("--state").ok_or_else(arguments)?;
+    let ms = o
+        .get("--timeout-ms")
+        .map(|s| s.parse::<u64>().map_err(|_| arguments()))
+        .transpose()?
+        .unwrap_or(30_000);
+    if ms > 120_000 {
+        return Err(arguments());
+    }
+    let control = bodh::OperationControl::with_timeout(std::time::Duration::from_millis(ms));
+    let manifest = bodh::prepare_local_pr(
+        std::path::Path::new(repo),
+        pr,
+        o.get("--remote").map(String::as_str),
+        std::path::Path::new(state),
+        &control,
+    )?;
+    Ok(serde_json::to_value(manifest).expect("manifest serializes"))
+}
+fn inspect_command(args: &[String]) -> Result<Value, ContractError> {
+    let o = options(
+        args,
+        &[
+            "--prepared",
+            "--kind",
+            "--state",
+            "--path",
+            "--revision",
+            "--start-line",
+            "--end-line",
+            "--cursor",
+            "--limit",
+            "--timeout-ms",
+        ],
+    )?;
+    let id = o.get("--prepared").ok_or_else(arguments)?;
+    let kind = o.get("--kind").ok_or_else(arguments)?;
+    let state = o.get("--state").ok_or_else(arguments)?;
+    let p = bodh::PreparationStore::open(std::path::Path::new(state))?.load(id)?;
+    match kind.as_str() {
+        "manifest" => Ok(serde_json::to_value(bodh::PreparationManifest::from(p)).unwrap()),
+        "description" => Ok(json!({"available":p.description.is_some(),"text":p.description})),
+        "files" => bodh::inspect_files(
+            &p,
+            o.get("--cursor")
+                .map(|s| s.parse())
+                .transpose()
+                .map_err(|_| arguments())?
+                .unwrap_or(0),
+            o.get("--limit")
+                .map(|s| s.parse())
+                .transpose()
+                .map_err(|_| arguments())?
+                .unwrap_or(100),
+        ),
+        "discussions" => Ok(
+            json!({"available":false,"complete":false,"reason":"DISCUSSIONS_NOT_ACQUIRED_IN_13"}),
+        ),
+        "previous" => Ok(json!({"available":false,"reason":"NO_PRIOR_RESULT"})),
+        "source" => {
+            let path = o.get("--path").ok_or_else(arguments)?;
+            let revision = match o.get("--revision").map(String::as_str) {
+                Some("head") => bodh::Revision::Head,
+                Some("base") => bodh::Revision::Base,
+                _ => return Err(arguments()),
+            };
+            let start = o
+                .get("--start-line")
+                .ok_or_else(arguments)?
+                .parse()
+                .map_err(|_| arguments())?;
+            let end = o
+                .get("--end-line")
+                .ok_or_else(arguments)?
+                .parse()
+                .map_err(|_| arguments())?;
+            let control = inspect_control(&o)?;
+            let source = bodh::SourceRef {
+                path: path.clone(),
+                revision,
+                start_line: start,
+                end_line: end,
+            };
+            let text = bodh::read_source(
+                std::path::Path::new(&p.checkout),
+                &p.context,
+                &source,
+                &control,
+            )?;
+            Ok(json!({"source":source,"text":text,"truncated":false}))
+        }
+        "diff" => {
+            let path = o.get("--path").ok_or_else(arguments)?;
+            let cursor = o
+                .get("--cursor")
+                .map(|s| s.parse())
+                .transpose()
+                .map_err(|_| arguments())?
+                .unwrap_or(0);
+            bodh::inspect_diff(&p, path, cursor, &inspect_control(&o)?)
+        }
+        _ => Err(arguments()),
+    }
+}
+fn inspect_control(
+    o: &std::collections::BTreeMap<String, String>,
+) -> Result<bodh::OperationControl, ContractError> {
+    let ms = o
+        .get("--timeout-ms")
+        .map(|s| s.parse::<u64>().map_err(|_| arguments()))
+        .transpose()?
+        .unwrap_or(30_000);
+    if ms > 120_000 {
+        return Err(arguments());
+    }
+    Ok(bodh::OperationControl::with_timeout(
+        std::time::Duration::from_millis(ms),
+    ))
 }
 fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
     let mut options = std::collections::BTreeMap::new();
@@ -142,16 +295,16 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
 fn exit_category(error: &ContractError) -> i32 {
     match error.code.as_str() {
         "CONTEXT_MISMATCH" => 3,
-        "GIT_UNAVAILABLE" | "GIT_OBJECT_UNAVAILABLE" => 4,
-        "OPERATION_TIMEOUT" | "CANCELLED" => 5,
-        "GIT_FAILED" => 10,
+        "AUTH_ACCESS" | "GIT_UNAVAILABLE" | "GH_UNAVAILABLE" | "GIT_OBJECT_UNAVAILABLE" => 4,
+        "OPERATION_TIMEOUT" | "CANCELLED" | "NETWORK_UNCERTAIN" => 5,
+        "GIT_FAILED" | "STATE_UNAVAILABLE" | "STATE_INVALID" | "GH_RESPONSE_INVALID" => 10,
         _ => 2,
     }
 }
 fn arguments() -> ContractError {
     ContractError::new(
         "INVALID_ARGUMENTS",
-        "Use contract describe/schema, validate --input <file|-> --structural, or validate --input <file|-> <--evidence-only|--findings-only|--complete-fixture> --context <fixture.json> --repository <checkout> [--timeout-ms <0..120000>]; optional --json",
+        "Use contract describe/schema, prepare --repo <checkout> --pr <number> --state <database> [--remote <name>], inspect --prepared <id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>, or a validate command; optional --json",
         "",
     )
 }

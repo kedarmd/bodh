@@ -26,7 +26,7 @@ fn cli_discovers_schema_and_rejects_bad_input_without_a_gui() {
     assert_eq!(body["data"]["semantic_validation_complete"], true);
     assert_eq!(
         body["data"]["production_preparation_validation_available"],
-        false
+        true
     );
     let (exit, schema, _) = run(&["contract", "schema", "--json"], b"");
     assert_eq!(exit, 0);
