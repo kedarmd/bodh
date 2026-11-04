@@ -48,19 +48,27 @@ impl Fixture {
         std::fs::create_dir_all(repo.join("src")).unwrap();
         std::fs::write(
             repo.join("src/service.rs"),
-            "pub fn handle() {}\nasync fn request() {}\nfn parse() {}\nfn note() {}\n",
+            "pub fn handle() {}\nprior\nfn parse() {}\nfn note() {}\n",
         )
         .unwrap();
         git(&repo, &["add", "."]);
-        git(&repo, &["commit", "-m", "pinned source"]);
-        let commit = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["commit", "-m", "base source"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+        std::fs::write(
+            repo.join("src/service.rs"),
+            "pub fn handle() {}\nold\nfn parse() {}\nfn note() {}\n",
+        )
+        .unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-m", "head source"]);
+        let head = git(&repo, &["rev-parse", "HEAD"]);
         let prepared: PreparedEvidenceContext = serde_json::from_value(json!({
             "context": {
                 "pr": {"host":"github.com","owner":"example","repository":"demo","number":7},
                 "context_id":"fixture",
-                "base_sha":commit,
-                "head_sha":commit,
-                "merge_base_sha":commit
+                "base_sha":base,
+                "head_sha":head,
+                "merge_base_sha":base
             },
             "original_description":"Claim one. Claim two.",
             "discussions":{"thread_ids":["PRRT_known"],"complete":true,"failures":[]}
@@ -368,13 +376,29 @@ fn follow_up_requires_real_prior_concerns_and_current_actionable_findings() {
 #[test]
 fn cli_complete_fixture_reports_full_semantic_validation_and_rejects_bad_steps() {
     let f = Fixture::new();
+    let mut prepared = f.prepared.clone();
+    prepared.original_description = Some("Responds synchronously".into());
+    prepared.discussions.thread_ids = vec!["PRRT_fixture".into()];
+    prepared.prior_concerns = Some(
+        ["resolved", "unresolved", "regressed", "uncertain"]
+            .into_iter()
+            .map(|status| bodh::PriorConcern {
+                id: format!("prior-{status}"),
+                title: format!("Prior {status} concern"),
+                summary: format!("Prior {status} explanation"),
+            })
+            .collect(),
+    );
     let dir = std::env::temp_dir().join(format!("bodh-cli-complete-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let context_path = dir.join("context.json");
     let result_path = dir.join("result.json");
-    std::fs::write(&context_path, serde_json::to_vec(&f.prepared).unwrap()).unwrap();
-    let mut result = f.result.clone();
-    result["diagrams"] = json!([f.valid_diagram()]);
+    std::fs::write(&context_path, serde_json::to_vec(&prepared).unwrap()).unwrap();
+    let mut result: Value =
+        serde_json::from_str(include_str!("../contracts/v1/fixtures/all-variants.json")).unwrap();
+    result["context"] = serde_json::to_value(&prepared.context).unwrap();
+    result["findings"][0]["suggestions"][1]["source"]["start_line"] = json!(2);
+    result["findings"][0]["suggestions"][1]["source"]["end_line"] = json!(2);
     std::fs::write(&result_path, serde_json::to_vec(&result).unwrap()).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_bodh"))
         .args(["--json", "validate", "--input"])
