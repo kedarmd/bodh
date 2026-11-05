@@ -125,17 +125,17 @@ mod tests {
         fs,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
     };
+
+    static NEXT_TEMP_DIR: AtomicUsize = AtomicUsize::new(0);
 
     fn temp_dir() -> PathBuf {
         std::env::temp_dir().join(format!(
             "bodh-gh-preflight-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed)
         ))
     }
 
