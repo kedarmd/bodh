@@ -42,11 +42,13 @@ pub struct PreparationManifest {
     pub supported_contract_versions: Vec<&'static str>,
     pub inspect: Vec<&'static str>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct DraftCounts {
     pub inline_comments: u64,
     pub replies: u64,
     pub thread_intents: u64,
+    pub code_replacements: u64,
     pub review_comments: u64,
 }
 impl From<PreparedBinding> for PreparationManifest {
@@ -74,6 +76,7 @@ impl From<PreparedBinding> for PreparationManifest {
                 inline_comments: 0,
                 replies: 0,
                 thread_intents: 0,
+                code_replacements: 0,
                 review_comments: 0,
             },
             supported_contract_versions: vec!["1.0"],
@@ -467,12 +470,25 @@ pub fn prepare_local_pr_with_gh(
         description.as_deref(),
         &diff.files,
     )?;
+    let pull_request_state = api
+        .get("state")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    crate::record_initial_remote_snapshot(
+        state,
+        &binding.preparation_id,
+        base_ref,
+        head_ref,
+        &context.base_sha,
+        &context.head_sha,
+        pull_request_state,
+    )?;
     let _ = url;
     let _ = remote;
     Ok(binding.into())
 }
 
-fn run_gh(
+pub(crate) fn run_gh(
     program: &Path,
     args: &[&str],
     control: &crate::OperationControl,

@@ -1,0 +1,7 @@
+# Issue #25 validation evidence
+
+The desktop runner validates the application contract/CLI and the native GPUI spike without opening a GUI or contacting GitHub. Validation output is preserved in `VALIDATE-25-final.log`; two earlier attempts remain in `VALIDATE-25.log` and `VALIDATE-25-rerun.log`. The first caught a Clippy type-complexity warning and the second caught formatting in the separate native manifest. Both were corrected before the passing run.
+
+The passing run completed `./scripts/validate desktop` on the #25 worktree after merging integration revision `9c1d6c1` (merge commit `31a2c39`). Its raw output is `VALIDATE-25-integrated.log`. It included the five freshness tests, native no-default and desktop checks, lint, and tests. The native compilation took about four minutes and forty seconds because GPUI dependencies were built separately for check, test, and Clippy profiles. This was build time; no GUI trial was performed.
+
+The freshness tests cover a moved head while preserving the pinned preparation, separately observed base/branch movement, unknown/offline metadata, review-intent fingerprint changes, and rejection of an approval after a review-intent revision changes. No live remote writes were performed. The #22 replacement-publication changes had not yet entered integration for this run; the fingerprint conditionally excludes revisions marked in `review_published_replacements` and serializes the complete review intent, including future selection fields.
