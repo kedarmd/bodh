@@ -1,15 +1,15 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
 use bodh::{
-    DraftSnapshot, DraftStore, OperationControl, PinnedDiff, PreparationManifest, PreparationStore,
-    PreparedBinding, Revision, SourceRef, read_diff,
+    CodeReplacementSnapshot, DraftSnapshot, DraftStore, OperationControl, PinnedDiff,
+    PreparationManifest, PreparationStore, PreparedBinding, Revision, SourceRef, read_diff,
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::preferences::{
     NavigationPreferences as Preferences, RecentReview, WorkspaceTab,
 };
 use bodh_sequence_spike::{
-    DiffLine, DiffLineKind, MarkdownBlock, MarkdownBlockKind, TextDraftEditor, diff_rows,
-    safe_markdown_blocks, split_diff_rows, syntax_spans,
+    CodeReplacementEditor, DiffLine, DiffLineKind, MarkdownBlock, MarkdownBlockKind,
+    TextDraftEditor, diff_rows, safe_markdown_blocks, split_diff_rows, syntax_spans,
 };
 use gpui::{UniformListScrollHandle, prelude::*, uniform_list, *};
 use serde::Deserialize;
@@ -138,6 +138,8 @@ pub struct Product {
     description_blocks: Vec<MarkdownBlock>,
     draft_snapshot: Option<DraftSnapshot>,
     draft_editor: Option<TextDraftEditor>,
+    replacement_snapshot: Option<CodeReplacementSnapshot>,
+    replacement_editor: Option<CodeReplacementEditor>,
     draft_saving: bool,
     draft_epoch: Arc<AtomicU64>,
     draft_focus: FocusHandle,
@@ -199,6 +201,8 @@ impl Product {
             description_blocks: Vec::new(),
             draft_snapshot: None,
             draft_editor: None,
+            replacement_snapshot: None,
+            replacement_editor: None,
             draft_saving: false,
             draft_epoch: Arc::new(AtomicU64::new(0)),
             draft_focus: cx.focus_handle(),
@@ -226,6 +230,10 @@ impl Product {
                 .draft_editor
                 .as_ref()
                 .is_some_and(TextDraftEditor::is_dirty)
+            || self
+                .replacement_editor
+                .as_ref()
+                .is_some_and(CodeReplacementEditor::is_dirty)
         {
             self.error = Some(
                 "Save or explicitly discard the current draft before switching repositories."
@@ -359,6 +367,10 @@ impl Product {
                 .draft_editor
                 .as_ref()
                 .is_some_and(TextDraftEditor::is_dirty)
+            || self
+                .replacement_editor
+                .as_ref()
+                .is_some_and(CodeReplacementEditor::is_dirty)
         {
             self.error = Some(
                 "Save or explicitly discard the current draft before opening another review."
@@ -386,11 +398,13 @@ impl Product {
                         bodh::prepare_local_pr(Path::new(&path), number, None, &state, &control)?;
                     let binding = PreparationStore::open(&state)?.load(&manifest.preparation_id)?;
                     let drafts = DraftStore::open(&state)?.list(&manifest.preparation_id)?;
+                    let replacements =
+                        DraftStore::open(&state)?.list_replacements(&manifest.preparation_id)?;
                     manifest.expected_generation = drafts.workspace_revision;
                     manifest.draft_counts = drafts.counts.clone();
                     let markdown = binding.description.as_deref().unwrap_or_default();
                     let blocks = safe_markdown_blocks(markdown);
-                    Ok::<_, bodh::ContractError>((manifest, binding, blocks, drafts))
+                    Ok::<_, bodh::ContractError>((manifest, binding, blocks, drafts, replacements))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -400,12 +414,14 @@ impl Product {
                 this.loading = false;
                 this.active_control = None;
                 match result {
-                    Ok((manifest, binding, blocks, drafts)) => {
+                    Ok((manifest, binding, blocks, drafts, replacements)) => {
                         this.remember(&manifest, &binding, cx);
                         this.selected_review = Some(binding);
                         this.description_blocks = blocks;
                         this.draft_snapshot = Some(drafts);
+                        this.replacement_snapshot = Some(replacements);
                         this.draft_editor = None;
+                        this.replacement_editor = None;
                         this.draft_saving = false;
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
                         this.screen = Screen::Workspace;
@@ -471,6 +487,10 @@ impl Product {
                 .draft_editor
                 .as_ref()
                 .is_some_and(TextDraftEditor::is_dirty)
+            || self
+                .replacement_editor
+                .as_ref()
+                .is_some_and(CodeReplacementEditor::is_dirty)
         {
             self.error = Some(
                 "Save or explicitly discard the current draft before switching reviews.".into(),
@@ -490,9 +510,10 @@ impl Product {
                 .spawn(async move {
                     let binding = PreparationStore::open(&state)?.load(&id)?;
                     let drafts = DraftStore::open(&state)?.list(&id)?;
+                    let replacements = DraftStore::open(&state)?.list_replacements(&id)?;
                     let blocks =
                         safe_markdown_blocks(binding.description.as_deref().unwrap_or_default());
-                    Ok::<_, bodh::ContractError>((binding, blocks, drafts))
+                    Ok::<_, bodh::ContractError>((binding, blocks, drafts, replacements))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -501,12 +522,14 @@ impl Product {
                 }
                 this.loading = false;
                 match result {
-                    Ok((binding, blocks, drafts)) => {
+                    Ok((binding, blocks, drafts, replacements)) => {
                         this.active_repository = Some(binding.checkout.clone());
                         this.screen = Screen::Workspace;
                         this.description_blocks = blocks;
                         this.draft_snapshot = Some(drafts.clone());
+                        this.replacement_snapshot = Some(replacements);
                         this.draft_editor = None;
+                        this.replacement_editor = None;
                         this.draft_saving = false;
                         this.selected_review = Some(binding.clone());
                         this.update_draft_counts(drafts.counts);
@@ -758,6 +781,10 @@ impl Product {
             .draft_editor
             .as_ref()
             .is_some_and(TextDraftEditor::is_dirty)
+            || self
+                .replacement_editor
+                .as_ref()
+                .is_some_and(CodeReplacementEditor::is_dirty)
         {
             self.status = Some(
                 "Save or explicitly discard the current draft before starting another.".into(),
@@ -781,12 +808,299 @@ impl Product {
         cx.notify();
     }
 
+    fn begin_code_replacement(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving {
+            return;
+        }
+        let Some(source) = self.source_ref.clone() else {
+            self.status =
+                Some("Select a changed head-side diff line before drafting a replacement.".into());
+            cx.notify();
+            return;
+        };
+        if source.revision != Revision::Head {
+            self.status = Some("Code replacements can target only changed head-side lines.".into());
+            cx.notify();
+            return;
+        }
+        if self
+            .replacement_editor
+            .as_ref()
+            .is_some_and(CodeReplacementEditor::is_dirty)
+        {
+            self.status =
+                Some("Save or clear the current replacement before starting another.".into());
+            cx.notify();
+            return;
+        }
+        let Some(original) = self.source_text.clone() else {
+            self.status = Some("Load the pinned head source before drafting a replacement.".into());
+            cx.notify();
+            return;
+        };
+        let workspace_revision = self
+            .replacement_snapshot
+            .as_ref()
+            .map(|s| s.workspace_revision)
+            .or_else(|| self.draft_snapshot.as_ref().map(|s| s.workspace_revision))
+            .unwrap_or_else(|| {
+                self.selected_review
+                    .as_ref()
+                    .map(|b| b.expected_generation)
+                    .unwrap_or(0)
+            });
+        self.replacement_editor = Some(CodeReplacementEditor::new(
+            source,
+            original,
+            workspace_revision,
+        ));
+        self.status = Some(
+            "New code replacement draft. Preview and save locally; the checkout is unchanged."
+                .into(),
+        );
+        cx.notify();
+    }
+
+    fn resume_code_replacement(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.draft_saving
+            || self
+                .replacement_editor
+                .as_ref()
+                .is_some_and(CodeReplacementEditor::is_dirty)
+        {
+            self.status =
+                Some("Save or clear the current replacement before resuming another.".into());
+            cx.notify();
+            return;
+        }
+        let Some(snapshot) = self.replacement_snapshot.clone() else {
+            return;
+        };
+        let Some(draft) = snapshot.drafts.iter().find(|draft| draft.id == id).cloned() else {
+            self.error = Some("That saved replacement is no longer in this review context.".into());
+            cx.notify();
+            return;
+        };
+        self.replacement_editor = Some(CodeReplacementEditor::resume(
+            &draft,
+            snapshot.workspace_revision,
+        ));
+        self.status =
+            Some("Saved local replacement resumed; edit the preview before saving.".into());
+        cx.notify();
+    }
+
+    fn save_code_replacement(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving {
+            return;
+        }
+        let (Some(binding), Some(editor)) = (
+            self.selected_review.clone(),
+            self.replacement_editor.clone(),
+        ) else {
+            return;
+        };
+        if !editor.can_save() {
+            self.status = Some("Edit the replacement before saving it.".into());
+            cx.notify();
+            return;
+        }
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let ui_id = preparation_id.clone();
+        let draft_id = editor.draft_id.clone();
+        let source = editor.source.clone();
+        let original = editor.original_text.clone();
+        let replacement = editor.replacement.clone();
+        let submitted = replacement.clone();
+        let workspace_revision = editor.workspace_revision;
+        let draft_revision = editor.draft_revision;
+        let control = OperationControl::with_timeout(Duration::from_secs(20));
+        let epoch = self.draft_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let draft_epoch = self.draft_epoch.clone();
+        self.draft_saving = true;
+        self.status = Some("Saving local code replacement…".into());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut store = DraftStore::open(Path::new(&state))?;
+                    let saved = store.save_replacement(
+                        &preparation_id,
+                        draft_id.as_deref(),
+                        &source,
+                        &original,
+                        &replacement,
+                        workspace_revision,
+                        draft_revision,
+                        &control,
+                    );
+                    let snapshot = store.list_replacements(&preparation_id).ok();
+                    Ok::<_, bodh::ContractError>((saved, snapshot))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if draft_epoch.load(Ordering::Relaxed) != epoch
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|b| b.preparation_id != ui_id)
+                {
+                    return;
+                }
+                this.draft_saving = false;
+                match result {
+                    Ok((Ok(saved), snapshot)) => {
+                        if let Some(snapshot) = snapshot {
+                            if let Some(text_snapshot) = &mut this.draft_snapshot {
+                                text_snapshot.workspace_revision = snapshot.workspace_revision;
+                            }
+                            this.replacement_snapshot = Some(snapshot);
+                        }
+                        if let Some(editor) = &mut this.replacement_editor {
+                            editor.save_succeeded(&saved, &submitted);
+                        }
+                        this.status = Some(
+                            "Replacement saved locally. It has not been applied or published."
+                                .into(),
+                        );
+                        this.error = None;
+                    }
+                    Ok((Err(error), snapshot)) => {
+                        if let Some(snapshot) = snapshot {
+                            if let Some(text_snapshot) = &mut this.draft_snapshot {
+                                text_snapshot.workspace_revision = snapshot.workspace_revision;
+                            }
+                            this.replacement_snapshot = Some(snapshot);
+                        }
+                        if let Some(editor) = &mut this.replacement_editor {
+                            editor.save_failed(error.code.clone(), error.message.clone());
+                        }
+                        this.status = Some(
+                            "Save failed; your replacement text is still in the editor.".into(),
+                        );
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                    Err(error) => {
+                        if let Some(editor) = &mut this.replacement_editor {
+                            editor.save_failed(error.code.clone(), error.message.clone());
+                        }
+                        this.status = Some(
+                            "Save failed; your replacement text is still in the editor.".into(),
+                        );
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn discard_code_replacement(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving {
+            return;
+        }
+        let Some(editor) = self.replacement_editor.clone() else {
+            return;
+        };
+        let Some(id) = editor.draft_id.clone() else {
+            self.replacement_editor = None;
+            self.status =
+                Some("Unsaved replacement cleared; no stored proposal was changed.".into());
+            cx.notify();
+            return;
+        };
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let ui_id = preparation_id.clone();
+        let epoch = self.draft_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let draft_epoch = self.draft_epoch.clone();
+        self.draft_saving = true;
+        self.status = Some("Discarding local replacement…".into());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut store = DraftStore::open(Path::new(&state))?;
+                    let discarded = store.discard_replacement(
+                        &preparation_id,
+                        &id,
+                        editor.workspace_revision,
+                        editor.draft_revision,
+                    );
+                    let snapshot = store.list_replacements(&preparation_id).ok();
+                    Ok::<_, bodh::ContractError>((discarded, snapshot))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if draft_epoch.load(Ordering::Relaxed) != epoch
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|b| b.preparation_id != ui_id)
+                {
+                    return;
+                }
+                this.draft_saving = false;
+                match result {
+                    Ok((Ok(snapshot), current)) => {
+                        let current = current.unwrap_or(snapshot.clone());
+                        if let Some(text_snapshot) = &mut this.draft_snapshot {
+                            text_snapshot.workspace_revision = current.workspace_revision;
+                        }
+                        this.replacement_snapshot = Some(current);
+                        if let Some(editor) = &mut this.replacement_editor {
+                            editor.discard_succeeded(snapshot.workspace_revision);
+                        }
+                        this.status =
+                            Some("Replacement draft discarded. Nothing was applied.".into());
+                        this.error = None;
+                    }
+                    Ok((Err(error), snapshot)) => {
+                        if let Some(snapshot) = snapshot {
+                            if let Some(text_snapshot) = &mut this.draft_snapshot {
+                                text_snapshot.workspace_revision = snapshot.workspace_revision;
+                            }
+                            this.replacement_snapshot = Some(snapshot);
+                        }
+                        if let Some(editor) = &mut this.replacement_editor {
+                            editor.save_failed(error.code.clone(), error.message.clone());
+                        }
+                        this.status =
+                            Some("Discard failed; your replacement text was retained.".into());
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                    Err(error) => {
+                        if let Some(editor) = &mut this.replacement_editor {
+                            editor.save_failed(error.code.clone(), error.message.clone());
+                        }
+                        this.status =
+                            Some("Discard failed; your replacement text was retained.".into());
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn resume_text_draft(&mut self, id: &str, cx: &mut Context<Self>) {
         if self.draft_saving
             || self
                 .draft_editor
                 .as_ref()
                 .is_some_and(TextDraftEditor::is_dirty)
+            || self
+                .replacement_editor
+                .as_ref()
+                .is_some_and(CodeReplacementEditor::is_dirty)
         {
             self.status = Some(
                 "Save or explicitly discard the current draft before resuming another.".into(),
@@ -879,6 +1193,9 @@ impl Product {
                 match result {
                     Ok((Ok(saved), snapshot)) => {
                         if let Some(snapshot) = snapshot {
+                            if let Some(replacements) = &mut this.replacement_snapshot {
+                                replacements.workspace_revision = snapshot.workspace_revision;
+                            }
                             this.update_draft_counts(snapshot.counts.clone());
                             this.draft_snapshot = Some(snapshot);
                         }
@@ -891,6 +1208,9 @@ impl Product {
                     }
                     Ok((Err(error), snapshot)) => {
                         if let Some(snapshot) = snapshot {
+                            if let Some(replacements) = &mut this.replacement_snapshot {
+                                replacements.workspace_revision = snapshot.workspace_revision;
+                            }
                             this.update_draft_counts(snapshot.counts.clone());
                             this.draft_snapshot = Some(snapshot);
                         }
@@ -969,6 +1289,9 @@ impl Product {
                 this.draft_saving = false;
                 match result {
                     Ok((Ok(snapshot), current)) => {
+                        if let Some(replacements) = &mut this.replacement_snapshot {
+                            replacements.workspace_revision = snapshot.workspace_revision;
+                        }
                         this.draft_snapshot = Some(current.unwrap_or(snapshot.clone()));
                         this.update_draft_counts(snapshot.counts);
                         if let Some(editor) = &mut this.draft_editor {
@@ -979,6 +1302,9 @@ impl Product {
                     }
                     Ok((Err(error), snapshot)) => {
                         if let Some(snapshot) = snapshot {
+                            if let Some(replacements) = &mut this.replacement_snapshot {
+                                replacements.workspace_revision = snapshot.workspace_revision;
+                            }
                             this.update_draft_counts(snapshot.counts.clone());
                             this.draft_snapshot = Some(snapshot);
                         }
@@ -1071,6 +1397,10 @@ impl Product {
                 .draft_editor
                 .as_ref()
                 .is_some_and(TextDraftEditor::is_dirty)
+            || self
+                .replacement_editor
+                .as_ref()
+                .is_some_and(CodeReplacementEditor::is_dirty)
         {
             self.error = Some(
                 "Save or explicitly discard the current draft before leaving this review.".into(),
@@ -1277,6 +1607,10 @@ impl Product {
                         .draft_editor
                         .as_ref()
                         .is_some_and(TextDraftEditor::is_dirty)
+                    || this
+                        .replacement_editor
+                        .as_ref()
+                        .is_some_and(CodeReplacementEditor::is_dirty)
                 {
                     this.error = Some(
                         "Save or explicitly discard the current draft before leaving this review."
@@ -2146,6 +2480,19 @@ impl Product {
                 |this, _, _, cx| this.begin_text_draft(cx),
                 cx,
             ));
+            if self
+                .source_ref
+                .as_ref()
+                .is_some_and(|source| source.revision == Revision::Head)
+            {
+                source_toolbar = source_toolbar.child(button(
+                    "new-code-replacement-draft",
+                    "Draft replacement",
+                    p,
+                    |this, _, _, cx| this.begin_code_replacement(cx),
+                    cx,
+                ));
+            }
         }
         source = source.child(source_toolbar);
         if let Some(label) = self.source_label.clone() {
@@ -2227,6 +2574,117 @@ impl Product {
                 p,
             ));
 
+        if let Some(editor) = self.replacement_editor.clone() {
+            let anchor = format!(
+                "{} · Head:{}–{}",
+                editor.source.path, editor.source.start_line, editor.source.end_line
+            );
+            panel = panel.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(anchor),
+            );
+            panel = panel.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(format!("Original · {}", editor.original_text.trim_end())),
+            );
+            panel = panel.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.accent))
+                    .child(format!(
+                        "Proposed preview · {}",
+                        editor.replacement.trim_end()
+                    )),
+            );
+            let display = if editor.replacement.is_empty() {
+                "|Type replacement code; Enter inserts a line. The checkout remains unchanged."
+                    .to_owned()
+            } else {
+                editor.display_text_with_cursor()
+            };
+            panel = panel.child(
+                div()
+                    .id("code-replacement-editor")
+                    .track_focus(&self.draft_focus)
+                    .min_h(px(92.))
+                    .max_h(px(180.))
+                    .overflow_scroll()
+                    .p_2()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.panel))
+                    .focus(|style| style.border_color(rgb(p.accent)))
+                    .font_family("DejaVu Sans Mono")
+                    .text_size(px(12.))
+                    .text_color(rgb(p.text))
+                    .child(display)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, _| window.focus(&this.draft_focus)),
+                    )
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        window.focus(&this.draft_focus);
+                        let key = event.keystroke.key.as_str();
+                        let command =
+                            event.keystroke.modifiers.control || event.keystroke.modifiers.platform;
+                        let Some(editor) = &mut this.replacement_editor else {
+                            return;
+                        };
+                        match key {
+                            "backspace" => editor.backspace(),
+                            "delete" => editor.delete_forward(),
+                            "left" => editor.move_cursor(-1),
+                            "right" => editor.move_cursor(1),
+                            "home" => editor.move_cursor_to_edge(false),
+                            "end" => editor.move_cursor_to_edge(true),
+                            "enter" => editor.insert_text("\n"),
+                            "tab" => editor.insert_text("    "),
+                            "a" if command => editor.select_all(),
+                            text if text.chars().count() == 1 && !command => {
+                                editor.insert_text(text)
+                            }
+                            _ => return,
+                        }
+                        cx.notify();
+                    })),
+            );
+            if let Some(error) = editor.error.as_deref() {
+                panel = panel.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(0xffb7b7))
+                        .child(error.to_owned()),
+                );
+            }
+            let mut actions = div().flex().items_center().gap_2();
+            actions = actions.child(button(
+                "save-code-replacement",
+                if self.draft_saving {
+                    "Saving…"
+                } else {
+                    "Save replacement"
+                },
+                p,
+                |this, _, _, cx| this.save_code_replacement(cx),
+                cx,
+            ));
+            actions = actions.child(button(
+                "discard-code-replacement",
+                if editor.draft_id.is_some() {
+                    "Discard proposal"
+                } else {
+                    "Clear replacement"
+                },
+                p,
+                |this, _, _, cx| this.discard_code_replacement(cx),
+                cx,
+            ));
+            panel = panel.child(actions);
+        }
         if let Some(editor) = self.draft_editor.clone() {
             let anchor = format!(
                 "{} · {}:{}–{}",
@@ -2377,6 +2835,33 @@ impl Product {
                     &label,
                     p,
                     move |this, _, _, cx| this.resume_text_draft(&id, cx),
+                    cx,
+                ));
+            }
+            panel = panel.child(saved);
+        }
+        if let Some(snapshot) = self.replacement_snapshot.clone()
+            && !snapshot.drafts.is_empty()
+        {
+            let mut saved = div()
+                .mt_2()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(section_title("Saved code replacements", p));
+            for draft in snapshot.drafts {
+                let id = draft.id.clone();
+                let label = format!(
+                    "Resume · {}:{} · {}",
+                    draft.source.path,
+                    draft.source.start_line,
+                    draft.replacement.lines().next().unwrap_or_default()
+                );
+                saved = saved.child(button(
+                    &format!("resume-code-replacement-{id}"),
+                    &label,
+                    p,
+                    move |this, _, _, cx| this.resume_code_replacement(&id, cx),
                     cx,
                 ));
             }

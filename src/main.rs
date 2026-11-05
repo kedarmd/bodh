@@ -246,6 +246,17 @@ struct DraftDiscardInput {
     expected_draft_revision: u64,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplacementSaveInput {
+    draft_id: Option<String>,
+    source: bodh::SourceRef,
+    original_text: String,
+    replacement: String,
+    expected_workspace_revision: u64,
+    expected_draft_revision: u64,
+}
+
 fn draft_command(args: &[String]) -> Result<Value, ContractError> {
     match args.first().map(String::as_str) {
         Some("list") => {
@@ -255,6 +266,83 @@ fn draft_command(args: &[String]) -> Result<Value, ContractError> {
             let snapshot = bodh::DraftStore::open(std::path::Path::new(state))?.list(prepared)?;
             serde_json::to_value(snapshot).map_err(|_| {
                 ContractError::new("SERIALIZATION_ERROR", "Cannot encode draft state", "")
+            })
+        }
+        Some("replacement-list") => {
+            let o = options(&args[1..], &["--prepared", "--state"])?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let snapshot =
+                bodh::DraftStore::open(std::path::Path::new(state))?.list_replacements(prepared)?;
+            serde_json::to_value(snapshot).map_err(|_| {
+                ContractError::new(
+                    "SERIALIZATION_ERROR",
+                    "Cannot encode replacement draft state",
+                    "",
+                )
+            })
+        }
+        Some("replacement-save") => {
+            let o = options(
+                &args[1..],
+                &["--prepared", "--state", "--input", "--timeout-ms"],
+            )?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let input = o.get("--input").ok_or_else(arguments)?;
+            let request: ReplacementSaveInput = serde_json::from_slice(&read_input(input)?)
+                .map_err(|_| {
+                    ContractError::new(
+                        "DRAFT_INPUT_INVALID",
+                        "Expected a valid code replacement save request",
+                        "",
+                    )
+                })?;
+            let mut store = bodh::DraftStore::open(std::path::Path::new(state))?;
+            let saved = store.save_replacement(
+                prepared,
+                request.draft_id.as_deref(),
+                &request.source,
+                &request.original_text,
+                &request.replacement,
+                request.expected_workspace_revision,
+                request.expected_draft_revision,
+                &inspect_control(&o)?,
+            )?;
+            serde_json::to_value(saved).map_err(|_| {
+                ContractError::new(
+                    "SERIALIZATION_ERROR",
+                    "Cannot encode saved replacement draft",
+                    "",
+                )
+            })
+        }
+        Some("replacement-discard") => {
+            let o = options(&args[1..], &["--prepared", "--state", "--input"])?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let input = o.get("--input").ok_or_else(arguments)?;
+            let request: DraftDiscardInput =
+                serde_json::from_slice(&read_input(input)?).map_err(|_| {
+                    ContractError::new(
+                        "DRAFT_INPUT_INVALID",
+                        "Expected a valid replacement draft discard request",
+                        "",
+                    )
+                })?;
+            let mut store = bodh::DraftStore::open(std::path::Path::new(state))?;
+            let snapshot = store.discard_replacement(
+                prepared,
+                &request.draft_id,
+                request.expected_workspace_revision,
+                request.expected_draft_revision,
+            )?;
+            serde_json::to_value(snapshot).map_err(|_| {
+                ContractError::new(
+                    "SERIALIZATION_ERROR",
+                    "Cannot encode discarded replacement state",
+                    "",
+                )
             })
         }
         Some("save") => {

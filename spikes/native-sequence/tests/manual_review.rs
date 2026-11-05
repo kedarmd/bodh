@@ -1,8 +1,47 @@
+use bodh::CodeReplacementDraft;
 use bodh::{DraftCounts, DraftProvenance, DraftSaveResult, ManualTextDraft, Revision, SourceRef};
 use bodh_sequence_spike::{
-    DiffLineKind, MarkdownBlockKind, SyntaxTokenKind, TextDraftEditor, diff_rows,
-    safe_markdown_blocks, split_diff_rows, syntax_spans,
+    CodeReplacementEditor, DiffLineKind, MarkdownBlockKind, SyntaxTokenKind, TextDraftEditor,
+    diff_rows, safe_markdown_blocks, split_diff_rows, syntax_spans,
 };
+
+#[test]
+fn replacement_editor_restores_saved_text_and_keeps_preview_text_after_stale_save() {
+    let draft = CodeReplacementDraft {
+        id: "rep-1".into(),
+        source: SourceRef {
+            path: "src/lib.rs".into(),
+            revision: Revision::Head,
+            start_line: 4,
+            end_line: 5,
+        },
+        original_text: "old();\n".into(),
+        replacement: "new();\n".into(),
+        revision: 2,
+        provenance: DraftProvenance {
+            preparation_id: "prep".into(),
+            context_id: "ctx".into(),
+            base_sha: "base".into(),
+            head_sha: "head".into(),
+            merge_base_sha: "merge".into(),
+        },
+        created_at: 1,
+        updated_at: 2,
+    };
+    let mut editor = CodeReplacementEditor::resume(&draft, 7);
+    assert!(!editor.is_dirty());
+    editor.set_replacement("updated();\n".into());
+    assert!(editor.is_dirty());
+    editor.save_failed(
+        "WORKSPACE_REVISION_STALE".into(),
+        "reload before saving".into(),
+    );
+    assert_eq!(editor.replacement, "updated();\n");
+    assert_eq!(editor.original_text, "old();\n");
+    editor.move_cursor_to_edge(false);
+    editor.insert_text("// ");
+    assert_eq!(editor.replacement, "// updated();\n");
+}
 
 #[test]
 fn unified_diff_rows_track_both_side_lines_and_distinguish_changes() {
