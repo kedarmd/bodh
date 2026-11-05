@@ -1,0 +1,18 @@
+# Issue #32 · follow-up concerns
+
+## Implemented
+
+- Atomic result replacement keeps one current full result and derives a compact prior-concern index containing each concern's ID, title, summary, and source explanation with the exact commit SHA. The existing generation transaction replaces the result and compact index together.
+- The native Findings view follows the approved D2 three-pane composition and proportions: a 310 px severity list, flexible detail, and 340 px pinned-source inspector. Colored severity/status labels use D2 danger, caution, success, and accent colors; selection uses a neutral wash, and confidence stays separate. Evidence selection updates the inspector without leaving Findings; only the inspector's explicit “Open in Changes” action navigates to Changes.
+- The pinned inspector keeps source metadata and code above the selected finding's local comment composer. The composer is explicitly local and is saved through finding triage; it does not publish to GitHub.
+- Confidence, finding status, evidence, related discussions, alternatives, and triage actions remain in the selected finding detail. New concerns are labeled in the list. Follow-up statuses are compact list entries, with resolved prior concerns collapsed by default.
+- Current source inspection reads the exact pinned preparation. Prior source inspection reads the saved commit and path through the shared bounded Git reader. Missing historical objects produce an explicit unavailable state; current worktree source is never substituted.
+
+## Verification
+
+- `./scripts/validate desktop` passed on the current working tree, including contract, persistence, exact-source and native reducer checks. The complete runner output is preserved in [VALIDATE-32.log](VALIDATE-32.log).
+- After moving the composer beneath source and adding semantic badges, native `cargo check` and the optimized release build both passed. The current release app is running as PID 733781 from the ticket-32 worktree.
+- Persistence tests verify compact prior text/source metadata across replacement, correct head/merge-base SHA binding, and that the prior full result is not retained. Evidence tests read exact old commits from a temporary Git repository and report unavailable objects. Native reducer tests cover all four statuses, ordering, unassessed concerns, and current-finding relationships.
+- The first local visual fixture was generation 3 for PR #103's earlier context (`v1-23da…`, head `51e71a…`). Direct-open later prepared the merged PR's current context (`v1-8658…`, head `49b931…`), so the exact-context guard correctly hid the older result. GitHub confirms PR #103 is merged. The fixture was re-bound by generating generation 4 from the current preparation, validating it with `validate --prepared`, and committing it through the real store path; the current result and newest preparation now share `v1-86581f0485156cb4ecb83e849445d51e7509fb6a9925a69a2cf1e360e2ab8afb`. No context guard or source binding was weakened.
+- The isolated result contains four findings and four follow-up statuses (resolved, unresolved, regressed, uncertain). The release app is open on PR #103 using `XDG_STATE_HOME=/tmp/bodh-ticket32-review` and starts on Findings. Native visual acceptance is pending. Review the three pane proportions and hierarchy, severity/status colors, collapsed resolved concerns, pinned source above the local comment composer, and evidence selection updating source while remaining in Findings.
+- A comment on GitHub issue #32 records the stale-context cause and the pending visual review. No result or publication was written to the target GitHub repository. Keep issue #32 open until the user confirms the rendered flow.

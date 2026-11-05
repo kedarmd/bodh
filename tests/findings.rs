@@ -86,6 +86,27 @@ impl Drop for Fixture {
 fn source(path: &str, revision: &str, start: u32, end: u32) -> Value {
     json!({"path":path,"revision":revision,"start_line":start,"end_line":end})
 }
+
+#[test]
+fn triage_order_prioritizes_severity_and_keeps_original_order_within_it() {
+    assert!(bodh::prioritized_finding_indices(&[]).is_empty());
+    let findings: Vec<bodh::Finding> = serde_json::from_value(json!([
+        {"id":"medium-a","title":"A","severity":"medium","confidence":"low","summary":"s","reason":"r","impact":"i","evidence":[],"locations":[],"suggestions":[],"related_thread_ids":[]},
+        {"id":"critical","title":"B","severity":"critical","confidence":"high","summary":"s","reason":"r","impact":"i","evidence":[],"locations":[],"suggestions":[],"related_thread_ids":[]},
+        {"id":"high","title":"C","severity":"high","confidence":"medium","summary":"s","reason":"r","impact":"i","evidence":[],"locations":[],"suggestions":[],"related_thread_ids":[]},
+        {"id":"medium-b","title":"D","severity":"medium","confidence":"high","summary":"s","reason":"r","impact":"i","evidence":[],"locations":[],"suggestions":[],"related_thread_ids":[]},
+        {"id":"low","title":"E","severity":"low","confidence":"high","summary":"s","reason":"r","impact":"i","evidence":[],"locations":[],"suggestions":[],"related_thread_ids":[]}
+    ]))
+    .unwrap();
+
+    let order = bodh::prioritized_finding_indices(&findings);
+    let ids = order
+        .iter()
+        .map(|&index| findings[index].id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["critical", "high", "medium-a", "medium-b", "low"]);
+}
+
 #[test]
 fn findings_need_explained_source_and_one_primary_without_mutating_checkout() {
     let f = Fixture::new();

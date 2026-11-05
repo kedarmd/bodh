@@ -1,6 +1,7 @@
 use bodh::{
-    DraftStore, GeneratedReviewStore, OperationControl, PrIdentity, PreparationStore,
-    ReviewContext, ReviewResult, Revision, SourceRef, diff_index,
+    DraftStore, FindingAlternativeEditInput, FindingDisposition, FindingTriageStore,
+    GeneratedReviewStore, OperationControl, PrIdentity, PreparationStore, ReviewContext,
+    ReviewPublicationStore, ReviewResult, Revision, SourceRef, diff_index,
 };
 use serde_json::{Value, json};
 use std::{
@@ -163,6 +164,305 @@ fn stale_generation_and_invalid_result_leave_the_current_review_untouched() {
     assert_eq!(
         store.workspace_generation(&fixture.preparation_id).unwrap(),
         1
+    );
+}
+
+#[test]
+fn finding_triage_is_bound_to_a_committed_finding_and_survives_reopen() {
+    let fixture = Fixture::new();
+    let mut result: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    result["findings"] = json!([{
+        "id":"F1","title":"Handle empty response","severity":"high","confidence":"medium",
+        "summary":"The response is not checked.","reason":"A consumer can receive an empty value.",
+        "impact":"The caller may fail later with less context.",
+        "evidence":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"explanation":"The changed line returns the unchecked value."}],
+        "locations":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"primary":true}],
+        "suggestions":[{"kind":"text_comment","id":"ask-check","body":"Could this response be checked?","source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1}}],
+        "related_thread_ids":[]
+    }]);
+    GeneratedReviewStore::open(&fixture.state)
+        .unwrap()
+        .commit(
+            &fixture.preparation_id,
+            0,
+            &serde_json::to_vec(&result).unwrap(),
+            &OperationControl::default(),
+        )
+        .unwrap();
+
+    let mut triage = FindingTriageStore::open(&fixture.state).unwrap();
+    let edit = triage
+        .save_alternative_edit(
+            &fixture.preparation_id,
+            "F1",
+            "ask-check",
+            FindingAlternativeEditInput {
+                body: "Please validate the response before returning it.",
+                replacement: None,
+                expected_revision: 0,
+            },
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(edit.revision, 1);
+    assert_eq!(edit.source.path, "src.rs");
+    let (intent, selected) = triage
+        .stage_alternative(&fixture.preparation_id, "F1", "ask-check", 0)
+        .unwrap();
+    assert_eq!(intent.selected.len(), 1);
+    assert_eq!(intent.selected[0].id, edit.draft_id);
+    assert_eq!(selected.revision, 1);
+    assert_eq!(
+        selected.selected_suggestion_id.as_deref(),
+        Some("ask-check")
+    );
+    assert_eq!(
+        triage
+            .set_disposition(
+                &fixture.preparation_id,
+                "F1",
+                FindingDisposition::Deferred,
+                None,
+                None,
+                0,
+            )
+            .unwrap_err()
+            .code,
+        "FINDING_TRIAGE_STALE"
+    );
+
+    let reopened = FindingTriageStore::open(&fixture.state).unwrap();
+    let snapshot = reopened.list(&fixture.preparation_id).unwrap();
+    assert_eq!(snapshot.entries, [selected]);
+    assert_eq!(snapshot.alternative_edits, [edit]);
+}
+
+#[test]
+fn replacement_keeps_only_compact_prior_concern_text_and_exact_source_metadata() {
+    let fixture = Fixture::new();
+    let store = GeneratedReviewStore::open(&fixture.state).unwrap();
+    let mut first: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    first["findings"] = json!([{
+        "id":"F1","title":"Handle empty response","severity":"high","confidence":"medium",
+        "summary":"The response is not checked.","reason":"A consumer can receive an empty value.",
+        "impact":"The caller may fail later with less context.",
+        "evidence":[
+            {"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"explanation":"The changed line returns the unchecked value."},
+            {"source":{"path":"src.rs","revision":"base","start_line":1,"end_line":1},"explanation":"Original implementation at merge base."}
+        ],
+        "locations":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"primary":true}],
+        "suggestions":[],"related_thread_ids":[]
+    }]);
+    store
+        .commit(
+            &fixture.preparation_id,
+            0,
+            &serde_json::to_vec(&first).unwrap(),
+            &OperationControl::default(),
+        )
+        .unwrap();
+
+    let mut next: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    next["follow_up"] = json!([{
+        "prior_concern_id":"F1","status":"resolved","explanation":"The unchecked response path was removed.",
+        "evidence":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"explanation":"Current source returns the checked value."}],
+        "finding_id":null
+    }]);
+    let committed = store
+        .commit(
+            &fixture.preparation_id,
+            1,
+            &serde_json::to_vec(&next).unwrap(),
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let prior = store
+        .current(&fixture.preparation_id)
+        .unwrap()
+        .unwrap()
+        .context
+        .prior_concerns
+        .unwrap();
+    assert_eq!(committed.generation, 2);
+    assert_eq!(prior.len(), 1);
+    assert_eq!(prior[0].id, "F1");
+    assert_eq!(prior[0].summary, "The response is not checked.");
+    assert_eq!(prior[0].evidence.len(), 2);
+    assert_eq!(
+        prior[0].evidence[0].commit_sha,
+        first["context"]["head_sha"]
+    );
+    assert_eq!(prior[0].evidence[0].source.path, "src.rs");
+    assert_eq!(
+        prior[0].evidence[1].commit_sha,
+        first["context"]["merge_base_sha"]
+    );
+    let db = rusqlite::Connection::open(&fixture.state).unwrap();
+    let (count, current_result): (u32, String) = db
+        .query_row(
+            "SELECT COUNT(*), MAX(result_json) FROM generated_reviews",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+    assert!(!current_result.contains("Handle empty response"));
+}
+
+#[test]
+fn independent_manual_finding_feedback_is_persisted_without_publication() {
+    let fixture = Fixture::new();
+    let mut result: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    let source = json!({"path":"src.rs","revision":"head","start_line":1,"end_line":1});
+    result["findings"] = json!([{
+        "id":"F1","title":"Handle empty response","severity":"high","confidence":"medium",
+        "summary":"The response is not checked.","reason":"A consumer can receive an empty value.",
+        "impact":"The caller may fail later with less context.",
+        "evidence":[{"source":source.clone(),"explanation":"The changed line returns the unchecked value."}],
+        "locations":[{"source":source,"primary":true}],"suggestions":[],"related_thread_ids":[]
+    }]);
+    GeneratedReviewStore::open(&fixture.state)
+        .unwrap()
+        .commit(
+            &fixture.preparation_id,
+            0,
+            &serde_json::to_vec(&result).unwrap(),
+            &OperationControl::default(),
+        )
+        .unwrap();
+
+    let entry = FindingTriageStore::open(&fixture.state)
+        .unwrap()
+        .set_disposition(
+            &fixture.preparation_id,
+            "F1",
+            FindingDisposition::Staged,
+            None,
+            Some("Please verify the empty-response case manually."),
+            0,
+        )
+        .unwrap();
+    assert_eq!(
+        entry.manual_feedback.as_deref(),
+        Some("Please verify the empty-response case manually.")
+    );
+    assert!(
+        ReviewPublicationStore::open(&fixture.state)
+            .unwrap()
+            .intent(&fixture.preparation_id)
+            .unwrap()
+            .selected
+            .is_empty()
+    );
+}
+
+#[test]
+fn switching_a_finding_alternative_preserves_other_edits_and_unstaging_keeps_drafts() {
+    let fixture = Fixture::new();
+    let mut result: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    let source = json!({"path":"src.rs","revision":"head","start_line":1,"end_line":1});
+    result["findings"] = json!([{
+        "id":"F1","title":"Handle empty response","severity":"high","confidence":"medium",
+        "summary":"The response is not checked.","reason":"A consumer can receive an empty value.",
+        "impact":"The caller may fail later with less context.",
+        "evidence":[{"source":source.clone(),"explanation":"The changed line returns the unchecked value."}],
+        "locations":[{"source":source.clone(),"primary":true}],
+        "suggestions":[
+            {"kind":"text_comment","id":"choice-a","body":"Check the response.","source":source.clone()},
+            {"kind":"text_comment","id":"choice-b","body":"Handle an empty response.","source":source}
+        ],
+        "related_thread_ids":[]
+    }]);
+    GeneratedReviewStore::open(&fixture.state)
+        .unwrap()
+        .commit(
+            &fixture.preparation_id,
+            0,
+            &serde_json::to_vec(&result).unwrap(),
+            &OperationControl::default(),
+        )
+        .unwrap();
+
+    let mut triage = FindingTriageStore::open(&fixture.state).unwrap();
+    let first = triage
+        .save_alternative_edit(
+            &fixture.preparation_id,
+            "F1",
+            "choice-a",
+            FindingAlternativeEditInput {
+                body: "Reviewer edit A",
+                replacement: None,
+                expected_revision: 0,
+            },
+            &OperationControl::default(),
+        )
+        .unwrap();
+    triage
+        .stage_alternative(&fixture.preparation_id, "F1", "choice-a", 0)
+        .unwrap();
+    let second = triage
+        .save_alternative_edit(
+            &fixture.preparation_id,
+            "F1",
+            "choice-b",
+            FindingAlternativeEditInput {
+                body: "Reviewer edit B",
+                replacement: None,
+                expected_revision: 0,
+            },
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let (intent, staged) = triage
+        .stage_alternative(&fixture.preparation_id, "F1", "choice-b", 1)
+        .unwrap();
+
+    assert_eq!(intent.selected.len(), 1);
+    assert_eq!(intent.selected[0].id, second.draft_id);
+    assert_ne!(first.draft_id, second.draft_id);
+    assert_eq!(staged.selected_suggestion_id.as_deref(), Some("choice-b"));
+    let drafts = DraftStore::open(&fixture.state)
+        .unwrap()
+        .list(&fixture.preparation_id)
+        .unwrap();
+    assert_eq!(drafts.drafts.len(), 2);
+    assert!(
+        drafts
+            .drafts
+            .iter()
+            .any(|draft| draft.id == first.draft_id && draft.body == "Reviewer edit A")
+    );
+    assert!(
+        drafts
+            .drafts
+            .iter()
+            .any(|draft| draft.id == second.draft_id && draft.body == "Reviewer edit B")
+    );
+
+    let mut triage = FindingTriageStore::open(&fixture.state).unwrap();
+    triage
+        .set_disposition(
+            &fixture.preparation_id,
+            "F1",
+            FindingDisposition::Deferred,
+            None,
+            None,
+            2,
+        )
+        .unwrap();
+    let intent = ReviewPublicationStore::open(&fixture.state)
+        .unwrap()
+        .intent(&fixture.preparation_id)
+        .unwrap();
+    assert!(intent.selected.is_empty());
+    assert_eq!(
+        DraftStore::open(&fixture.state)
+            .unwrap()
+            .list(&fixture.preparation_id)
+            .unwrap()
+            .drafts
+            .len(),
+        2
     );
 }
 

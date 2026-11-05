@@ -58,7 +58,7 @@ pub struct Interaction {
 #[derive(Clone, Debug)]
 pub enum Step {
     Interaction(Interaction),
-    Alt(Vec<(String, Vec<Interaction>)>),
+    Alt(String, Vec<(String, Vec<Interaction>)>),
     Opt(String, Vec<Interaction>),
 }
 #[derive(Clone, Debug)]
@@ -73,7 +73,7 @@ impl Flow {
             .iter()
             .flat_map(|step| match step {
                 Step::Interaction(i) => vec![i],
-                Step::Alt(branches) => branches
+                Step::Alt(_, branches) => branches
                     .iter()
                     .flat_map(|(_, items)| items.iter())
                     .collect(),
@@ -116,6 +116,7 @@ pub struct Frame {
 pub struct Scene {
     pub width: f32,
     pub height: f32,
+    pub participant_height: f32,
     pub columns: Vec<f32>,
     pub rows: Vec<Row>,
     pub frames: Vec<Frame>,
@@ -127,19 +128,26 @@ impl Scene {
             .map(|i| 140.0 + i as f32 * 240.0)
             .collect();
         let width = (flow.participants.len() as f32 * 240.0 + 120.0).max(520.0);
+        let participant_lines = flow
+            .participants
+            .iter()
+            .map(|label| ((label.chars().count() as f32 * 8.) / 184.).ceil().max(1.))
+            .fold(1.0_f32, f32::max);
+        let participant_height = (participant_lines * 18. + 16.).max(65.);
         let mut scene = Self {
             width,
             height: 0.,
+            participant_height,
             columns,
             rows: vec![],
             frames: vec![],
         };
-        let mut y = 90.;
+        let mut y = 16. + participant_height + 9.;
         let mut index = 0;
         for step in &flow.steps {
             match step {
                 Step::Interaction(i) => scene.add(i, &mut index, &mut y),
-                Step::Alt(branches) => {
+                Step::Alt(label, branches) => {
                     let group_start = y;
                     y += 32.;
                     for (branch, items) in branches {
@@ -166,7 +174,7 @@ impl Scene {
                             w: width - 40.,
                             h: y - group_start,
                         },
-                        label: "alt".into(),
+                        label: format!("alt · {label}"),
                         branch: false,
                     });
                 }
@@ -274,16 +282,19 @@ pub fn demo() -> Flow {
                 5,
                 6,
             )),
-            Step::Alt(vec![
-                (
-                    "snapshot current".into(),
-                    vec![interaction(2, 0, Return, "Return pinned review", 7, 8)],
-                ),
-                (
-                    "snapshot stale".into(),
-                    vec![interaction(2, 0, Return, "Reject stale context", 9, 10)],
-                ),
-            ]),
+            Step::Alt(
+                "snapshot result".into(),
+                vec![
+                    (
+                        "snapshot current".into(),
+                        vec![interaction(2, 0, Return, "Return pinned review", 7, 8)],
+                    ),
+                    (
+                        "snapshot stale".into(),
+                        vec![interaction(2, 0, Return, "Reject stale context", 9, 10)],
+                    ),
+                ],
+            ),
             Step::Opt(
                 "audit enabled".into(),
                 vec![interaction(

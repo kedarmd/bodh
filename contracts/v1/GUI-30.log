@@ -1,0 +1,7 @@
+Ticket #30 native GUI trial record
+
+First launch: `CARGO_BUILD_JOBS=1 ./scripts/validate gui` completed the release build and started PID 3419150. The process was intentionally sent SIGTERM for relaunch after the isolated trial preference used `Head` instead of the serialized `head` revision value. No interaction trial was performed in that launch. The runner reported status 143 because of this deliberate restart.
+
+The temporary preference was corrected to `head`. The seeded PR review and database remain in the isolated directory recorded in `/tmp/bodh-sequence-review-dir`; the user's normal Bodh state was not used.
+
+Second launch: `CARGO_BUILD_JOBS=1 ./scripts/validate gui` completed the release build (`Finished` in 0.60s) and started the corrected native app. The runner is still attached to the interactive GUI process. PID 3474062; no manual interaction has yet been performed by the agent.

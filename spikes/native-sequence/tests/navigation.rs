@@ -60,7 +60,7 @@ fn alternatives_share_one_conditional_frame() {
     let alt = scene
         .frames
         .iter()
-        .find(|f| f.label == "alt")
+        .find(|f| f.label == "alt · snapshot result")
         .expect("one encompassing alt frame");
     for index in [3, 4] {
         let row = &scene.rows[index];
@@ -79,6 +79,22 @@ fn self_call_on_the_last_participant_stays_inside_the_scrollable_scene() {
     let scene = Scene::layout(&flow);
     let row = scene.rows.last().unwrap();
     assert!(row.rect.x + row.rect.w <= scene.width);
+}
+
+#[test]
+fn long_participant_and_interaction_labels_expand_their_scene_rows() {
+    let mut flow = demo();
+    flow.participants[0] = "A participant label long enough to wrap onto several lines".into();
+    let mut interaction = flow.interactions()[0].clone();
+    interaction.label =
+        "A long interaction description that must remain inside its hit row when it wraps".into();
+    flow.steps[0] = bodh_sequence_spike::Step::Interaction(interaction);
+
+    let scene = Scene::layout(&flow);
+    assert!(scene.participant_height > 65.);
+    assert!(scene.rows[0].rect.y >= 16. + scene.participant_height + 9.);
+    assert!(scene.rows[0].rect.h > 90.);
+    assert!(scene.rows[0].rect.x + scene.rows[0].rect.w <= scene.width);
 }
 
 #[test]

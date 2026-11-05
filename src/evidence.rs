@@ -28,7 +28,7 @@ pub struct PreparedEvidenceContext {
     pub prior_concerns: Option<Vec<PriorConcern>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PriorConcern {
     #[serde(deserialize_with = "crate::bounded_text")]
@@ -37,6 +37,19 @@ pub struct PriorConcern {
     pub title: String,
     #[serde(deserialize_with = "crate::bounded_text")]
     pub summary: String,
+    /// Compact exact-source snapshots; the full prior result is never retained.
+    #[serde(default, deserialize_with = "crate::bounded_list")]
+    pub evidence: Vec<PriorConcernEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PriorConcernEvidence {
+    pub source: SourceRef,
+    #[serde(deserialize_with = "crate::bounded_text")]
+    pub commit_sha: String,
+    #[serde(deserialize_with = "crate::bounded_text")]
+    pub explanation: String,
 }
 
 fn prior_concerns<'de, D: serde::Deserializer<'de>>(
@@ -197,6 +210,20 @@ pub fn read_source(
     source: &SourceRef,
     control: &OperationControl,
 ) -> Result<String, ContractError> {
+    let revision = match source.revision {
+        Revision::Head => &context.head_sha,
+        Revision::Base => &context.merge_base_sha,
+    };
+    read_source_at_commit(repository, revision, source, control)
+}
+
+/// Reads source at an exact historical commit without substituting a current revision.
+pub fn read_source_at_commit(
+    repository: &Path,
+    revision: &str,
+    source: &SourceRef,
+    control: &OperationControl,
+) -> Result<String, ContractError> {
     if source.path.is_empty()
         || source.path.starts_with('/')
         || source.path.contains('\\')
@@ -219,10 +246,6 @@ pub fn read_source(
             "/start_line",
         ));
     }
-    let revision = match source.revision {
-        Revision::Head => &context.head_sha,
-        Revision::Base => &context.merge_base_sha,
-    };
     if !valid_sha(revision) {
         return Err(ContractError::new(
             "REVISION_INVALID",

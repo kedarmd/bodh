@@ -1,4 +1,6 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
+use super::diagram::SequenceDiagram;
+use super::diagram_adapter::{AdaptedDiagram, ChangedLines, adapt_diagram};
 use bodh::{
     AnchorRepairPreview, AnchorRepairStatus, CodeReplacementSnapshot, DiscussionPlan,
     DiscussionPublicationStore, DiscussionSelection, DraftSnapshot, DraftStore,
@@ -9,8 +11,9 @@ use bodh::{
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::overview::{
-    CommittedOverviewStatus, CommittedOverviewView, apply_committed_overview_load,
-    committed_matches_context, evidence_file_index, is_significant_assessment,
+    CommittedOverviewStatus, CommittedOverviewView, FollowUpProminence,
+    apply_committed_overview_load, committed_matches_context, evidence_file_index,
+    follow_up_concerns, is_significant_assessment,
 };
 use bodh_sequence_spike::preferences::{
     NavigationPreferences as Preferences, RecentReview, WorkspaceTab,
@@ -68,6 +71,14 @@ struct Author {
     login: String,
 }
 
+#[derive(Clone, Debug)]
+struct PriorSourcePreview {
+    key: String,
+    loading: bool,
+    text: Option<String>,
+    error: Option<String>,
+}
+
 #[derive(Clone, Copy)]
 struct Palette {
     canvas: u32,
@@ -77,6 +88,10 @@ struct Palette {
     text: u32,
     muted: u32,
     accent: u32,
+    selection: u32,
+    danger: u32,
+    caution: u32,
+    success: u32,
 }
 impl Palette {
     fn new(dark: bool) -> Self {
@@ -89,6 +104,10 @@ impl Palette {
                 text: TEXT_DARK,
                 muted: MUTED_DARK,
                 accent: ACCENT_DARK,
+                selection: 0x303a4a,
+                danger: 0xf0a5a5,
+                caution: 0xedc680,
+                success: 0x9fceb4,
             }
         } else {
             Self {
@@ -99,6 +118,10 @@ impl Palette {
                 text: TEXT_LIGHT,
                 muted: MUTED_LIGHT,
                 accent: ACCENT_LIGHT,
+                selection: 0xe7edf7,
+                danger: 0xa33c49,
+                caution: 0x77530f,
+                success: 0x266244,
             }
         }
     }
@@ -182,7 +205,44 @@ pub struct Product {
     committed_overview: CommittedOverviewView,
     overview_loading: bool,
     overview_epoch: Arc<AtomicU64>,
+    finding_triage_snapshot: Option<bodh::FindingTriageSnapshot>,
+    finding_triage_loading: bool,
+    finding_action_saving: bool,
+    finding_feedback_target: Option<String>,
+    finding_feedback_body: String,
+    finding_feedback_focus: FocusHandle,
+    focused_discussion_thread: Option<String>,
     pending_overview_source: Option<(usize, SourceRef)>,
+    diagram_views: Vec<AdaptedDiagram>,
+    diagram_changed_lines: ChangedLines,
+    diagram_diff_context: Option<String>,
+    diagram_diff_loading: bool,
+    diagram_selected: std::collections::HashMap<String, usize>,
+    diagram_scrolls: std::collections::HashMap<String, ScrollHandle>,
+    active_diagram: Option<String>,
+    diagram_source: Option<SourceRef>,
+    diagram_source_display: Option<SourceRef>,
+    diagram_source_text: Option<String>,
+    diagram_source_loading: bool,
+    diagram_source_error: Option<String>,
+    diagram_source_scroll: ScrollHandle,
+    diagram_epoch: Arc<AtomicU64>,
+    diagram_source_epoch: Arc<AtomicU64>,
+    diagram_diff_control: Option<OperationControl>,
+    diagram_source_control: Option<OperationControl>,
+    selected_finding_id: Option<String>,
+    finding_source: Option<SourceRef>,
+    finding_source_display: Option<SourceRef>,
+    finding_source_text: Option<String>,
+    finding_source_loading: bool,
+    finding_source_error: Option<String>,
+    finding_source_scroll: ScrollHandle,
+    finding_source_epoch: Arc<AtomicU64>,
+    finding_source_control: Option<OperationControl>,
+    prior_source_preview: Option<PriorSourcePreview>,
+    finding_prior_source: Option<bodh::PriorConcernEvidence>,
+    prior_source_epoch: Arc<AtomicU64>,
+    expanded_follow_up: std::collections::HashSet<String>,
 }
 
 impl Product {
@@ -274,7 +334,44 @@ impl Product {
             committed_overview: CommittedOverviewView::default(),
             overview_loading: false,
             overview_epoch: Arc::new(AtomicU64::new(0)),
+            finding_triage_snapshot: None,
+            finding_triage_loading: false,
+            finding_action_saving: false,
+            finding_feedback_target: None,
+            finding_feedback_body: String::new(),
+            finding_feedback_focus: cx.focus_handle(),
+            focused_discussion_thread: None,
             pending_overview_source: None,
+            diagram_views: Vec::new(),
+            diagram_changed_lines: ChangedLines::new(),
+            diagram_diff_context: None,
+            diagram_diff_loading: false,
+            diagram_selected: std::collections::HashMap::new(),
+            diagram_scrolls: std::collections::HashMap::new(),
+            active_diagram: None,
+            diagram_source: None,
+            diagram_source_display: None,
+            diagram_source_text: None,
+            diagram_source_loading: false,
+            diagram_source_error: None,
+            diagram_source_scroll: ScrollHandle::new(),
+            diagram_epoch: Arc::new(AtomicU64::new(0)),
+            diagram_source_epoch: Arc::new(AtomicU64::new(0)),
+            diagram_diff_control: None,
+            diagram_source_control: None,
+            selected_finding_id: None,
+            finding_source: None,
+            finding_source_display: None,
+            finding_source_text: None,
+            finding_source_loading: false,
+            finding_source_error: None,
+            finding_source_scroll: ScrollHandle::new(),
+            finding_source_epoch: Arc::new(AtomicU64::new(0)),
+            finding_source_control: None,
+            prior_source_preview: None,
+            finding_prior_source: None,
+            prior_source_epoch: Arc::new(AtomicU64::new(0)),
+            expanded_follow_up: std::collections::HashSet::new(),
         };
         app.refresh_gh_cli(cx);
         app
@@ -362,6 +459,37 @@ impl Product {
         self.prefs.repositories.truncate(20);
         self.persist();
         self.load_pull_requests(path, cx);
+    }
+
+    fn choose_repository_folder(&mut self, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose Repository".into()),
+        });
+        let weak = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| match prompt.await {
+            Ok(Ok(Some(paths))) => {
+                if let Some(path) = paths.first() {
+                    let path = path.to_string_lossy().into_owned();
+                    let _ = weak.update(cx, |this, cx| {
+                        this.repository_input = path;
+                        this.error = None;
+                        this.status = None;
+                        cx.notify();
+                    });
+                }
+            }
+            Ok(Ok(None)) | Err(_) => {}
+            Ok(Err(error)) => {
+                let _ = weak.update(cx, |this, cx| {
+                    this.error = Some(format!("Could not open the folder picker: {error}"));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     fn refresh_gh_cli(&mut self, cx: &mut Context<Self>) {
@@ -568,8 +696,41 @@ impl Product {
         let Some(binding) = self.selected_review.clone() else {
             self.committed_overview = CommittedOverviewView::default();
             self.overview_loading = false;
+            self.finding_triage_snapshot = None;
+            self.finding_triage_loading = false;
+            self.diagram_views.clear();
+            self.diagram_changed_lines.clear();
+            self.diagram_diff_context = None;
+            self.active_diagram = None;
+            self.diagram_source = None;
+            self.diagram_source_display = None;
+            self.diagram_source_text = None;
+            self.diagram_source_error = None;
             return;
         };
+        self.refresh_finding_triage(cx);
+        if self.diagram_diff_context.as_deref() != Some(&binding.context.context_id) {
+            if let Some(control) = self.diagram_diff_control.take() {
+                control.cancel();
+            }
+            if let Some(control) = self.diagram_source_control.take() {
+                control.cancel();
+            }
+            self.diagram_views.clear();
+            self.diagram_changed_lines.clear();
+            self.diagram_diff_context = None;
+            self.diagram_diff_loading = false;
+            self.diagram_selected.clear();
+            self.diagram_scrolls.clear();
+            self.active_diagram = None;
+            self.diagram_source = None;
+            self.diagram_source_display = None;
+            self.diagram_source_text = None;
+            self.diagram_source_error = None;
+            self.selected_finding_id = None;
+            self.diagram_source_epoch.fetch_add(1, Ordering::Relaxed);
+            self.diagram_epoch.fetch_add(1, Ordering::Relaxed);
+        }
         if self
             .committed_overview
             .committed
@@ -601,16 +762,395 @@ impl Product {
                     return;
                 }
                 this.overview_loading = false;
+                let previous_generation = this
+                    .committed_overview
+                    .committed
+                    .as_ref()
+                    .map(|review| review.generation);
                 this.committed_overview = apply_committed_overview_load(
                     &expected_context,
                     &this.committed_overview,
                     result,
                 );
+                let current_generation = this
+                    .committed_overview
+                    .committed
+                    .as_ref()
+                    .map(|review| review.generation);
+                if previous_generation != current_generation {
+                    if let Some(control) = this.diagram_source_control.take() {
+                        control.cancel();
+                    }
+                    this.diagram_source_epoch.fetch_add(1, Ordering::Relaxed);
+                    this.diagram_selected.clear();
+                    this.diagram_scrolls.clear();
+                    this.active_diagram = None;
+                    this.diagram_source = None;
+                    this.diagram_source_display = None;
+                    this.diagram_source_text = None;
+                    this.diagram_source_error = None;
+                    this.selected_finding_id = None;
+                }
+                let initial_finding = if this.active_tab == WorkspaceTab::Findings
+                    && this.selected_finding_id.is_none()
+                {
+                    this.committed_overview
+                        .committed
+                        .as_ref()
+                        .and_then(|review| {
+                            bodh::prioritized_finding_indices(&review.result.findings)
+                                .first()
+                                .and_then(|index| review.result.findings.get(*index))
+                                .map(|finding| finding.id.clone())
+                        })
+                } else {
+                    None
+                };
+                if let Some(id) = initial_finding {
+                    this.select_finding(id, cx);
+                }
+                this.rebuild_diagram_views();
+                this.ensure_initial_diagram_selection(cx);
+                this.refresh_diagram_change_lines(cx);
                 cx.notify();
             });
         })
         .detach();
         cx.notify();
+    }
+
+    fn refresh_finding_triage(&mut self, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            self.finding_triage_snapshot = None;
+            self.finding_triage_loading = false;
+            return;
+        };
+        if self.finding_triage_loading
+            || self
+                .finding_triage_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.context_id == binding.context.context_id)
+        {
+            return;
+        }
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let context_id = binding.context.context_id.clone();
+        let epoch = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_triage_loading = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    bodh::FindingTriageStore::open(Path::new(&state))?.list(&preparation_id)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != epoch
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|current| current.context.context_id != context_id)
+                {
+                    return;
+                }
+                this.finding_triage_loading = false;
+                match result {
+                    Ok(snapshot) => this.finding_triage_snapshot = Some(snapshot),
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn rebuild_diagram_views(&mut self) {
+        let Some(committed) = self.committed_overview.committed.as_ref() else {
+            self.diagram_views.clear();
+            self.active_diagram = None;
+            return;
+        };
+        self.diagram_views = committed
+            .result
+            .diagrams
+            .iter()
+            .map(|diagram| {
+                adapt_diagram(
+                    diagram,
+                    &committed.result.findings,
+                    &self.diagram_changed_lines,
+                )
+            })
+            .collect();
+        let ids = self
+            .diagram_views
+            .iter()
+            .map(|diagram| diagram.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        self.diagram_selected.retain(|id, _| ids.contains(id));
+        self.diagram_scrolls.retain(|id, _| ids.contains(id));
+        if self
+            .active_diagram
+            .as_ref()
+            .is_none_or(|active| !ids.contains(active))
+        {
+            self.active_diagram = self.diagram_views.first().map(|diagram| diagram.id.clone());
+        }
+        for diagram in &self.diagram_views {
+            let selected = self.diagram_selected.entry(diagram.id.clone()).or_insert(0);
+            if *selected >= diagram.links.len() {
+                *selected = 0;
+            }
+        }
+    }
+
+    fn ensure_initial_diagram_selection(&mut self, cx: &mut Context<Self>) {
+        if self.diagram_source.is_some() || self.diagram_source_loading {
+            return;
+        }
+        let Some(id) = self.active_diagram.clone() else {
+            return;
+        };
+        let selected = self.diagram_selected.get(&id).copied().unwrap_or(0);
+        self.select_diagram_interaction(selected, cx);
+    }
+
+    fn refresh_diagram_change_lines(&mut self, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if self.diagram_diff_context.as_deref() == Some(&binding.context.context_id)
+            || self.diagram_diff_loading
+        {
+            return;
+        }
+        let Some(committed) = self.committed_overview.committed.as_ref() else {
+            return;
+        };
+        let findings = committed.result.findings.clone();
+        let empty = ChangedLines::new();
+        let mut paths = std::collections::BTreeSet::new();
+        for diagram in &committed.result.diagrams {
+            let adapted = adapt_diagram(diagram, &findings, &empty);
+            for link in adapted.links {
+                if let Some(source) = link.source {
+                    paths.insert(source.path);
+                }
+            }
+        }
+        let files = binding
+            .changed_files
+            .iter()
+            .filter_map(|file| {
+                let old_path = file.old_path.clone();
+                let new_path = file.new_path.clone();
+                if !old_path.as_ref().is_some_and(|path| paths.contains(path))
+                    && !new_path.as_ref().is_some_and(|path| paths.contains(path))
+                {
+                    return None;
+                }
+                let read_path = new_path.clone().or_else(|| old_path.clone())?;
+                Some((old_path, new_path, read_path))
+            })
+            .collect::<Vec<_>>();
+        let checkout = binding.checkout.clone();
+        let context = binding.context.clone();
+        let context_id = context.context_id.clone();
+        let token = self.diagram_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.diagram_epoch.clone();
+        self.diagram_diff_loading = true;
+        self.diagram_diff_context = Some(context_id.clone());
+        let control = OperationControl::with_timeout(Duration::from_secs(30));
+        self.diagram_diff_control = Some(control.clone());
+        cx.spawn(async move |weak, cx| {
+            let changed = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut result = ChangedLines::new();
+                    for (old_path, new_path, read_path) in files {
+                        if control.check().is_err() {
+                            break;
+                        }
+                        let Ok(diff) =
+                            read_diff(Path::new(&checkout), &context, &read_path, &control)
+                        else {
+                            continue;
+                        };
+                        for row in diff_rows(&diff.text) {
+                            match row.kind {
+                                DiffLineKind::Addition => {
+                                    if let (Some(path), Some(line)) =
+                                        (new_path.as_ref(), row.new_line)
+                                    {
+                                        result
+                                            .entry((path.clone(), true))
+                                            .or_default()
+                                            .insert(line);
+                                    }
+                                }
+                                DiffLineKind::Deletion => {
+                                    if let (Some(path), Some(line)) =
+                                        (old_path.as_ref(), row.old_line)
+                                    {
+                                        result
+                                            .entry((path.clone(), false))
+                                            .or_default()
+                                            .insert(line);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    result
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|current| current.context.context_id != context_id)
+                {
+                    return;
+                }
+                this.diagram_diff_loading = false;
+                this.diagram_diff_control = None;
+                this.diagram_diff_context = Some(context_id.clone());
+                this.diagram_changed_lines = changed;
+                this.rebuild_diagram_views();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn select_diagram_flow(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.diagram_views.iter().any(|diagram| diagram.id == id) {
+            return;
+        }
+        self.active_diagram = Some(id.clone());
+        let selected = self.diagram_selected.get(&id).copied().unwrap_or(0);
+        self.select_diagram_interaction(selected, cx);
+    }
+
+    fn select_diagram_interaction(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(id) = self.active_diagram.clone() else {
+            return;
+        };
+        let Some(diagram) = self.diagram_views.iter().find(|diagram| diagram.id == id) else {
+            return;
+        };
+        if index >= diagram.links.len() {
+            return;
+        }
+        if let Some(control) = self.diagram_source_control.take() {
+            control.cancel();
+        }
+        self.diagram_selected.insert(id, index);
+        self.diagram_source_scroll.set_offset(point(px(0.), px(0.)));
+        self.diagram_source_error = None;
+        let Some(source) = diagram.links[index].source.clone() else {
+            self.diagram_source = None;
+            self.diagram_source_display = None;
+            self.diagram_source_text = None;
+            self.diagram_source_loading = false;
+            self.diagram_source_epoch.fetch_add(1, Ordering::Relaxed);
+            cx.notify();
+            return;
+        };
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let display = source_context_range(&source, 4);
+        self.diagram_source = Some(source.clone());
+        self.diagram_source_display = Some(display.clone());
+        self.diagram_source_text = None;
+        self.diagram_source_loading = true;
+        let token = self.diagram_source_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.diagram_source_epoch.clone();
+        let checkout = binding.checkout.clone();
+        let context = binding.context.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(10));
+        self.diagram_source_control = Some(control.clone());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    read_source_context(
+                        Path::new(&checkout),
+                        &context,
+                        &display,
+                        source.start_line,
+                        &control,
+                    )
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.diagram_source_loading = false;
+                this.diagram_source_control = None;
+                match result {
+                    Ok((display, text)) => {
+                        this.diagram_source_display = Some(display);
+                        this.diagram_source_text = Some(text);
+                    }
+                    Err(error) => {
+                        this.diagram_source_error =
+                            Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn select_diagram_finding(&mut self, id: String, cx: &mut Context<Self>) {
+        self.selected_finding_id = Some(id);
+        self.active_tab = WorkspaceTab::Findings;
+        self.prefs.active_tab = Some(WorkspaceTab::Findings);
+        self.persist();
+        self.refresh_committed_overview(cx);
+        cx.notify();
+    }
+
+    fn select_finding(&mut self, id: String, cx: &mut Context<Self>) {
+        self.selected_finding_id = Some(id.clone());
+        self.prior_source_preview = None;
+        self.finding_prior_source = None;
+        let source = self
+            .committed_overview
+            .committed
+            .as_ref()
+            .and_then(|review| {
+                review
+                    .result
+                    .findings
+                    .iter()
+                    .find(|finding| finding.id == id)
+            })
+            .and_then(|finding| {
+                finding
+                    .evidence
+                    .first()
+                    .map(|evidence| evidence.source.clone())
+                    .or_else(|| {
+                        finding
+                            .locations
+                            .first()
+                            .map(|location| location.source.clone())
+                    })
+            });
+        if let Some(source) = source {
+            self.select_finding_source(source, cx);
+        } else {
+            cx.notify();
+        }
     }
 
     fn select_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
@@ -632,10 +1172,107 @@ impl Product {
             cx.notify();
             return;
         };
+        if let Some(control) = self.diagram_source_control.take() {
+            control.cancel();
+        }
+        self.diagram_source_epoch.fetch_add(1, Ordering::Relaxed);
         self.active_tab = WorkspaceTab::Changes;
         self.prefs.active_tab = Some(WorkspaceTab::Changes);
         self.pending_overview_source = Some((index, source));
         self.select_file(index, cx);
+    }
+
+    fn open_related_discussion(&mut self, thread_id: String, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let context = binding.context.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let lookup_thread_id = thread_id.clone();
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let observation =
+                        bodh::load_latest_discussions(Path::new(&state), &preparation_id)?;
+                    let thread = observation["threads"]
+                        .as_array()
+                        .and_then(|threads| {
+                            threads
+                                .iter()
+                                .find(|thread| thread["id"] == lookup_thread_id)
+                        })
+                        .cloned()
+                        .ok_or_else(|| {
+                            bodh::ContractError::new(
+                                "THREAD_NOT_FOUND",
+                                "Related discussion is not in the prepared observation",
+                                "/thread_id",
+                            )
+                        })?;
+                    let path = thread["path"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            bodh::ContractError::new(
+                                "THREAD_LOCATION_UNAVAILABLE",
+                                "Related discussion has no source path",
+                                "/thread_id",
+                            )
+                        })?
+                        .to_owned();
+                    let outdated = thread["isOutdated"] == true;
+                    let line = if outdated {
+                        thread["originalLine"].as_u64()
+                    } else {
+                        thread["line"]
+                            .as_u64()
+                            .or_else(|| thread["originalLine"].as_u64())
+                    }
+                    .ok_or_else(|| {
+                        bodh::ContractError::new(
+                            "THREAD_LOCATION_UNAVAILABLE",
+                            "Related discussion has no readable line",
+                            "/thread_id",
+                        )
+                    })?;
+                    let revision = if thread["diffSide"].as_str() == Some("LEFT") || outdated {
+                        Revision::Base
+                    } else {
+                        Revision::Head
+                    };
+                    Ok::<_, bodh::ContractError>(SourceRef {
+                        path,
+                        revision,
+                        start_line: line as u32,
+                        end_line: line as u32,
+                    })
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|current| current.context != context)
+                {
+                    return;
+                }
+                match result {
+                    Ok(source) => {
+                        this.discussion_expanded = true;
+                        this.discussion_loaded_for = None;
+                        this.discussion_state = serde_json::json!({"available":false,"threads":[]});
+                        this.focused_discussion_thread = Some(thread_id.clone());
+                        this.open_overview_evidence(source, cx);
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn resume(&mut self, id: String, cx: &mut Context<Self>) {
@@ -2630,6 +3267,39 @@ impl Product {
             cx.notify();
             return;
         }
+        if self.screen == Screen::Workspace && self.active_tab == WorkspaceTab::Overview {
+            let key = event.keystroke.key.as_str();
+            if matches!(key, "down" | "right" | "up" | "left") {
+                let selection_state = self.active_diagram.as_ref().and_then(|id| {
+                    self.diagram_views
+                        .iter()
+                        .find(|item| item.id == *id)
+                        .map(|diagram| (id.clone(), diagram.links.len()))
+                });
+                if let Some((id, count)) = selection_state.filter(|(_, count)| *count > 0) {
+                    let current = self.diagram_selected.get(&id).copied().unwrap_or(0);
+                    let next = match key {
+                        "down" | "right" => (current + 1) % count,
+                        _ => (current + count - 1) % count,
+                    };
+                    self.select_diagram_interaction(next, cx);
+                    let row_rect = self
+                        .diagram_views
+                        .iter()
+                        .find(|diagram| diagram.id == id)
+                        .and_then(|diagram| diagram.scene.rows.get(next))
+                        .map(|row| row.rect);
+                    if let (Some(row), Some(scroll)) = (row_rect, self.diagram_scrolls.get(&id)) {
+                        scroll.set_offset(point(
+                            px(-(row.x - 40.).max(0.)),
+                            px(-(row.y - 90.).max(0.)),
+                        ));
+                    }
+                    cx.notify();
+                }
+                return;
+            }
+        }
         match event.keystroke.key.as_str() {
             "[" => self.prefs.inspector_width = (self.prefs.inspector_width - 24.).max(340.),
             "]" => {
@@ -2910,11 +3580,15 @@ impl Product {
                             } else if key == "enter" {
                                 let value = this.repository_input.clone();
                                 this.open_repository(value, cx);
-                            } else if key.chars().count() == 1
-                                && !event.keystroke.modifiers.control
-                                && !event.keystroke.modifiers.platform
+                            } else if let Some(text) =
+                                bodh_sequence_spike::repository_input::typed_text(
+                                    key,
+                                    event.keystroke.key_char.as_deref(),
+                                    event.keystroke.modifiers.control,
+                                    event.keystroke.modifiers.platform,
+                                )
                             {
-                                this.repository_input.push_str(key);
+                                this.repository_input.push_str(text);
                             }
                             cx.notify();
                         }))
@@ -2923,6 +3597,13 @@ impl Product {
                             cx.listener(|this, _, window, _| window.focus(&this.search_focus)),
                         ),
                 )
+                .child(button(
+                    "choose-repository-folder",
+                    "Choose Folder",
+                    p,
+                    |this, _, _, cx| this.choose_repository_folder(cx),
+                    cx,
+                ))
                 .child(button(
                     "open-repository",
                     "Open Repository",
@@ -3672,7 +4353,10 @@ impl Product {
             .flex()
             .flex_col()
             .gap_4();
-        page = if self.active_tab == WorkspaceTab::Changes {
+        page = if matches!(
+            self.active_tab,
+            WorkspaceTab::Changes | WorkspaceTab::Findings
+        ) {
             page.overflow_hidden()
         } else {
             page.overflow_scroll()
@@ -3798,20 +4482,26 @@ impl Product {
         }
         page = page.child(tabs);
         let panel: AnyElement = match self.active_tab {
-            WorkspaceTab::Overview => self.render_overview(&binding, p, cx).into_any_element(),
-            WorkspaceTab::Changes => self
-                .render_changes(&binding, p, cx, viewport_width, viewport_height)
+            WorkspaceTab::Overview => self
+                .render_overview(&binding, p, cx, viewport_width, viewport_height)
                 .into_any_element(),
-            WorkspaceTab::Findings => self.render_findings(&binding, p, cx).into_any_element(),
+            WorkspaceTab::Changes => self
+                .render_changes(&binding, p, cx, viewport_width)
+                .into_any_element(),
+            WorkspaceTab::Findings => self
+                .render_findings(&binding, p, cx, viewport_width)
+                .into_any_element(),
         };
         page.child(panel)
     }
 
     fn render_overview(
-        &self,
+        &mut self,
         binding: &PreparedBinding,
         p: Palette,
         cx: &mut Context<Self>,
+        viewport_width: f32,
+        viewport_height: f32,
     ) -> impl IntoElement {
         let mut body = div()
             .id("overview-content")
@@ -3824,7 +4514,7 @@ impl Product {
         let current = self
             .committed_overview
             .committed
-            .as_ref()
+            .clone()
             .filter(|review| committed_matches_context(review, &binding.context));
         if self.overview_loading && current.is_none() {
             body = body.child(empty_card(
@@ -3887,6 +4577,15 @@ impl Product {
                     .child(section_title("Implementation summary", p))
                     .child(generated.overview.implementation_summary.clone()),
             );
+
+            body = body.child(self.render_sequence_workspace(
+                generated,
+                binding,
+                p,
+                cx,
+                viewport_width,
+                viewport_height,
+            ));
 
             if generated.overview.key_changes.is_empty() {
                 body = body.child(empty_card(
@@ -4141,102 +4840,416 @@ impl Product {
         )
     }
 
+    fn render_sequence_workspace(
+        &mut self,
+        generated: &bodh::ReviewResult,
+        _binding: &PreparedBinding,
+        p: Palette,
+        cx: &mut Context<Self>,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> impl IntoElement {
+        let mut workspace = div()
+            .id("sequence-review-workspace")
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_2();
+        if self.diagram_views.is_empty() {
+            return workspace.child(empty_card(
+                "No sequence diagrams",
+                "The committed result contains no sequence flows. No diagram is synthesized.",
+                p,
+            ));
+        }
+
+        let active_id = self
+            .active_diagram
+            .clone()
+            .unwrap_or_else(|| self.diagram_views[0].id.clone());
+        let Some(diagram) = self
+            .diagram_views
+            .iter()
+            .find(|diagram| diagram.id == active_id)
+            .cloned()
+        else {
+            return workspace.child(empty_card(
+                "Sequence flow unavailable",
+                "The selected flow is no longer part of the committed result.",
+                p,
+            ));
+        };
+        let selected = self
+            .diagram_selected
+            .get(&diagram.id)
+            .copied()
+            .unwrap_or(0)
+            .min(diagram.links.len().saturating_sub(1));
+        let mut toolbar = div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(section_title(&diagram.flow.title, p));
+        if self.diagram_views.len() > 1 {
+            for flow in &self.diagram_views {
+                let id = flow.id.clone();
+                let active = id == diagram.id;
+                toolbar = toolbar.child(
+                    button(
+                        &format!("select-diagram-{}", id),
+                        &flow.flow.title,
+                        p,
+                        move |this, _, window, cx| {
+                            window.focus(&this.focus);
+                            this.select_diagram_flow(id.clone(), cx);
+                        },
+                        cx,
+                    )
+                    .text_size(px(11.))
+                    .text_color(rgb(if active { p.text } else { p.muted })),
+                );
+            }
+        }
+        workspace = workspace.child(toolbar);
+
+        let pair_height = (viewport_height - 340.).max(360.);
+        let source_width = (viewport_width * 0.42).clamp(300., 560.);
+        let mut diagram_panel = div()
+            .id("sequence-diagram-panel")
+            .flex_1()
+            .min_w_0()
+            .h(px(pair_height))
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.panel))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(rgb(p.border))
+                    .child(diagram.description.clone()),
+            );
+        let scroll = self.diagram_scrolls.entry(diagram.id.clone()).or_default();
+        let diagram_element = SequenceDiagram {
+            flow: std::rc::Rc::new(diagram.flow.clone()),
+            scene: std::rc::Rc::new(diagram.scene.clone()),
+            selected,
+            palette: super::Palette {
+                bg: p.canvas,
+                panel: p.panel,
+                text: p.text,
+                muted: p.muted,
+                accent: p.accent,
+            },
+            owner: cx.entity().downgrade(),
+            select: select_product_diagram_interaction,
+            interaction_ids: std::rc::Rc::new(
+                diagram
+                    .links
+                    .iter()
+                    .map(|link| {
+                        format!(
+                            "diagram:{}:{}:step:{}:{}",
+                            diagram.id.len(),
+                            diagram.id,
+                            link.id.len(),
+                            link.id
+                        )
+                    })
+                    .collect(),
+            ),
+            changed_interactions: Some(std::rc::Rc::new(diagram.changed_interactions.clone())),
+        };
+        diagram_panel = diagram_panel.child(
+            div()
+                .id(ElementId::Name(SharedString::from(format!(
+                    "sequence-diagram-scroll-{}",
+                    diagram.id
+                ))))
+                .track_scroll(scroll)
+                .on_scroll_wheel(|event, _, cx| stop_vertical_wheel_bubbling(event, cx))
+                .overflow_scroll()
+                .flex_1()
+                .min_h_0()
+                .child(diagram_element),
+        );
+
+        let mut inspector = div()
+            .id("sequence-source-inspector")
+            .w(px(source_width))
+            .flex_shrink_0()
+            .min_w_0()
+            .h(px(pair_height))
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.panel))
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(section_title("Pinned source", p));
+        if let Some(link) = diagram.links.get(selected) {
+            inspector = inspector.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(link.explanation.clone()),
+            );
+            if let Some(source) = link.source.clone() {
+                inspector = inspector.child(button(
+                    "open-diagram-source-in-changes",
+                    "Open source in Changes",
+                    p,
+                    move |this, _, _, cx| {
+                        this.open_overview_evidence(source.clone(), cx);
+                    },
+                    cx,
+                ));
+            }
+            for finding_id in &link.findings {
+                if let Some(finding) = generated
+                    .findings
+                    .iter()
+                    .find(|finding| finding.id == *finding_id)
+                {
+                    let id = finding.id.clone();
+                    inspector = inspector.child(button(
+                        &format!("diagram-linked-finding-{id}"),
+                        &format!("Finding · {}", finding.title),
+                        p,
+                        move |this, _, window, cx| {
+                            window.focus(&this.focus);
+                            this.select_diagram_finding(id.clone(), cx);
+                        },
+                        cx,
+                    ));
+                }
+            }
+        }
+        if self.diagram_source_loading {
+            inspector = inspector.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child("Loading source from the pinned commit…"),
+            );
+        }
+        if let Some(error) = self.diagram_source_error.clone() {
+            inspector = inspector.child(empty_card("Pinned source unavailable", &error, p));
+        }
+        if let (Some(text), Some(display), Some(source)) = (
+            &self.diagram_source_text,
+            &self.diagram_source_display,
+            &self.diagram_source,
+        ) {
+            let extension = path_extension(&display.path);
+            let mut rows = div().flex().flex_col();
+            for (offset, line) in text.lines().enumerate() {
+                let number = display.start_line.saturating_add(offset as u32);
+                let selected = (source.start_line..=source.end_line).contains(&number);
+                rows = rows.child(render_source_row(number, line, extension, p, selected));
+            }
+            inspector = inspector.child(
+                div()
+                    .id("diagram-source-code")
+                    .track_scroll(&self.diagram_source_scroll)
+                    .overflow_scroll()
+                    .flex_1()
+                    .min_h_0()
+                    .child(rows),
+            );
+        } else if diagram
+            .links
+            .get(selected)
+            .is_some_and(|link| link.source.is_some())
+            && !self.diagram_source_loading
+        {
+            inspector = inspector.child(empty_card(
+                "Source not loaded",
+                "Select this interaction again to read its pinned source range.",
+                p,
+            ));
+        } else if diagram
+            .links
+            .get(selected)
+            .is_none_or(|link| link.source.is_none())
+        {
+            inspector = inspector.child(empty_card(
+                "No pinned source range",
+                "This interaction has no source link in the committed result.",
+                p,
+            ));
+        }
+        workspace.child(
+            div()
+                .id("sequence-source-pair")
+                .w_full()
+                .min_w_0()
+                .flex()
+                .gap_2()
+                .h(px(pair_height))
+                .child(diagram_panel)
+                .child(inspector),
+        )
+    }
+
+    fn select_finding_source(&mut self, source: SourceRef, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if let Some(control) = self.finding_source_control.take() {
+            control.cancel();
+        }
+        let token = self.finding_source_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.finding_source_epoch.clone();
+        let checkout = binding.checkout.clone();
+        let context = binding.context.clone();
+        let display = source_context_range(&source, 4);
+        let control = OperationControl::with_timeout(Duration::from_secs(10));
+        self.finding_source_control = Some(control.clone());
+        self.finding_source = Some(source.clone());
+        self.finding_source_display = Some(display.clone());
+        self.finding_source_text = None;
+        self.finding_source_error = None;
+        self.finding_source_loading = true;
+        self.finding_prior_source = None;
+        self.prior_source_epoch.fetch_add(1, Ordering::Relaxed);
+        self.prior_source_preview = None;
+        self.finding_source_scroll.set_offset(point(px(0.), px(0.)));
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    read_source_context(
+                        Path::new(&checkout),
+                        &context,
+                        &display,
+                        source.start_line,
+                        &control,
+                    )
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.finding_source_loading = false;
+                this.finding_source_control = None;
+                match result {
+                    Ok((display, text)) => {
+                        this.finding_source_display = Some(display);
+                        this.finding_source_text = Some(text);
+                    }
+                    Err(error) => {
+                        this.finding_source_error =
+                            Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn load_prior_source(&mut self, source: bodh::PriorConcernEvidence, cx: &mut Context<Self>) {
+        let key = format!(
+            "{}:{}:{}-{}",
+            source.commit_sha, source.source.path, source.source.start_line, source.source.end_line
+        );
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if self
+            .prior_source_preview
+            .as_ref()
+            .is_some_and(|preview| preview.key == key && preview.text.is_some())
+        {
+            self.prior_source_preview = None;
+            self.finding_prior_source = None;
+            cx.notify();
+            return;
+        }
+        let token = self.prior_source_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.prior_source_epoch.clone();
+        let repository = binding.checkout.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let expected_context = binding.context.clone();
+        self.prior_source_preview = Some(PriorSourcePreview {
+            key: key.clone(),
+            loading: true,
+            text: None,
+            error: None,
+        });
+        self.finding_prior_source = Some(source.clone());
+        if let Some(control) = self.finding_source_control.take() {
+            control.cancel();
+        }
+        self.finding_source_epoch.fetch_add(1, Ordering::Relaxed);
+        self.finding_source_loading = false;
+        self.finding_source_text = None;
+        self.finding_source = None;
+        self.finding_source = None;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    bodh::read_source_at_commit(
+                        Path::new(&repository),
+                        &source.commit_sha,
+                        &source.source,
+                        &bodh::OperationControl::default(),
+                    )
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token
+                    || this.selected_review.as_ref().is_none_or(|current| {
+                        current.preparation_id != preparation_id
+                            || current.context != expected_context
+                    })
+                {
+                    return;
+                }
+                this.prior_source_preview = Some(match result {
+                    Ok(text) => PriorSourcePreview {
+                        key,
+                        loading: false,
+                        text: Some(text),
+                        error: None,
+                    },
+                    Err(error) => PriorSourcePreview {
+                        key,
+                        loading: false,
+                        text: None,
+                        error: Some(format!("{}: {}", error.code, error.message)),
+                    },
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn render_findings(
         &self,
         binding: &PreparedBinding,
         p: Palette,
         cx: &mut Context<Self>,
+        viewport_width: f32,
     ) -> impl IntoElement {
-        let mut body = div()
-            .id("generated-findings")
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .flex_1()
-            .min_h_0()
-            .overflow_scroll();
         let current = self
             .committed_overview
             .committed
             .as_ref()
             .filter(|review| committed_matches_context(review, &binding.context));
-        if self.overview_loading && current.is_none() {
-            body = body.child(empty_card(
-                "Loading committed findings",
-                "Reading the last complete result for this pinned preparation.",
-                p,
-            ));
-        }
-        if let Some(review) = current {
-            body = body.child(section_title("Committed findings", p));
-            if review.result.findings.is_empty() {
-                body = body.child(empty_card(
-                    "No findings recorded",
-                    "This committed review contains no actionable findings.",
-                    p,
-                ));
-            }
-            for (finding_index, finding) in review.result.findings.iter().enumerate() {
-                let mut card = div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_4()
-                    .border_1()
-                    .border_color(rgb(p.border))
-                    .bg(rgb(p.panel))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(finding.title.clone()),
-                            )
-                            .child(format!("{:?} · {:?}", finding.severity, finding.confidence)),
-                    )
-                    .child(finding.summary.clone())
-                    .child(finding.reason.clone())
-                    .child(finding.impact.clone());
-                for (evidence_index, evidence) in finding.evidence.iter().enumerate() {
-                    let source = evidence.source.clone();
-                    card = card.child(
-                        div()
-                            .text_color(rgb(p.muted))
-                            .child(evidence.explanation.clone()),
-                    );
-                    card = card.child(button(
-                        &format!("finding-evidence-{finding_index}-{evidence_index}"),
-                        &format!("Open {}", source_title(&source)),
-                        p,
-                        move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
-                        cx,
-                    ));
-                }
-                for (location_index, location) in finding.locations.iter().enumerate() {
-                    let source = location.source.clone();
-                    card = card.child(button(
-                        &format!("finding-location-{finding_index}-{location_index}"),
-                        &format!(
-                            "{} source · {}",
-                            if location.primary {
-                                "Primary"
-                            } else {
-                                "Related"
-                            },
-                            source_title(&source)
-                        ),
-                        p,
-                        move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
-                        cx,
-                    ));
-                }
-                body = body.child(card);
-            }
-        } else {
+        let Some(review) = current else {
             let (title, message) = match self.committed_overview.status {
                 CommittedOverviewStatus::StaleContext => (
                     "Earlier result hidden",
@@ -4247,24 +5260,954 @@ impl Product {
                     "The committed result could not be read. A prior result remains visible after same-context refresh failures when available.",
                 ),
                 CommittedOverviewStatus::Missing | CommittedOverviewStatus::Ready => (
-                    "No committed findings",
+                    if self.overview_loading {
+                        "Loading committed findings"
+                    } else {
+                        "No committed findings"
+                    },
                     "No complete generated result is attached to this pinned preparation.",
                 ),
             };
-            body = body.child(empty_card(title, message, p));
-            body = body.child(button(
-                "refresh-committed-findings",
-                if self.overview_loading {
-                    "Refreshing…"
+            return div()
+                .id("generated-findings")
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                .flex_1()
+                .min_h_0()
+                .child(empty_card(title, message, p))
+                .child(button(
+                    "refresh-committed-findings",
+                    if self.overview_loading {
+                        "Refreshing…"
+                    } else {
+                        "Refresh result"
+                    },
+                    p,
+                    |this, _, _, cx| this.refresh_committed_overview(cx),
+                    cx,
+                ));
+        };
+
+        let prioritized = bodh::prioritized_finding_indices(&review.result.findings);
+        let selected_index = prioritized
+            .iter()
+            .copied()
+            .find(|index| {
+                self.selected_finding_id.as_deref()
+                    == Some(review.result.findings[*index].id.as_str())
+            })
+            .or_else(|| prioritized.first().copied());
+        let selected_id = selected_index.map(|index| review.result.findings[index].id.clone());
+        let inspector_width = 340.;
+
+        let mut list = div()
+            .id("finding-list")
+            .w(px(310.))
+            .flex_shrink_0()
+            .min_w_0()
+            .h_full()
+            .overflow_scroll()
+            .px_3()
+            .pt(px(18.))
+            .pb_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .border_r_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.canvas))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(p.muted))
+                    .child(format!("ACTIONABLE · {}", prioritized.len())),
+            );
+        if prioritized.is_empty() {
+            list = list.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child("No findings recorded."),
+            );
+        }
+        for (position, index) in prioritized.iter().enumerate() {
+            let finding = &review.result.findings[*index];
+            let selected = selected_id.as_deref() == Some(finding.id.as_str());
+            let is_new = review
+                .context
+                .prior_concerns
+                .as_ref()
+                .is_some_and(|prior| !prior.iter().any(|concern| concern.id == finding.id));
+            let metadata = format!("{} · {:?} confidence", finding.id, finding.confidence);
+            let id = finding.id.clone();
+            let mut row = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_2()
+                .border_1()
+                .border_color(rgb(if selected { p.border } else { p.canvas }))
+                .bg(rgb(if selected { p.selection } else { p.canvas }))
+                .child(status_badge(
+                    &format!("{:?}", finding.severity),
+                    severity_color(&finding.severity, p),
+                ));
+            if is_new {
+                row = row.child(status_badge("New", p.accent));
+            }
+            row = row
+                .child(
+                    button(
+                        &format!("finding-select-{position}"),
+                        &finding.title,
+                        p,
+                        move |this, _, _, cx| this.select_finding(id.clone(), cx),
+                        cx,
+                    )
+                    .w_full()
+                    .text_left()
+                    .border_0()
+                    .bg(transparent_black())
+                    .text_size(px(13.)),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(metadata),
+                );
+            list = list.child(row);
+        }
+
+        let concerns = follow_up_concerns(review).unwrap_or_default();
+        let unresolved = concerns
+            .iter()
+            .filter(|row| row.prominence.is_prominent())
+            .collect::<Vec<_>>();
+        let resolved = concerns
+            .iter()
+            .filter(|row| !row.prominence.is_prominent())
+            .collect::<Vec<_>>();
+        if !unresolved.is_empty() || !resolved.is_empty() {
+            list = list.child(section_title("Follow-up", p));
+            for (index, row) in unresolved.iter().enumerate() {
+                let status = row.prominence.label();
+                if let Some(finding) = row.current_finding {
+                    let id = finding.id.clone();
+                    list = list.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_2()
+                            .child(status_badge(status, follow_up_color(row.prominence, p)))
+                            .child(
+                                button(
+                                    &format!("follow-up-select-{index}"),
+                                    &row.concern.title,
+                                    p,
+                                    move |this, _, _, cx| this.select_finding(id.clone(), cx),
+                                    cx,
+                                )
+                                .w_full()
+                                .text_left(),
+                            ),
+                    );
                 } else {
-                    "Refresh result"
-                },
+                    list = list.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_2()
+                            .child(status_badge(status, follow_up_color(row.prominence, p)))
+                            .child(row.concern.title.clone()),
+                    );
+                }
+            }
+            if !resolved.is_empty() {
+                let resolved_expanded = resolved
+                    .iter()
+                    .any(|row| self.expanded_follow_up.contains(&row.concern.id));
+                let toggle_ids = resolved
+                    .iter()
+                    .map(|row| row.concern.id.clone())
+                    .collect::<Vec<_>>();
+                list = list.child(
+                    button(
+                        "toggle-resolved-prior-concerns",
+                        &format!(
+                            "Resolved prior concerns · {} {}",
+                            resolved.len(),
+                            if resolved_expanded { "▾" } else { "▸" }
+                        ),
+                        p,
+                        move |this, _, _, cx| {
+                            for id in &toggle_ids {
+                                if resolved_expanded {
+                                    this.expanded_follow_up.remove(id);
+                                } else {
+                                    this.expanded_follow_up.insert(id.clone());
+                                }
+                            }
+                            cx.notify();
+                        },
+                        cx,
+                    )
+                    .w_full()
+                    .text_left(),
+                );
+                if resolved_expanded {
+                    let mut resolved_list = div().flex().flex_col().gap_2();
+                    for (index, row) in resolved.iter().enumerate() {
+                        resolved_list = resolved_list.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(status_badge(
+                                    row.prominence.label(),
+                                    follow_up_color(row.prominence, p),
+                                ))
+                                .child(
+                                    div()
+                                        .text_color(rgb(p.muted))
+                                        .child(row.concern.title.clone()),
+                                ),
+                        );
+                        if let Some(source) = row.concern.evidence.first().cloned() {
+                            resolved_list = resolved_list.child(button(
+                                &format!("resolved-prior-source-{index}"),
+                                "View prior source",
+                                p,
+                                move |this, _, _, cx| this.load_prior_source(source.clone(), cx),
+                                cx,
+                            ));
+                        }
+                    }
+                    list = list.child(
+                        div()
+                            .child(resolved_list)
+                            .id("resolved-prior-concerns")
+                            .p_2()
+                            .bg(rgb(p.raised)),
+                    );
+                }
+            }
+        }
+
+        let mut detail = div()
+            .id("finding-detail")
+            .flex_1()
+            .min_w(px(430.))
+            .min_h_0()
+            .h_full()
+            .overflow_scroll()
+            .p_6()
+            .flex()
+            .flex_col()
+            .gap_3();
+        if let Some(index) = selected_index {
+            let finding = &review.result.findings[index];
+            let is_new = review
+                .context
+                .prior_concerns
+                .as_ref()
+                .is_some_and(|prior| !prior.iter().any(|concern| concern.id == finding.id));
+            let mut detail_status = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(status_badge(
+                    &format!("{:?}", finding.severity),
+                    severity_color(&finding.severity, p),
+                ))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(p.muted))
+                        .child(format!("{:?} confidence", finding.confidence)),
+                );
+            if is_new {
+                detail_status = detail_status.child(status_badge("New concern", p.accent));
+            }
+            detail = detail
+                .child(detail_status)
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(FontWeight::BOLD)
+                        .child(finding.title.clone()),
+                )
+                .child(finding.summary.clone())
+                .child(finding.reason.clone())
+                .child(finding.impact.clone());
+            let triage_entry = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.finding_id == finding.id)
+            });
+            let selected_suggestion =
+                triage_entry.and_then(|entry| entry.selected_suggestion_id.as_deref());
+            let disposition = triage_entry
+                .map(|entry| format!("{:?}", entry.disposition))
+                .unwrap_or_else(|| "Unreviewed".into());
+            detail = detail.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child(match selected_suggestion {
+                        Some(suggestion_id) => {
+                            format!("{disposition} · alternative {suggestion_id}")
+                        }
+                        None if triage_entry
+                            .and_then(|entry| entry.manual_feedback.as_ref())
+                            .is_some() =>
+                        {
+                            format!("{disposition} · independent feedback saved locally")
+                        }
+                        None => disposition,
+                    }),
+            );
+            if !finding.evidence.is_empty() {
+                detail = detail.child(section_title("Source evidence", p));
+            }
+            for (evidence_index, evidence) in finding.evidence.iter().enumerate() {
+                let source = evidence.source.clone();
+                detail = detail.child(
+                    div()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.panel))
+                        .child(
+                            div()
+                                .text_color(rgb(p.muted))
+                                .child(evidence.explanation.clone()),
+                        )
+                        .child(link_button(
+                            &format!("finding-evidence-{evidence_index}"),
+                            &format!(
+                                "{} · {}:{}–{}",
+                                source_title(&source),
+                                source.path,
+                                source.start_line,
+                                source.end_line
+                            ),
+                            p,
+                            move |this, _, _, cx| this.select_finding_source(source.clone(), cx),
+                            cx,
+                        )),
+                );
+            }
+            if !finding.related_thread_ids.is_empty() {
+                detail = detail.child(section_title("Related discussions", p));
+                for (thread_index, thread_id) in finding.related_thread_ids.iter().enumerate() {
+                    let related_id = thread_id.clone();
+                    detail = detail.child(link_button(
+                        &format!("finding-related-thread-{thread_index}"),
+                        &format!("Open thread {thread_id} in Changes"),
+                        p,
+                        move |this, _, _, cx| this.open_related_discussion(related_id.clone(), cx),
+                        cx,
+                    ));
+                }
+            }
+            if !finding.suggestions.is_empty() {
+                detail = detail.child(section_title(
+                    "Suggested feedback · choose an alternative",
+                    p,
+                ));
+            }
+            for (suggestion_index, suggestion) in finding.suggestions.iter().enumerate() {
+                let (suggestion_id, generated_body, source) = match suggestion {
+                    bodh::Suggestion::TextComment { id, body, source } => {
+                        (id.clone(), body.clone(), source.clone())
+                    }
+                    bodh::Suggestion::CodeReplacement {
+                        id,
+                        body,
+                        source,
+                        replacement,
+                        ..
+                    } => (
+                        id.clone(),
+                        format!("{body}\n\nProposed replacement:\n{replacement}"),
+                        source.clone(),
+                    ),
+                };
+                let saved_edit = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
+                    snapshot.alternative_edits.iter().find(|edit| {
+                        edit.finding_id == finding.id && edit.suggestion_id == suggestion_id
+                    })
+                });
+                let label = match (suggestion, saved_edit) {
+                    (bodh::Suggestion::TextComment { .. }, Some(edit)) => edit.body.clone(),
+                    (bodh::Suggestion::CodeReplacement { .. }, Some(edit)) => format!(
+                        "{}\n\nProposed replacement:\n{}",
+                        edit.body,
+                        edit.replacement.as_deref().unwrap_or_default()
+                    ),
+                    (_, None) => generated_body,
+                };
+                detail = detail.child(
+                    div()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.raised))
+                        .child(div().text_color(rgb(p.muted)).child(format!(
+                            "Alternative {}{} · {}",
+                            suggestion_index + 1,
+                            if saved_edit.is_some() {
+                                " · edited locally"
+                            } else {
+                                ""
+                            },
+                            source_title(&source)
+                        )))
+                        .child(label),
+                );
+                let source_to_open = source.clone();
+                detail = detail.child(link_button(
+                    &format!("finding-alternative-source-{suggestion_index}"),
+                    "View source",
+                    p,
+                    move |this, _, _, cx| this.select_finding_source(source_to_open.clone(), cx),
+                    cx,
+                ));
+                let is_selected = selected_suggestion == Some(suggestion_id.as_str());
+                let action_finding = finding.id.clone();
+                let action_suggestion = suggestion_id.clone();
+                detail = detail.child(button(
+                    &format!("finding-alternative-stage-{suggestion_index}"),
+                    if is_selected {
+                        "Unstage alternative"
+                    } else {
+                        "Stage alternative"
+                    },
+                    p,
+                    move |this, _, _, cx| {
+                        if is_selected {
+                            this.set_finding_disposition(
+                                action_finding.clone(),
+                                bodh::FindingDisposition::Unreviewed,
+                                cx,
+                            );
+                        } else {
+                            this.stage_finding_alternative(
+                                action_finding.clone(),
+                                action_suggestion.clone(),
+                                cx,
+                            );
+                        }
+                    },
+                    cx,
+                ));
+            }
+            for (location_index, location) in finding.locations.iter().enumerate() {
+                let source = location.source.clone();
+                detail = detail.child(link_button(
+                    &format!("finding-location-{location_index}"),
+                    &format!(
+                        "{} source · {}",
+                        if location.primary {
+                            "Primary"
+                        } else {
+                            "Related"
+                        },
+                        source_title(&source)
+                    ),
+                    p,
+                    move |this, _, _, cx| this.select_finding_source(source.clone(), cx),
+                    cx,
+                ));
+            }
+            for (action, label) in [
+                (bodh::FindingDisposition::Dismissed, "Dismiss finding"),
+                (bodh::FindingDisposition::Deferred, "Defer finding"),
+            ] {
+                let id = finding.id.clone();
+                detail = detail.child(button(
+                    &format!("finding-disposition-{label}"),
+                    label,
+                    p,
+                    move |this, _, _, cx| this.set_finding_disposition(id.clone(), action, cx),
+                    cx,
+                ));
+            }
+        } else {
+            detail = detail.child(empty_card(
+                "No findings to show",
+                "This result has no actionable findings. Follow-up concerns, when present, appear in the list.",
                 p,
-                |this, _, _, cx| this.refresh_committed_overview(cx),
+            ));
+        }
+
+        let mut inspector = div()
+            .id("finding-source-inspector")
+            .w(px(inspector_width))
+            .flex_shrink_0()
+            .min_w_0()
+            .h_full()
+            .border_l_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.canvas))
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .overflow_scroll()
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(p.muted))
+                    .child("PINNED SOURCE"),
+            );
+        if let Some(prior) = self.finding_prior_source.as_ref() {
+            inspector = inspector.child(
+                div()
+                    .font_family("DejaVu Sans Mono")
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(format!(
+                        "Prior source · {}:{}–{} · {}",
+                        prior.source.path,
+                        prior.source.start_line,
+                        prior.source.end_line,
+                        short_sha(&prior.commit_sha)
+                    )),
+            );
+            if let Some(preview) = self.prior_source_preview.as_ref() {
+                if preview.loading {
+                    inspector = inspector.child(
+                        div()
+                            .text_color(rgb(p.muted))
+                            .child("Loading exact prior source…"),
+                    );
+                }
+                if let Some(error) = &preview.error {
+                    inspector = inspector.child(empty_card("Prior source unavailable", error, p));
+                }
+                if let Some(text) = &preview.text {
+                    let mut rows = div().flex().flex_col();
+                    for (offset, line) in text.lines().enumerate() {
+                        let number = prior.source.start_line.saturating_add(offset as u32);
+                        let selected =
+                            (prior.source.start_line..=prior.source.end_line).contains(&number);
+                        rows = rows.child(render_source_row(
+                            number,
+                            line,
+                            path_extension(&prior.source.path),
+                            p,
+                            selected,
+                        ));
+                    }
+                    inspector = inspector.child(
+                        div()
+                            .id("finding-prior-pinned-source-code")
+                            .overflow_scroll()
+                            .flex_1()
+                            .min_h_0()
+                            .child(rows),
+                    );
+                }
+            }
+        } else if let Some(source) = self.finding_source.clone() {
+            inspector = inspector.child(
+                div()
+                    .font_family("DejaVu Sans Mono")
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(format!(
+                        "{} · {}:{}–{}",
+                        match source.revision {
+                            Revision::Base => "Base",
+                            Revision::Head => "Head",
+                        },
+                        source.path,
+                        source.start_line,
+                        source.end_line
+                    )),
+            );
+        }
+        if self.finding_source_loading {
+            inspector = inspector.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child("Loading source from the pinned commit…"),
+            );
+        }
+        if let Some(error) = self.finding_source_error.clone() {
+            inspector = inspector.child(empty_card("Pinned source unavailable", &error, p));
+        }
+        if self.finding_prior_source.is_none() {
+            if let (Some(text), Some(display), Some(source)) = (
+                &self.finding_source_text,
+                &self.finding_source_display,
+                &self.finding_source,
+            ) {
+                let extension = path_extension(&display.path);
+                let mut rows = div().flex().flex_col();
+                for (offset, line) in text.lines().enumerate() {
+                    let number = display.start_line.saturating_add(offset as u32);
+                    let selected = (source.start_line..=source.end_line).contains(&number);
+                    rows = rows.child(render_source_row(number, line, extension, p, selected));
+                }
+                inspector = inspector.child(
+                    div()
+                        .id("finding-pinned-source-code")
+                        .track_scroll(&self.finding_source_scroll)
+                        .overflow_scroll()
+                        .flex_1()
+                        .min_h_0()
+                        .child(rows),
+                );
+            } else if self.finding_source.is_none() {
+                inspector = inspector.child(div().flex_1().min_h_0().child(empty_card(
+                    "Select source evidence",
+                    "Choose an evidence or source link to inspect the exact pinned code here.",
+                    p,
+                )));
+            }
+        }
+
+        if let Some(source) = self.finding_source.clone() {
+            inspector = inspector.child(link_button(
+                "open-finding-source-in-changes",
+                "Open in Changes →",
+                p,
+                move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
                 cx,
             ));
         }
-        body
+
+        if let Some(index) = selected_index {
+            let finding = &review.result.findings[index];
+            let finding_id = finding.id.clone();
+            let current_feedback = self
+                .finding_triage_snapshot
+                .as_ref()
+                .and_then(|snapshot| {
+                    snapshot
+                        .entries
+                        .iter()
+                        .find(|entry| entry.finding_id == finding.id)
+                })
+                .and_then(|entry| entry.manual_feedback.as_deref())
+                .unwrap_or("")
+                .to_owned();
+            inspector = inspector
+                .child(div().border_t_1().border_color(rgb(p.border)).pt_3())
+                .child(section_title("Add a comment", p))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child("Saved locally with this finding. Nothing is sent to GitHub."),
+                );
+            if self.finding_feedback_target.as_deref() == Some(finding.id.as_str()) {
+                let feedback_display = if self.finding_feedback_body.is_empty() {
+                    "|Type a review comment. Enter inserts a new line.".to_owned()
+                } else {
+                    format!("{}|", self.finding_feedback_body)
+                };
+                inspector = inspector.child(
+                    div()
+                        .id("finding-independent-feedback-editor")
+                        .track_focus(&self.finding_feedback_focus)
+                        .min_h(px(72.))
+                        .p_2()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.raised))
+                        .child(feedback_display)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, _| {
+                                window.focus(&this.finding_feedback_focus)
+                            }),
+                        )
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                            window.focus(&this.finding_feedback_focus);
+                            let key = event.keystroke.key.as_str();
+                            let command = event.keystroke.modifiers.control
+                                || event.keystroke.modifiers.platform;
+                            match key {
+                                "backspace" => {
+                                    this.finding_feedback_body.pop();
+                                }
+                                "enter" => this.finding_feedback_body.push('\n'),
+                                "a" if command => this.finding_feedback_body.clear(),
+                                text if text.chars().count() == 1 && !command => {
+                                    this.finding_feedback_body.push_str(text)
+                                }
+                                _ => return,
+                            }
+                            cx.notify();
+                        })),
+                );
+                let save_finding = finding_id.clone();
+                inspector = inspector.child(button(
+                    "save-finding-feedback",
+                    if self.finding_action_saving {
+                        "Saving locally…"
+                    } else {
+                        "Save comment locally"
+                    },
+                    p,
+                    move |this, _, _, cx| this.save_finding_feedback(save_finding.clone(), cx),
+                    cx,
+                ));
+            } else {
+                let open_finding = finding_id;
+                inspector = inspector.child(button(
+                    "edit-finding-feedback",
+                    if current_feedback.is_empty() {
+                        "Add comment"
+                    } else {
+                        "Edit local comment"
+                    },
+                    p,
+                    move |this, _, window, cx| {
+                        this.finding_feedback_target = Some(open_finding.clone());
+                        this.finding_feedback_body = this
+                            .finding_triage_snapshot
+                            .as_ref()
+                            .and_then(|snapshot| {
+                                snapshot
+                                    .entries
+                                    .iter()
+                                    .find(|entry| entry.finding_id == open_finding)
+                            })
+                            .and_then(|entry| entry.manual_feedback.clone())
+                            .unwrap_or_default();
+                        window.focus(&this.finding_feedback_focus);
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        div()
+            .id("generated-findings")
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .overflow_x_scroll()
+            .min_w(px(if viewport_width < 1080. { 1080. } else { 0. }))
+            .child(list)
+            .child(detail)
+            .child(inspector)
+    }
+
+    fn stage_finding_alternative(
+        &mut self,
+        finding_id: String,
+        suggestion_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let locked = self.finding_action_saving
+            || self.review_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            });
+        if locked {
+            self.status = Some(
+                "Resolve the current or uncertain publication before changing finding drafts."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let expected_triage_revision = self
+            .finding_triage_snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.finding_id == finding_id)
+            })
+            .map(|entry| entry.revision)
+            .unwrap_or(0);
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_action_saving = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx.background_executor().spawn(async move {
+                let mut triage = bodh::FindingTriageStore::open(Path::new(&state))?;
+                let (intent, entry) = triage.stage_alternative(
+                    &preparation_id, &finding_id, &suggestion_id, expected_triage_revision,
+                )?;
+                let triage_snapshot = triage.list(&preparation_id)?;
+                let drafts = DraftStore::open(Path::new(&state))?.list(&preparation_id)?;
+                let replacements = DraftStore::open(Path::new(&state))?.list_replacements(&preparation_id)?;
+                Ok::<_, bodh::ContractError>((intent, entry, triage_snapshot, drafts, replacements))
+            }).await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token { return; }
+                this.finding_action_saving = false;
+                match result {
+                    Ok((intent, entry, triage, drafts, replacements)) => {
+                        this.review_intent = Some(intent);
+                        this.finding_triage_snapshot = Some(triage);
+                        this.draft_snapshot = Some(drafts.clone());
+                        this.replacement_snapshot = Some(replacements);
+                        this.update_draft_counts(drafts.counts);
+                        this.status = Some(format!("Alternative staged for finding {} at revision {}. It remains local until you confirm Finish Review.", entry.finding_id, entry.revision));
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        }).detach();
+    }
+
+    fn set_finding_disposition(
+        &mut self,
+        finding_id: String,
+        disposition: bodh::FindingDisposition,
+        cx: &mut Context<Self>,
+    ) {
+        if self.finding_action_saving
+            || self.review_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
+        {
+            self.status = Some(
+                "Resolve the current or uncertain publication before changing finding drafts."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let expected_revision = self
+            .finding_triage_snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.finding_id == finding_id)
+            })
+            .map(|entry| entry.revision)
+            .unwrap_or(0);
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_action_saving = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut triage = bodh::FindingTriageStore::open(Path::new(&state))?;
+                    let entry = triage.set_disposition(
+                        &preparation_id,
+                        &finding_id,
+                        disposition,
+                        None,
+                        None,
+                        expected_revision,
+                    )?;
+                    let snapshot = triage.list(&preparation_id)?;
+                    let intent =
+                        ReviewPublicationStore::open(Path::new(&state))?.intent(&preparation_id)?;
+                    Ok::<_, bodh::ContractError>((entry, snapshot, intent))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.finding_action_saving = false;
+                match result {
+                    Ok((entry, snapshot, intent)) => {
+                        this.finding_triage_snapshot = Some(snapshot);
+                        this.review_intent = Some(intent);
+                        this.status = Some(format!(
+                            "Finding {} marked {:?}; saved alternative edits were retained.",
+                            entry.finding_id, entry.disposition
+                        ));
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn save_finding_feedback(&mut self, finding_id: String, cx: &mut Context<Self>) {
+        if self.finding_action_saving
+            || self.review_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
+        {
+            self.status = Some(
+                "Resolve the current or uncertain publication before changing finding feedback."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        let body = self.finding_feedback_body.clone();
+        if body.trim().is_empty() {
+            self.error = Some("Write independent feedback before saving it.".into());
+            cx.notify();
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let expected_revision = self
+            .finding_triage_snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.finding_id == finding_id)
+            })
+            .map(|entry| entry.revision)
+            .unwrap_or(0);
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_action_saving = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx.background_executor().spawn(async move {
+                let mut store = bodh::FindingTriageStore::open(Path::new(&state))?;
+                let entry = store.set_disposition(&preparation_id, &finding_id, bodh::FindingDisposition::Staged, None, Some(&body), expected_revision)?;
+                let snapshot = store.list(&preparation_id)?;
+                Ok::<_, bodh::ContractError>((entry,snapshot))
+            }).await;
+            let _ = weak.update(cx, |this,cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token { return; }
+                this.finding_action_saving = false;
+                match result {
+                    Ok((entry,snapshot)) => {
+                        this.finding_triage_snapshot = Some(snapshot);
+                        this.finding_feedback_target = None;
+                        this.finding_feedback_body.clear();
+                        this.status = Some(format!("Independent feedback saved locally for finding {}. It is not published.",entry.finding_id));
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}",error.code,error.message)),
+                }
+                cx.notify();
+            });
+        }).detach();
     }
 
     fn selected_discussion_path(&self) -> Option<String> {
@@ -4459,7 +6402,13 @@ impl Product {
                 .gap_2()
                 .p_4()
                 .border_1()
-                .border_color(rgb(p.border))
+                .border_color(rgb(
+                    if self.focused_discussion_thread.as_deref() == Some(id.as_str()) {
+                        p.accent
+                    } else {
+                        p.border
+                    },
+                ))
                 .bg(rgb(p.panel));
             card=card.child(div().flex().justify_between().child(section_title(path,p)).child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(format!("{status} · current line {current} · original line {original} · side {}",thread["diffSide"].as_str().unwrap_or("unknown")))));
             if let Some(comments) = thread["comments"].as_array() {
@@ -4881,7 +6830,6 @@ impl Product {
         p: Palette,
         cx: &mut Context<Self>,
         viewport_width: f32,
-        viewport_height: f32,
     ) -> impl IntoElement {
         let selected = self.selected_file;
         let source_width = self
@@ -4890,8 +6838,6 @@ impl Product {
             .clamp(300., (viewport_width - 520.).max(300.));
         let narrow_workspace = viewport_width < 800.;
         let file_width = 220.;
-        let pane_height =
-            (viewport_height - 190. - if narrow_workspace { 28. } else { 0. }).max(360.);
         let filtered = binding
             .changed_files
             .iter()
@@ -4912,22 +6858,14 @@ impl Product {
         let file_rows = filtered
             .iter()
             .map(|(index, file)| {
-                let name = file
-                    .new_path
-                    .as_deref()
-                    .or(file.old_path.as_deref())
-                    .unwrap_or("(unknown path)");
-                let label = if file.old_path.as_deref().is_some_and(|old| old != name) {
-                    format!(
-                        "{} → {}  {}",
-                        file.old_path.as_deref().unwrap(),
-                        name,
-                        file.status
-                    )
-                } else {
-                    format!("{name}  {}", file.status)
-                };
-                (*index, label)
+                (
+                    *index,
+                    changed_file_presentation(
+                        file.old_path.as_deref(),
+                        file.new_path.as_deref(),
+                        &file.status,
+                    ),
+                )
             })
             .collect::<Vec<_>>();
         let current_file = selected;
@@ -4944,9 +6882,13 @@ impl Product {
                         let owner = owner.clone();
                         div()
                             .id(file_index)
-                            .h(px(34.))
+                            .h(px(48.))
                             .w_full()
                             .px_2()
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .gap_0()
                             .border_1()
                             .border_color(rgb(p.border))
                             .bg(rgb(if current_file == Some(file_index) {
@@ -4959,10 +6901,38 @@ impl Product {
                             } else {
                                 p.muted
                             }))
-                            .text_size(px(12.))
-                            .overflow_hidden()
                             .cursor_pointer()
-                            .child(label)
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_size(px(12.))
+                                            .truncate()
+                                            .child(label.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(px(10.))
+                                            .text_color(rgb(p.muted))
+                                            .child(label.status.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .min_w_0()
+                                    .text_size(px(10.))
+                                    .text_color(rgb(p.muted))
+                                    .truncate()
+                                    .child(label.directory.clone()),
+                            )
                             .on_click(move |_, window, app| {
                                 let _ = owner.update(app, |this, cx| {
                                     window.focus(&this.focus);
@@ -4974,7 +6944,10 @@ impl Product {
             },
         )
         .track_scroll(self.file_scroll.clone())
-        .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+        .on_scroll_wheel(cx.listener(|this, event, _, cx| {
+            this.persist_navigation();
+            stop_vertical_wheel_bubbling(event, cx);
+        }))
         .flex_1()
         .min_h_0();
         let file_list = div()
@@ -5068,6 +7041,7 @@ impl Product {
                     .min_w_0()
                     .overflow_hidden()
                     .text_size(px(12.))
+                    .truncate()
                     .child(selected_path.to_owned()),
             );
         for (label, split) in [("Unified", false), ("Split", true)] {
@@ -5084,6 +7058,16 @@ impl Product {
                     cx,
                 )
                 .text_size(px(12.))
+                .border_color(rgb(if self.split_diff == split {
+                    p.accent
+                } else {
+                    p.border
+                }))
+                .bg(rgb(if self.split_diff == split {
+                    p.raised
+                } else {
+                    p.panel
+                }))
                 .text_color(rgb(if self.split_diff == split {
                     p.text
                 } else {
@@ -5104,6 +7088,7 @@ impl Product {
             let truncated = page.truncated;
             let mut rows_view = div()
                 .id("diff-rows")
+                .w_full()
                 .flex_1()
                 .min_h_0()
                 .overflow_hidden()
@@ -5165,9 +7150,13 @@ impl Product {
                 )
             }
             .track_scroll(self.diff_scroll.clone())
-            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+            .on_scroll_wheel(cx.listener(|this, event, _, cx| {
+                this.persist_navigation();
+                stop_vertical_wheel_bubbling(event, cx);
+            }))
             .flex_1()
             .min_h_0();
+            let virtual_rows = virtual_rows.w_full();
             rows_view = rows_view.child(virtual_rows);
             diff = diff.child(rows_view);
         } else {
@@ -5223,6 +7212,16 @@ impl Product {
                         cx,
                     )
                     .text_size(px(12.))
+                    .border_color(rgb(if self.source_revision == revision {
+                        p.accent
+                    } else {
+                        p.border
+                    }))
+                    .bg(rgb(if self.source_revision == revision {
+                        p.raised
+                    } else {
+                        p.panel
+                    }))
                     .text_color(rgb(if self.source_revision == revision {
                         p.text
                     } else {
@@ -5232,32 +7231,57 @@ impl Product {
             }
         }
         if self.source_ref.is_some() {
-            source_toolbar = source_toolbar.child(button(
-                "new-inline-comment-draft",
-                "Draft comment",
-                p,
-                |this, _, _, cx| this.begin_text_draft(cx),
-                cx,
-            ));
+            let draft_editor_open = self.draft_editor.is_some();
+            source_toolbar = source_toolbar.child(
+                button(
+                    "new-inline-comment-draft",
+                    "Draft comment",
+                    p,
+                    |this, _, _, cx| this.begin_text_draft(cx),
+                    cx,
+                )
+                .border_color(rgb(if draft_editor_open {
+                    p.accent
+                } else {
+                    p.border
+                }))
+                .bg(rgb(if draft_editor_open { p.raised } else { p.panel })),
+            );
             if self
                 .source_ref
                 .as_ref()
                 .is_some_and(|source| source.revision == Revision::Head)
             {
-                source_toolbar = source_toolbar.child(button(
-                    "new-code-replacement-draft",
-                    "Draft replacement",
-                    p,
-                    |this, _, _, cx| this.begin_code_replacement(cx),
-                    cx,
-                ));
+                let replacement_editor_open = self.replacement_editor.is_some();
+                source_toolbar = source_toolbar.child(
+                    button(
+                        "new-code-replacement-draft",
+                        "Draft replacement",
+                        p,
+                        |this, _, _, cx| this.begin_code_replacement(cx),
+                        cx,
+                    )
+                    .border_color(rgb(if replacement_editor_open {
+                        p.accent
+                    } else {
+                        p.border
+                    }))
+                    .bg(rgb(if replacement_editor_open {
+                        p.raised
+                    } else {
+                        p.panel
+                    })),
+                );
             }
         }
         source = source.child(source_toolbar);
         let mut source_content = div()
             .id("pinned-source-content")
             .track_scroll(&self.source_scroll)
-            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+            .on_scroll_wheel(cx.listener(|this, event, _, cx| {
+                this.persist_navigation();
+                stop_vertical_wheel_bubbling(event, cx);
+            }))
             .overflow_scroll()
             .flex_1()
             .min_h_0()
@@ -5314,9 +7338,9 @@ impl Product {
             .id("changes-panes")
             .flex()
             .gap_2()
-            .h(px(pane_height))
-            .min_h(px(360.))
-            .overflow_scroll()
+            .flex_1()
+            .min_h_0()
+            .overflow_x_scroll()
             .child(file_list)
             .child(diff)
             .child(
@@ -5333,7 +7357,14 @@ impl Product {
                     ),
             )
             .child(source);
-        let mut workspace = div().w_full().min_w_0().flex().flex_col().gap_1();
+        let mut workspace = div()
+            .w_full()
+            .min_w_0()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap_1();
         if narrow_workspace {
             workspace = workspace.child(
                 div()
@@ -5825,6 +7856,92 @@ impl Product {
     }
 }
 
+fn select_product_diagram_interaction(
+    product: &mut Product,
+    index: usize,
+    window: &mut Window,
+    cx: &mut Context<Product>,
+) {
+    window.focus(&product.focus);
+    product.select_diagram_interaction(index, cx);
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChangedFilePresentation {
+    name: String,
+    directory: String,
+    status: String,
+}
+
+fn path_parts(path: Option<&str>) -> (&str, &str) {
+    let Some(path) = path else {
+        return ("(root)", "(unknown path)");
+    };
+    path.rsplit_once('/')
+        .map_or(("(root)", path), |(directory, name)| (directory, name))
+}
+
+fn changed_file_presentation(
+    old_path: Option<&str>,
+    new_path: Option<&str>,
+    status: &str,
+) -> ChangedFilePresentation {
+    let display_path = new_path.or(old_path);
+    let (directory, name) = path_parts(display_path);
+    let directory = match (old_path, new_path) {
+        (Some(old), Some(new)) if old != new => {
+            let (old_directory, _) = path_parts(Some(old));
+            let (new_directory, _) = path_parts(Some(new));
+            if old_directory == new_directory {
+                new_directory.to_owned()
+            } else {
+                format!("{old_directory} → {new_directory}")
+            }
+        }
+        _ => directory.to_owned(),
+    };
+    ChangedFilePresentation {
+        name: name.to_owned(),
+        directory,
+        status: status.to_owned(),
+    }
+}
+
+fn stop_vertical_wheel_bubbling(event: &ScrollWheelEvent, cx: &mut App) {
+    if !event.delta.pixel_delta(px(16.)).y.is_zero() {
+        cx.stop_propagation();
+    }
+}
+
+#[cfg(test)]
+mod changed_file_presentation_tests {
+    use super::changed_file_presentation;
+
+    #[test]
+    fn deep_paths_keep_the_filename_and_directory_separate_for_two_line_rows() {
+        let row = changed_file_presentation(
+            Some("config/quickshell/components/BarModule.qml"),
+            Some("config/quickshell/components/BarModule.qml"),
+            "M",
+        );
+        assert_eq!(row.name, "BarModule.qml");
+        assert_eq!(row.directory, "config/quickshell/components");
+        assert_eq!(row.status, "M");
+    }
+
+    #[test]
+    fn renames_show_the_new_filename_and_both_directories() {
+        let row = changed_file_presentation(
+            Some("old/widgets/Launcher.qml"),
+            Some("config/quickshell/LauncherBase.qml"),
+            "R100",
+        );
+        assert_eq!(row.name, "LauncherBase.qml");
+        assert_eq!(row.directory, "old/widgets → config/quickshell");
+        assert_eq!(row.status, "R100");
+    }
+}
+
 fn source_title(source: &SourceRef) -> String {
     let side = match source.revision {
         Revision::Base => "Base",
@@ -5837,6 +7954,50 @@ fn source_title(source: &SourceRef) -> String {
             "{side} · {}:{}–{}",
             source.path, source.start_line, source.end_line
         )
+    }
+}
+
+fn status_badge(label: &str, color: u32) -> Div {
+    div()
+        .text_size(px(10.))
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(color))
+        .child(label.to_uppercase())
+}
+
+fn link_button(
+    id: &str,
+    label: &str,
+    p: Palette,
+    action: impl Fn(&mut Product, &ClickEvent, &mut Window, &mut Context<Product>) + 'static,
+    cx: &mut Context<Product>,
+) -> Stateful<Div> {
+    div()
+        .id(ElementId::Name(SharedString::from(id.to_owned())))
+        .px_0()
+        .py_0()
+        .border_0()
+        .bg(transparent_black())
+        .text_color(rgb(p.accent))
+        .cursor_pointer()
+        .focus(|style| style.text_color(rgb(p.accent)))
+        .child(label.to_owned())
+        .on_click(cx.listener(action))
+}
+
+fn severity_color(severity: &bodh::Severity, p: Palette) -> u32 {
+    match severity {
+        bodh::Severity::Critical | bodh::Severity::High => p.danger,
+        bodh::Severity::Medium => p.caution,
+        bodh::Severity::Low => p.success,
+    }
+}
+
+fn follow_up_color(status: FollowUpProminence, p: Palette) -> u32 {
+    match status {
+        FollowUpProminence::Regressed => p.danger,
+        FollowUpProminence::Unresolved | FollowUpProminence::Uncertain => p.caution,
+        FollowUpProminence::Resolved | FollowUpProminence::Unassessed => p.success,
     }
 }
 
@@ -6087,10 +8248,19 @@ fn render_split_diff_row(
     );
     div()
         .id(("split-diff-row", index))
+        .w_full()
         .h(px(24.))
         .flex_shrink_0()
         .flex()
         .child(left_cell)
+        .child(
+            div()
+                .id(("split-diff-divider", index))
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(p.border)),
+        )
         .child(right_cell)
 }
 
@@ -6522,5 +8692,95 @@ mod gh_prerequisite_tests {
         .unwrap();
         assert!(result.is_empty());
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod nested_scroll_tests {
+    use super::stop_vertical_wheel_bubbling;
+    use gpui::{
+        AppContext, Context, InteractiveElement, IntoElement, Modifiers, ParentElement, Pixels,
+        Render, ScrollDelta, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled,
+        TestAppContext, Window, div, point, px,
+    };
+
+    struct NestedScrollView {
+        page: ScrollHandle,
+        diagram: ScrollHandle,
+        wheel_seen: std::rc::Rc<std::cell::Cell<bool>>,
+    }
+
+    impl Render for NestedScrollView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let wheel_seen = self.wheel_seen.clone();
+            div()
+                .id("page-scroll-probe")
+                .w(px(300.))
+                .h(px(300.))
+                .track_scroll(&self.page)
+                .overflow_scroll()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .id("diagram-scroll-probe")
+                        .w(px(200.))
+                        .h(px(100.))
+                        .track_scroll(&self.diagram)
+                        .overflow_scroll()
+                        .on_scroll_wheel(move |event, _, cx| {
+                            wheel_seen.set(true);
+                            stop_vertical_wheel_bubbling(event, cx);
+                        })
+                        .child(div().w(px(400.)).h(px(500.))),
+                )
+                .child(div().h(px(800.)))
+        }
+    }
+
+    #[gpui::test]
+    fn scrolling_inside_diagram_does_not_also_scroll_overview_page(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let page = ScrollHandle::new();
+        let diagram = ScrollHandle::new();
+        let wheel_seen = std::rc::Rc::new(std::cell::Cell::new(false));
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(300.), px(300.)),
+            |_, cx| {
+                cx.new(|_| NestedScrollView {
+                    page: page.clone(),
+                    diagram: diagram.clone(),
+                    wheel_seen: wheel_seen.clone(),
+                })
+            },
+        );
+        let diagram_bounds = diagram.bounds();
+        let pointer = point(
+            diagram_bounds.origin.x + px(20.),
+            diagram_bounds.origin.y + px(20.),
+        );
+        cx.simulate_mouse_move(pointer, None, Modifiers::default());
+        cx.simulate_event(ScrollWheelEvent {
+            position: pointer,
+            delta: ScrollDelta::Pixels(point(Pixels::ZERO, px(40.))),
+            ..Default::default()
+        });
+        assert!(
+            wheel_seen.get(),
+            "diagram scroll hitbox should receive wheel"
+        );
+        assert_ne!(diagram.offset().y, Pixels::ZERO, "diagram should scroll");
+        assert_eq!(page.offset().y, Pixels::ZERO, "overview page must not move");
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(250.), px(250.)),
+            delta: ScrollDelta::Pixels(point(Pixels::ZERO, px(40.))),
+            ..Default::default()
+        });
+        assert_ne!(
+            page.offset().y,
+            Pixels::ZERO,
+            "overview scrolls outside diagram"
+        );
     }
 }
