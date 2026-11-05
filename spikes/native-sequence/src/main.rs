@@ -4,6 +4,7 @@ use bodh_sequence_spike::{Flow, Kind, Rect, SOURCE, Scene, demo, stress};
 use gpui::{prelude::*, *};
 
 mod diagram;
+mod diagram_adapter;
 mod product;
 mod profile;
 
@@ -84,6 +85,17 @@ impl Demo {
         cx.notify();
     }
 }
+
+fn select_demo_interaction(
+    demo: &mut Demo,
+    index: usize,
+    window: &mut Window,
+    cx: &mut Context<Demo>,
+) {
+    window.focus(&demo.focus);
+    demo.select(index, cx);
+}
+
 fn stroke(
     window: &mut Window,
     points: &[(f32, f32)],
@@ -127,6 +139,17 @@ impl Render for Demo {
             selected,
             palette,
             owner: cx.entity().downgrade(),
+            select: select_demo_interaction,
+            interaction_ids: std::rc::Rc::new(
+                self.flows[self.active]
+                    .flow
+                    .interactions()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| format!("demo-interaction-{index}"))
+                    .collect(),
+            ),
+            changed_interactions: None,
         };
         let mut toolbar = div()
             .flex()
