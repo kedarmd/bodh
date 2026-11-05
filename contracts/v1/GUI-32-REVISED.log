@@ -1,0 +1,11 @@
+Purpose: native visual review of the user-requested Findings layout refinement for issue #32.
+Visual fidelity: two-column Findings composition using existing D2 tokens; separated Actionable/Follow-up rows, full-width selected source context, feedback below source, and a separate upper-right Open in Changes action.
+Source revision: integration branch HEAD a04ab0d2a04159e82e2e19dbde0328a5fce07a34. The installed app was built by the successful user-local install recorded in INSTALL-35.log. The repo had documentation/test/install-script edits after the native binary build; the GPUI product source was unchanged after the build.
+Install prefix: /tmp/bodh-install-review/prefix
+Launch command: XDG_STATE_HOME=/tmp/bodh-ticket32-review XDG_DATA_HOME=/tmp/bodh-install-review/share /tmp/bodh-install-review/prefix/bin/bodh-gui-launcher --open --repo /home/kedarmd/dev/kmDot --pr 103
+Process: PID 919955, /tmp/bodh-install-review/prefix/bin/bodh-gui --open --repo /home/kedarmd/dev/kmDot --pr 103
+Session/backend: Wayland, wayland-1, Hyprland 0.56.2; CachyOS rolling, Linux 7.2.7-1-cachyos x86_64.
+Window read-back: class bodh, mapped, x=1285 y=52 width=1267 height=1380.
+State: isolated XDG_STATE_HOME /tmp/bodh-ticket32-review. The newest preparation and committed generation 4 share context v1-86581f0485156cb4ecb83e849445d51e7509fb6a9925a69a2cf1e360e2ab8afb; result has four findings and four follow-up entries. It opens on Findings and displays the merged PR title.
+Screenshot: /tmp/bodh-ticket32-review/findings-revised.png (target window only; captured with grim after validating PID/window geometry).
+Observation: Findings data is visible; source uses the available detail width, selected follow-up text is below source, list rows are separated, and Open in Changes is at the source section's upper right. No pointer or keyboard input was synthesized. Evidence-selection behavior and final visual acceptance remain for user review.

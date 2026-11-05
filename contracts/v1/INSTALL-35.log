@@ -1,0 +1,129 @@
+Building Bodh CLI and native app with the pinned lockfiles…
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling stable_deref_trait v1.2.1
+   Compiling version_check v0.9.5
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling syn v3.0.9
+   Compiling serde_core v1.0.229
+   Compiling synstructure v0.14.0
+   Compiling zerofrom-derive v0.1.8
+   Compiling yoke-derive v0.8.4
+   Compiling zerofrom v0.1.8
+   Compiling zerovec-derive v0.11.7
+   Compiling yoke v0.8.4
+   Compiling displaydoc v0.2.7
+   Compiling serde v1.0.229
+   Compiling zerovec v0.11.9
+   Compiling libc v0.2.191
+   Compiling smallvec v1.16.4
+   Compiling memchr v2.8.3
+   Compiling tinystr v0.8.5
+   Compiling serde_derive v1.0.229
+   Compiling writeable v0.6.4
+   Compiling utf_types v1.0.0
+   Compiling litemap v0.8.3
+   Compiling cfg-if v1.0.5
+   Compiling icu_locale_core v2.4.0
+   Compiling utf8_iter v1.1.0
+   Compiling potential_utf v0.1.6
+   Compiling zerotrie v0.2.5
+   Compiling num-integer v0.1.47
+   Compiling generic-array v0.14.7
+   Compiling icu_normalizer_data v2.4.0
+   Compiling ref-cast v1.0.27
+   Compiling icu_properties_data v2.4.0
+   Compiling zmij v1.0.23
+   Compiling icu_provider v2.4.0
+   Compiling icu_collections v2.4.0
+   Compiling ref-cast-impl v1.0.27
+   Compiling regex-syntax v0.8.11
+   Compiling serde_json v1.0.154
+   Compiling foldhash v0.2.0
+   Compiling equivalent v1.0.3
+   Compiling typenum v1.20.1
+   Compiling getrandom v0.3.4
+   Compiling find-msvc-tools v0.1.15
+   Compiling zerocopy v0.8.63
+   Compiling shlex v2.0.1
+   Compiling parking_lot_core v0.9.12
+   Compiling allocator-api2 v0.2.21
+   Compiling hashbrown v0.16.1
+   Compiling cc v1.11.0
+   Compiling num-bigint v0.4.8
+   Compiling aho-corasick v1.1.5
+   Compiling ahash v0.8.12
+   Compiling vcpkg v0.2.15
+   Compiling itoa v1.0.18
+   Compiling scopeguard v1.2.0
+   Compiling pkg-config v0.3.34
+   Compiling libsqlite3-sys v0.36.0
+   Compiling lock_api v0.4.14
+   Compiling regex-automata v0.4.18
+   Compiling num-rational v0.4.2
+   Compiling icu_properties v2.4.0
+   Compiling icu_normalizer v2.4.0
+   Compiling num-iter v0.1.46
+   Compiling num-complex v0.4.6
+   Compiling borrow-or-share v0.2.4
+   Compiling unicode-general-category v1.1.0
+   Compiling once_cell v1.21.4
+   Compiling bit-vec v0.8.0
+   Compiling bit-set v0.8.0
+   Compiling fluent-uri v0.4.1
+   Compiling num v0.4.3
+   Compiling parking_lot v0.12.5
+   Compiling idna_adapter v1.2.2
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling serde_derive_internals v0.30.0
+   Compiling percent-encoding v2.3.2
+   Compiling lazy_static v1.5.1
+   Compiling micromap v0.3.0
+   Compiling vsimd v0.8.0
+   Compiling outref v0.5.2
+   Compiling uuid-simd v0.8.0
+   Compiling referencing v0.46.10
+   Compiling fraction v0.15.4
+   Compiling schemars_derive v1.2.3
+   Compiling digest v0.10.7
+   Compiling idna v1.1.0
+   Compiling fancy-regex v0.18.0
+   Compiling regex v1.13.1
+   Compiling hashlink v0.11.1
+   Compiling jsonschema-regex v0.46.10
+   Compiling email_address v0.2.9
+   Compiling bytecount v0.6.9
+   Compiling cpufeatures v0.2.17
+   Compiling bitflags v2.13.2
+   Compiling num-cmp v0.1.0
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling fallible-iterator v0.3.0
+   Compiling data-encoding v2.11.1
+   Compiling dyn-clone v1.0.20
+   Compiling schemars v1.2.3
+   Compiling jsonschema v0.46.10
+   Compiling sha2 v0.10.9
+   Compiling rusqlite v0.38.0
+   Compiling bodh v0.1.0 (/home/kedarmd/dev/bodh)
+    Finished `release` profile [optimized] target(s) in 3m 05s
+   Compiling bodh v0.1.0 (/home/kedarmd/dev/bodh)
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 1m 06s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+Installed Bodh CLI: /tmp/bodh-install-review/prefix/bin/bodh
+Installed Bodh GUI: /tmp/bodh-install-review/prefix/bin/bodh-gui
+Installed desktop entry: /tmp/bodh-install-review/share/applications/bodh.desktop
+Review state defaults to ~/.local/state/bodh (or $XDG_STATE_HOME/bodh).
+Building Bodh CLI and native app with the pinned lockfiles…
+    Finished `release` profile [optimized] target(s) in 0.18s
+    Finished `release` profile [optimized] target(s) in 0.61s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+Installed Bodh CLI: /tmp/bodh-install-review/prefix/bin/bodh
+Installed Bodh GUI: /tmp/bodh-install-review/prefix/bin/bodh-gui
+Installed desktop entry: /tmp/bodh-install-review/share/applications/bodh.desktop
+Review state defaults to ~/.local/state/bodh (or $XDG_STATE_HOME/bodh).

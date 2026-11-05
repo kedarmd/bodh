@@ -77,7 +77,7 @@ install -d "$applications_dir"
   printf 'Terminal=false\n'
   printf 'StartupNotify=true\n'
   printf 'StartupWMClass=bodh\n'
-  printf 'Categories=Development;Utility;\n'
+  printf 'Categories=Development;\n'
 } > "$applications_dir/bodh.desktop"
 
 printf 'Installed Bodh CLI: %s\n' "$bin_dir/bodh"

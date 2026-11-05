@@ -61,6 +61,7 @@ class LocalInstallTests(unittest.TestCase):
         self.assertIn("Name=Bodh\n", desktop)
         self.assertIn('Exec="', desktop)
         self.assertIn("%%/bin/bodh-gui-launcher\"\n", desktop)
+        self.assertIn("Categories=Development;\n", desktop)
 
         outside_checkout = Path(self.temp.name) / "elsewhere"
         outside_checkout.mkdir()

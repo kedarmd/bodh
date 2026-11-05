@@ -21,3 +21,5 @@ The existing CLI/service tests cover the workflow seams used by the skill:
 - `tests/complete.rs::complete_validator_accepts_empty_results_and_all_supported_diagram_steps` verifies empty findings and diagrams.
 
 The CLI tests invoke finite child processes; the tested commands return without a daemon. The skill itself does not launch any background process. This change did not execute an LLM-driven review against a live PR. Model analysis quality, the three-correction/exhaustion path under an actual provider, successful human replacement authorization through a live terminal, and a complete prepare-to-commit agent run remain unverified. The skill records the retry and authorization rules but does not claim those trials as evidence.
+
+The integrated `./scripts/validate desktop` run passed after #33 merged; see [VALIDATE-32-final.log](VALIDATE-32-final.log). This validates the repository suite, not an actual model-driven end-to-end review.

@@ -5761,32 +5761,32 @@ impl Product {
                         .is_some_and(|current| current.id == finding.id)
                 })
             });
-            if let Some(row) = follow_up {
-                if let Some(assessment) = row.assessment {
-                    detail = detail.child(
-                        div()
-                            .p_3()
-                            .border_1()
-                            .border_color(rgb(p.border))
-                            .bg(rgb(p.panel))
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(section_title("Follow-up", p))
-                                    .child(status_badge(
-                                        row.prominence.label(),
-                                        follow_up_color(row.prominence, p),
-                                    )),
-                            )
-                            .child(row.concern.title.clone())
-                            .child(assessment.explanation.clone()),
-                    );
-                }
+            if let Some(row) = follow_up
+                && let Some(assessment) = row.assessment
+            {
+                detail = detail.child(
+                    div()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.panel))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(section_title("Follow-up", p))
+                                .child(status_badge(
+                                    row.prominence.label(),
+                                    follow_up_color(row.prominence, p),
+                                )),
+                        )
+                        .child(row.concern.title.clone())
+                        .child(assessment.explanation.clone()),
+                );
             }
 
             if !finding.related_thread_ids.is_empty() {
