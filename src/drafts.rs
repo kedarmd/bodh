@@ -201,6 +201,7 @@ impl DraftStore {
             CREATE TABLE IF NOT EXISTS thread_action_drafts (draft_id TEXT PRIMARY KEY NOT NULL, context_id TEXT NOT NULL REFERENCES contexts(context_id), host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, thread_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('resolve','reopen')), observed_resolved INTEGER NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(host,owner,repository,number) REFERENCES workspaces(host,owner,repository,number));
             CREATE INDEX IF NOT EXISTS thread_actions_workspace ON thread_action_drafts(host,owner,repository,number,context_id,updated_at);
             INSERT OR IGNORE INTO draft_schema_migrations(version) VALUES(2); COMMIT;").map_err(db_error)?;
+        drop(crate::ReviewPublicationStore::open(path)?);
         Ok(Self {
             db,
             path: path.to_path_buf(),
@@ -389,7 +390,12 @@ impl DraftStore {
                 (1, now)
             };
             let next = advance_workspace(&tx, pr, current)?;
-            let counts = count_all(&tx, pr, &prepared.context.context_id)?;
+            let counts = count_all(
+                &tx,
+                pr,
+                &prepared.context.context_id,
+                &prepared.preparation_id,
+            )?;
             tx.commit().map_err(db_error)?;
             Ok((
                 next,
@@ -459,7 +465,12 @@ impl DraftStore {
                 (id, 1, now)
             };
             let next = advance_workspace(&tx, pr, current)?;
-            let counts = count_all(&tx, pr, &prepared.context.context_id)?;
+            let counts = count_all(
+                &tx,
+                pr,
+                &prepared.context.context_id,
+                &prepared.preparation_id,
+            )?;
             tx.commit().map_err(db_error)?;
             let _ = (revision, created);
             Ok((next, counts, None, id))
@@ -477,6 +488,11 @@ impl DraftStore {
                 "SELECT draft_id, body, source_json, provenance_json, revision, created_at, updated_at
                  FROM manual_text_drafts
                  WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5
+                   AND NOT EXISTS (
+                       SELECT 1 FROM review_published_drafts p
+                       WHERE p.context_id=?6 AND p.draft_id=manual_text_drafts.draft_id
+                         AND p.draft_revision=manual_text_drafts.revision
+                   )
                  ORDER BY created_at, draft_id",
             )
             .map_err(db_error)?;
@@ -487,6 +503,7 @@ impl DraftStore {
                     pr.owner,
                     pr.repository,
                     i64::try_from(pr.number).map_err(|_| state_error())?,
+                    prepared.context.context_id,
                     prepared.context.context_id
                 ],
                 |r| {
@@ -577,7 +594,7 @@ impl DraftStore {
             inline_comments: drafts.len() as u64,
             replies: reply_drafts.len() as u64,
             thread_intents: thread_actions.len() as u64,
-            review_comments: 0,
+            review_comments: review_summary_count(&self.db, preparation_id)?,
         };
         Ok(DraftSnapshot {
             workspace_revision,
@@ -1004,7 +1021,12 @@ impl DraftStore {
             (id, 1, now)
         };
         let workspace_revision = advance_workspace(&tx, pr, current_workspace)?;
-        let counts = count_all(&tx, pr, &prepared.context.context_id)?;
+        let counts = count_all(
+            &tx,
+            pr,
+            &prepared.context.context_id,
+            &prepared.preparation_id,
+        )?;
         tx.commit().map_err(db_error)?;
         Ok(DraftSaveResult {
             workspace_revision,
@@ -1075,7 +1097,12 @@ impl DraftStore {
         )
         .map_err(db_error)?;
         let _workspace_revision = advance_workspace(&tx, pr, current_workspace)?;
-        let _drafts = count_all(&tx, pr, &prepared.context.context_id)?;
+        let _drafts = count_all(
+            &tx,
+            pr,
+            &prepared.context.context_id,
+            &prepared.preparation_id,
+        )?;
         tx.commit().map_err(db_error)?;
         self.list(preparation_id)
     }
@@ -1169,16 +1196,56 @@ fn count_all(
     tx: &Transaction<'_>,
     pr: &crate::PrIdentity,
     context_id: &str,
+    preparation_id: &str,
 ) -> Result<DraftCounts, ContractError> {
+    let inline = tx.query_row(
+        "SELECT count(*) FROM manual_text_drafts d WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5 AND NOT EXISTS (SELECT 1 FROM review_published_drafts p WHERE p.context_id=?6 AND p.draft_id=d.draft_id AND p.draft_revision=d.revision)",
+        params![pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_|state_error())?,context_id,context_id],
+        |row|row.get::<_,i64>(0)
+    ).map_err(db_error).and_then(|value|u64::try_from(value).map_err(|_|state_error()))?;
     let count = |table: &str| -> Result<u64, ContractError> {
         tx.query_row(&format!("SELECT count(*) FROM {table} WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5"),params![pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_|state_error())?,context_id],|r|r.get::<_,i64>(0)).map_err(db_error).and_then(|value|u64::try_from(value).map_err(|_|state_error()))
     };
     Ok(DraftCounts {
-        inline_comments: count("manual_text_drafts")?,
+        inline_comments: inline,
         replies: count("reply_drafts")?,
         thread_intents: count("thread_action_drafts")?,
-        review_comments: 0,
+        review_comments: review_summary_count(tx, preparation_id)?,
     })
+}
+
+fn review_summary_count(db: &Connection, preparation_id: &str) -> Result<u64, ContractError> {
+    let json: Option<String> = db
+        .query_row(
+            "SELECT intent_json FROM review_intents WHERE preparation_id=?1",
+            [preparation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?;
+    let Some(json) = json else { return Ok(0) };
+    let intent: crate::ReviewIntent = serde_json::from_str(&json).map_err(json_error)?;
+    if !intent
+        .summary
+        .as_deref()
+        .is_some_and(|summary| !summary.trim().is_empty())
+    {
+        return Ok(0);
+    }
+    let mut statement = db
+        .prepare("SELECT payload_json FROM review_operations WHERE preparation_id=?1 AND state='confirmed'")
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map([preparation_id], |row| row.get::<_, String>(0))
+        .map_err(db_error)?;
+    for row in rows {
+        let payload: crate::ReviewPayload =
+            serde_json::from_str(&row.map_err(db_error)?).map_err(json_error)?;
+        if payload.intent_revision == intent.revision && payload.summary == intent.summary {
+            return Ok(0);
+        }
+    }
+    Ok(1)
 }
 
 fn find_thread(
