@@ -11,3 +11,6 @@ Observed:
 - Immediately after activation, no installed launcher/native Bodh process was visible in `pgrep`, and no `bodh` window was present in `hyprctl clients`.
 
 Result: inconclusive; this is not counted as a successful desktop-menu launch. No pointer or keyboard input was synthesized. The earlier direct invocation of the installed launcher did open the native app (see `GUI-32-REVISED.log`), but that does not establish desktop-entry activation. The cause of the missing observed window was not determined in this trial.
+
+Follow-up diagnosis:
+- `strace` is not installed on this host, so an exec trace of the desktop activation could not be captured. The attempted trace exited before invoking `gtk-launch`; it is not treated as a second activation result.
