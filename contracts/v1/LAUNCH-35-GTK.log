@@ -1,0 +1,13 @@
+# Desktop-entry activation attempt — issue #35
+Date: 2026-11-06 (local session)
+Host/session: CachyOS x86_64, Wayland/Hyprland; installed target under /tmp/bodh-install-review/prefix
+
+Command, run from /tmp:
+  XDG_STATE_HOME=/tmp/bodh-ticket32-review XDG_DATA_HOME=/tmp/bodh-install-review/share gtk-launch bodh
+
+Observed:
+- `gtk-launch` exited 0.
+- `desktop-file-validate /tmp/bodh-install-review/share/applications/bodh.desktop` exited 0.
+- Immediately after activation, no installed launcher/native Bodh process was visible in `pgrep`, and no `bodh` window was present in `hyprctl clients`.
+
+Result: inconclusive; this is not counted as a successful desktop-menu launch. No pointer or keyboard input was synthesized. The earlier direct invocation of the installed launcher did open the native app (see `GUI-32-REVISED.log`), but that does not establish desktop-entry activation. The cause of the missing observed window was not determined in this trial.
