@@ -3,6 +3,7 @@ use bodh::{
     DraftSnapshot, DraftStore, OperationControl, PinnedDiff, PreparationManifest, PreparationStore,
     PreparedBinding, Revision, SourceRef, read_diff,
 };
+use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::preferences::{
     NavigationPreferences as Preferences, RecentReview, WorkspaceTab,
 };
@@ -108,6 +109,9 @@ pub struct Product {
     busy_label: String,
     error: Option<String>,
     status: Option<String>,
+    gh_cli_status: GhCliStatus,
+    gh_check_epoch: Arc<AtomicU64>,
+    pending_initial: Option<(String, Option<u64>)>,
     selected_review: Option<PreparedBinding>,
     active_tab: WorkspaceTab,
     selected_file: Option<usize>,
@@ -150,13 +154,10 @@ impl Product {
     ) -> Self {
         let prefs = Preferences::load(&prefs_path);
         let repository_input = initial_repo.clone().unwrap_or_default();
+        let pending_initial = initial_repo.clone().map(|path| (path, initial_pr));
         let mut app = Self {
-            screen: if initial_repo.is_some() {
-                Screen::Repository
-            } else {
-                Screen::Home
-            },
-            active_repository: initial_repo,
+            screen: Screen::Home,
+            active_repository: None,
             prefs,
             prefs_path,
             preparation_db,
@@ -169,6 +170,9 @@ impl Product {
             busy_label: String::new(),
             error: None,
             status: None,
+            gh_cli_status: GhCliStatus::Checking,
+            gh_check_epoch: Arc::new(AtomicU64::new(0)),
+            pending_initial,
             selected_review: None,
             active_tab: WorkspaceTab::Overview,
             selected_file: None,
@@ -200,17 +204,7 @@ impl Product {
             draft_focus: cx.focus_handle(),
             dragging_pane: false,
         };
-        if let Some(path) = app.active_repository.clone()
-            && !app.prefs.repositories.contains(&path)
-        {
-            app.prefs.repositories.insert(0, path);
-            app.persist();
-        }
-        if let (Some(path), Some(number)) = (app.active_repository.clone(), initial_pr) {
-            app.prepare(path, number, cx);
-        } else if let Some(path) = app.active_repository.clone() {
-            app.load_pull_requests(path, cx);
-        }
+        app.refresh_gh_cli(cx);
         app
     }
 
@@ -240,7 +234,35 @@ impl Product {
             cx.notify();
             return;
         }
-        let path = path.trim().to_owned();
+        match self.gh_cli_status {
+            GhCliStatus::Checking => {
+                self.status =
+                    Some("Checking the GitHub CLI prerequisite. Try again in a moment.".into());
+                cx.notify();
+                return;
+            }
+            GhCliStatus::Missing => {
+                self.error = Some(gh_install_prompt());
+                cx.notify();
+                return;
+            }
+            GhCliStatus::Failed(ref detail) => {
+                self.error = Some(format!("Could not verify the GitHub CLI: {detail}"));
+                cx.notify();
+                return;
+            }
+            GhCliStatus::Available(_) => {}
+        }
+        let home = home_directory();
+        let submitted_path = path.trim().to_owned();
+        let path = match resolve_repository_path(&submitted_path, &home) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(error) => {
+                self.error = Some(format!("{}: {}", error.code, error.message));
+                cx.notify();
+                return;
+            }
+        };
         if path.is_empty() {
             self.error = Some("Enter a repository checkout path.".into());
             cx.notify();
@@ -252,12 +274,48 @@ impl Product {
         self.screen = Screen::Repository;
         self.active_repository = Some(path.clone());
         self.repository_input = path.clone();
-        if !self.prefs.repositories.contains(&path) {
-            self.prefs.repositories.insert(0, path.clone());
-        }
+        self.prefs.repositories.retain(|saved| {
+            saved != &submitted_path
+                && resolve_repository_path(saved, &home)
+                    .map(|saved_path| saved_path.to_string_lossy() != path)
+                    .unwrap_or(true)
+        });
+        self.prefs.repositories.insert(0, path.clone());
         self.prefs.repositories.truncate(20);
         self.persist();
         self.load_pull_requests(path, cx);
+    }
+
+    fn refresh_gh_cli(&mut self, cx: &mut Context<Self>) {
+        let token = self.gh_check_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.gh_check_epoch.clone();
+        let weak = cx.entity().downgrade();
+        self.gh_cli_status = GhCliStatus::Checking;
+        cx.spawn(async move |_, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async { probe_gh_cli(Duration::from_secs(3)) })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.gh_cli_status = result.clone();
+                if let GhCliStatus::Available(_) = result
+                    && let Some((path, initial_pr)) = this.pending_initial.take()
+                {
+                    this.open_repository(path.clone(), cx);
+                    if let Some(number) = initial_pr {
+                        this.prepare(path, number, cx);
+                    }
+                } else if matches!(result, GhCliStatus::Missing) {
+                    this.pending_initial = None;
+                    this.error = Some(gh_install_prompt());
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn load_pull_requests(&mut self, path: String, cx: &mut Context<Self>) {
@@ -1301,6 +1359,36 @@ impl Product {
                     "Open a local checkout to browse its pull requests, or resume a saved review.",
                 )),
         );
+        let (cli_title, cli_message, can_retry) = match &self.gh_cli_status {
+            GhCliStatus::Checking => (
+                "Checking GitHub CLI",
+                "Bodh checks for the GitHub CLI before opening a repository.",
+                false,
+            ),
+            GhCliStatus::Available(version) => ("GitHub CLI ready", version.as_str(), false),
+            GhCliStatus::Missing => (
+                "GitHub CLI required",
+                "Install GitHub CLI from https://cli.github.com/ and restart Bodh.",
+                true,
+            ),
+            GhCliStatus::Failed(detail) => ("Could not verify GitHub CLI", detail.as_str(), true),
+        };
+        let mut cli_card =
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(empty_card(cli_title, cli_message, p));
+        if can_retry {
+            cli_card = cli_card.child(button(
+                "check-gh-again",
+                "Check Again",
+                p,
+                |this, _, _, cx| this.refresh_gh_cli(cx),
+                cx,
+            ));
+        }
+        content = content.child(cli_card);
         let mut repos = div()
             .flex()
             .flex_col()
@@ -2722,12 +2810,30 @@ fn state_paths() -> (PathBuf, PathBuf) {
         app.join("reviews.sqlite"),
     )
 }
+fn home_directory() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+fn gh_install_prompt() -> String {
+    "GitHub CLI is required. Install it from https://cli.github.com/ and restart Bodh.".into()
+}
 fn list_pull_requests(
     repository: &Path,
     control: &OperationControl,
 ) -> Result<Vec<PullRequest>, String> {
+    list_pull_requests_with_gh(repository, control, Path::new("gh"), &home_directory())
+}
+fn list_pull_requests_with_gh(
+    repository: &Path,
+    control: &OperationControl,
+    gh: &Path,
+    home: &Path,
+) -> Result<Vec<PullRequest>, String> {
+    let repository = resolve_repository_path(&repository.to_string_lossy(), home)
+        .map_err(|error| format!("{}: {}", error.code, error.message))?;
     let output = run_bounded(
-        Command::new("gh")
+        Command::new(gh)
             .args([
                 "pr",
                 "list",
@@ -2738,7 +2844,7 @@ fn list_pull_requests(
                 "--json",
                 "number,title,author,state",
             ])
-            .current_dir(repository),
+            .current_dir(&repository),
         control,
     )
     .map_err(|error| format!("{}: {}", error.code, error.message))?;
@@ -2750,12 +2856,34 @@ fn run_bounded(
     control: &OperationControl,
 ) -> Result<Vec<u8>, bodh::ContractError> {
     use std::io::Read;
+    if command
+        .get_current_dir()
+        .is_some_and(|directory| !directory.is_dir())
+    {
+        return Err(bodh::ContractError::new(
+            "REPOSITORY_PATH_INVALID",
+            "The checkout directory cannot be opened.",
+            "",
+        ));
+    }
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|_| {
-            bodh::ContractError::new("GH_UNAVAILABLE", "Installed gh could not be started", "")
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                bodh::ContractError::new(
+                    "GH_UNAVAILABLE",
+                    "GitHub CLI was not found on Bodh's PATH",
+                    "",
+                )
+            } else {
+                bodh::ContractError::new(
+                    "GH_START_FAILED",
+                    "GitHub CLI could not be started for this repository",
+                    "",
+                )
+            }
         })?;
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
@@ -2881,4 +3009,46 @@ pub fn open_product(cx: &mut App, repo: Option<String>, pr: Option<u64>) {
     )
     .expect("open Bodh native review workspace");
     cx.activate(true);
+}
+
+#[cfg(test)]
+mod gh_prerequisite_tests {
+    use super::list_pull_requests_with_gh;
+    use bodh::OperationControl;
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_dir() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "bodh-gh-list-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn tilde_repository_is_expanded_before_the_pr_list_child_is_spawned() {
+        let root = temp_dir();
+        fs::create_dir_all(root.join("dev/nayati")).unwrap();
+        let gh = root.join("gh");
+        fs::write(&gh, "#!/bin/sh\nprintf '[]\\n'\n").unwrap();
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let result = list_pull_requests_with_gh(
+            Path::new("~/dev/nayati"),
+            &OperationControl::default(),
+            &gh,
+            &root,
+        )
+        .unwrap();
+        assert!(result.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
 }
