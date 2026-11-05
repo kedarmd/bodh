@@ -9,8 +9,8 @@ use std::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkspaceTab {
     Overview,
+    #[serde(alias = "Discussions")]
     Changes,
-    Discussions,
     Findings,
 }
 impl WorkspaceTab {
@@ -18,7 +18,6 @@ impl WorkspaceTab {
         match self {
             Self::Overview => "Overview",
             Self::Changes => "Changes",
-            Self::Discussions => "Discussions",
             Self::Findings => "Findings",
         }
     }

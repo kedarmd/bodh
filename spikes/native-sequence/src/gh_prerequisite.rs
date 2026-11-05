@@ -9,7 +9,10 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GhCliStatus {
     Checking,
-    Available(String),
+    Available {
+        executable: PathBuf,
+        version: String,
+    },
     Missing,
     Failed(String),
 }
@@ -52,7 +55,10 @@ pub fn probe_gh_cli_with(executable: &Path, timeout: Duration) -> GhCliStatus {
                     .trim()
                     .to_owned();
                 if version.starts_with("gh version ") {
-                    return GhCliStatus::Available(version);
+                    return GhCliStatus::Available {
+                        executable: executable.to_path_buf(),
+                        version,
+                    };
                 }
                 return GhCliStatus::Failed("GitHub CLI returned an unrecognized version.".into());
             }
@@ -159,8 +165,32 @@ mod tests {
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(
             probe_gh_cli_with(&gh, Duration::from_secs(1)),
-            GhCliStatus::Available("gh version 2.9.1 (test)".into())
+            GhCliStatus::Available {
+                executable: gh.clone(),
+                version: "gh version 2.9.1 (test)".into(),
+            }
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn available_cli_result_keeps_the_executable_path_for_follow_up_calls() {
+        let root = temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let gh = root.join("gh");
+        fs::write(&gh, "#!/bin/sh\nprintf 'gh version 2.9.1 (test)\\n'\n").unwrap();
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let GhCliStatus::Available {
+            executable,
+            version,
+        } = probe_gh_cli_with(&gh, Duration::from_secs(1))
+        else {
+            panic!("controlled gh executable should be available");
+        };
+
+        assert_eq!(executable, gh);
+        assert_eq!(version, "gh version 2.9.1 (test)");
         let _ = fs::remove_dir_all(root);
     }
 

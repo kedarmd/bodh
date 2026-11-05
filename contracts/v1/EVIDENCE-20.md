@@ -1,6 +1,6 @@
 # Issue #20 — discussion workflow evidence
 
-This slice exposes the read-only thread observation in a native Discussions tab and adds durable local reply and thread-action drafts. The shared Rust `DraftStore` owns permission checks, identity checks, revisions, persistence and pending counts; the GPUI adapter calls those same services off the UI thread.
+This slice exposes the read-only thread observation and adds durable local reply and thread-action drafts. The shared Rust `DraftStore` owns permission checks, identity checks, revisions, persistence and pending counts; the GPUI adapter calls those same services off the UI thread. The first native implementation used a separate Discussions tab; the user had not approved that navigation, so it was removed and discussion was moved inline beside the selected source in Changes.
 
 ## Verified behavior
 
@@ -18,6 +18,12 @@ This slice exposes the read-only thread observation in a native Discussions tab 
 - `cargo check --locked --manifest-path spikes/native-sequence/Cargo.toml`: passed.
 - `CARGO_BUILD_JOBS=2 ./scripts/validate desktop`: passed on final integration tip `1a95b47` plus the #20 merge; output header records local commit `9f0507d` and a dirty tree because the evidence log was being refreshed. Full output is in `VALIDATE-20.log`.
 - A coordinated interactive trial of this new Discussions tab was not performed in this slice. Native keyboard/focus behavior is implemented using the existing focused key-handling pattern but remains unobserved; no claim of live interaction acceptance is made.
+
+## UI scope correction — 2026-11-05
+
+The standalone Discussions workspace tab was not user-approved. It has been removed from workspace navigation. The inline discussion section in Changes starts collapsed. Expanding it reads the saved observation for the selected source file into native view state; switching files clears the previous file's threads and loads the newly selected file when the section is expanded. Legacy preferences containing `active_tab: "Discussions"` deserialize as Changes.
+
+GitHub's GraphQL `PullRequest.reviewThreads` connection supports pagination but no path argument ([GitHub GraphQL pulls reference](https://docs.github.com/en/graphql/reference/pulls)). A manual refresh therefore acquires the paginated PR observation and filters locally before placing selected-file threads in the native view. The user approved this API limitation and local filtering on 2026-11-05. The corrected GUI was reviewed on 2026-11-05; the user confirmed the inline discussion/pinned-source presentation, collapse behavior, and narrow-pane controls after the follow-up layout fixes. Desktop validation passed after those changes; see [VALIDATE-26.log](VALIDATE-26.log).
 
 ## Limits
 

@@ -17,3 +17,9 @@ Issue #17 adds original PR description reading, changed-file navigation, pinned 
 Focused coverage includes three real-Git pinned diff tests for literal path scoping, changed and unchanged source reads, complete-line truncation, rejection of paths outside the prepared change, and checkout/index preservation. Native manual review tests cover unified/split line pairing, Markdown safety/readability, and syntax-token spans; preference tests cover old and new navigation state.
 
 No interactive native GUI trial was performed for this issue. The accepted D2 visual baseline is recorded in [APPROVAL-D2.md](/home/kedarmd/.local/state/bodh-implementation/design/APPROVAL-D2.md); the #16 home screen acceptance does not verify #17’s interactive Changes workflow.
+
+## Native review follow-up — 2026-11-05
+
+The first interactive trial exposed that selecting a diff row displayed only its single anchored source line, which made the surrounding code hard to verify. The pinned-source inspector now keeps the comment anchor on the exact selected line while displaying up to four nearby lines on each side; the selected anchor is highlighted. The user confirmed that the displayed Base/Head context makes the changed line visible. Long code lines wrap within the pane; its toolbar stays fixed while the source content scrolls.
+
+The user also reviewed the narrow-window pane behavior and confirmed that the diff controls stay within their pane and all panes are reachable by horizontal scrolling. Final desktop validation after these native UI changes passed; see [VALIDATE-26.log](VALIDATE-26.log). The native GUI build and review record is in [GUI-26.log](GUI-26.log).

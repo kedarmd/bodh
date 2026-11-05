@@ -5,6 +5,7 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::{
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
@@ -21,6 +22,200 @@ pub struct DraftProvenance {
     pub base_sha: String,
     pub head_sha: String,
     pub merge_base_sha: String,
+}
+
+fn require_same_pull_request(
+    source: &PreparedBinding,
+    candidate: &PreparedBinding,
+) -> Result<(), ContractError> {
+    let old = &source.context.pr;
+    let new = &candidate.context.pr;
+    if old.host != new.host
+        || old.owner != new.owner
+        || old.repository != new.repository
+        || old.number != new.number
+    {
+        return Err(anchor_repair_invalid(
+            "Draft repair must stay within the same pull request",
+        ));
+    }
+    Ok(())
+}
+
+fn locate_exact_anchor(
+    checkout: &Path,
+    context: &crate::ReviewContext,
+    old_source: &SourceRef,
+    exact_text: &str,
+    index: &crate::DiffIndex,
+    control: &OperationControl,
+) -> Result<(AnchorRepairStatus, Option<SourceRef>, String), ContractError> {
+    if exact_text.is_empty() {
+        return Ok((
+            AnchorRepairStatus::Changed,
+            None,
+            "The original anchor has no source text to compare.".into(),
+        ));
+    }
+    if index.validate_anchor(old_source).is_ok()
+        && read_source(checkout, context, old_source, control).is_ok_and(|text| text == exact_text)
+    {
+        return Ok((
+            AnchorRepairStatus::Current,
+            Some(old_source.clone()),
+            "The exact source still occupies its original eligible lines.".into(),
+        ));
+    }
+
+    let needle = exact_text.split_inclusive('\n').collect::<Vec<_>>();
+    let mut mapped_files = Vec::new();
+    let mut changed_files = Vec::new();
+    let mut saw_removed = false;
+    let mut unsupported = false;
+    for file in &index.files {
+        let matches_path = file.old_path.as_deref() == Some(old_source.path.as_str())
+            || file.new_path.as_deref() == Some(old_source.path.as_str());
+        let path = match old_source.revision {
+            Revision::Base => file.old_path.as_deref(),
+            Revision::Head => file.new_path.as_deref(),
+        };
+        let Some(path) = path else {
+            saw_removed |= matches_path;
+            continue;
+        };
+        if file.unsupported_reason.is_some()
+            || file.hunks.iter().all(|hunk| match old_source.revision {
+                Revision::Base => hunk.old_lines == 0,
+                Revision::Head => hunk.new_lines == 0,
+            })
+        {
+            if matches_path && file.unsupported_reason.is_some() {
+                unsupported = true;
+            }
+            continue;
+        }
+        let candidate = (file, path.to_owned());
+        changed_files.push(candidate.clone());
+        if matches_path {
+            mapped_files.push(candidate);
+        }
+    }
+    // Git does not always identify a move as a rename when enough surrounding
+    // text changed. In that case search all eligible changed ranges, still
+    // requiring a unique exact match and explicit reviewer confirmation.
+    let matching_files = if mapped_files.is_empty() {
+        changed_files
+    } else {
+        mapped_files
+    };
+
+    let mut blobs: HashMap<String, Vec<String>> = HashMap::new();
+    let mut proposed = Vec::new();
+    for (file, path) in matching_files {
+        if file.unsupported_reason.is_some() {
+            unsupported = true;
+            continue;
+        }
+        let (oid, path_is_present) = match old_source.revision {
+            Revision::Base => (&file.old_oid, file.old_path.is_some()),
+            Revision::Head => (&file.new_oid, file.new_path.is_some()),
+        };
+        if !path_is_present {
+            saw_removed = true;
+            continue;
+        }
+        if !blobs.contains_key(oid) {
+            let bytes = crate::evidence::git(checkout, control, &["cat-file", "blob", oid])?;
+            let Ok(text) = std::str::from_utf8(&bytes) else {
+                unsupported = true;
+                continue;
+            };
+            blobs.insert(
+                oid.clone(),
+                text.split_inclusive('\n').map(str::to_owned).collect(),
+            );
+        }
+        let Some(lines) = blobs.get(oid) else {
+            unsupported = true;
+            continue;
+        };
+        for hunk in &file.hunks {
+            control.check()?;
+            let (start, count) = match old_source.revision {
+                Revision::Base => (hunk.old_start, hunk.old_lines),
+                Revision::Head => (hunk.new_start, hunk.new_lines),
+            };
+            if start == 0 || count == 0 || count < needle.len() as u32 {
+                continue;
+            }
+            let start_index = usize::try_from(start - 1).map_err(|_| state_error())?;
+            let end_index = start_index
+                .checked_add(usize::try_from(count).map_err(|_| state_error())?)
+                .ok_or_else(state_error)?;
+            if end_index > lines.len() {
+                return Err(anchor_repair_invalid(
+                    "The candidate diff hunk exceeds its pinned source blob",
+                ));
+            }
+            for offset in 0..=usize::try_from(count).map_err(|_| state_error())? - needle.len() {
+                if lines[start_index + offset..start_index + offset + needle.len()]
+                    .iter()
+                    .map(String::as_str)
+                    .eq(needle.iter().copied())
+                {
+                    let first =
+                        u32::try_from(start_index + offset + 1).map_err(|_| state_error())?;
+                    let last = first
+                        .checked_add(u32::try_from(needle.len() - 1).map_err(|_| state_error())?)
+                        .ok_or_else(state_error)?;
+                    proposed.push(SourceRef {
+                        path: path.clone(),
+                        revision: old_source.revision,
+                        start_line: first,
+                        end_line: last,
+                    });
+                    if proposed.len() > 1 {
+                        return Ok((
+                            AnchorRepairStatus::Ambiguous,
+                            None,
+                            "The exact source occurs in multiple eligible ranges; choose a location manually.".into(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(source) = proposed.pop() {
+        return Ok((
+            AnchorRepairStatus::RelocationProposed,
+            Some(source),
+            "The exact text has one eligible new location. Confirm the proposed relocation after reviewing its context.".into(),
+        ));
+    }
+    if unsupported {
+        return Ok((
+            AnchorRepairStatus::Unsupported,
+            None,
+            "The candidate file has content that cannot be safely searched for source anchors."
+                .into(),
+        ));
+    }
+    if saw_removed {
+        return Ok((
+            AnchorRepairStatus::Removed,
+            None,
+            "The file was removed on the selected review side.".into(),
+        ));
+    }
+    Ok((
+        AnchorRepairStatus::Changed,
+        None,
+        "The exact source is absent from eligible changed lines. Review and attach a new location manually.".into(),
+    ))
+}
+
+fn anchor_repair_invalid(message: &str) -> ContractError {
+    ContractError::new("ANCHOR_REPAIR_INVALID", message, "")
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -116,6 +311,32 @@ pub struct CodeReplacementSnapshot {
     pub drafts: Vec<CodeReplacementDraft>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnchorRepairStatus {
+    Current,
+    RelocationProposed,
+    Reattached,
+    Changed,
+    Removed,
+    Unsupported,
+    Ambiguous,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorRepairPreview {
+    pub draft_id: String,
+    pub draft_revision: u64,
+    pub kind: String,
+    pub source: SourceRef,
+    pub status: AnchorRepairStatus,
+    pub proposed_source: Option<SourceRef>,
+    pub reattached_draft_id: Option<String>,
+    pub exact_text: Option<String>,
+    pub explanation: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodeReplacementSaveResult {
@@ -202,6 +423,19 @@ impl DraftStore {
             CREATE INDEX IF NOT EXISTS thread_actions_workspace ON thread_action_drafts(host,owner,repository,number,context_id,updated_at);
             INSERT OR IGNORE INTO draft_schema_migrations(version) VALUES(2); COMMIT;").map_err(db_error)?;
         drop(crate::ReviewPublicationStore::open(path)?);
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS draft_anchor_repairs(
+                source_context_id TEXT NOT NULL,
+                source_draft_id TEXT NOT NULL,
+                source_revision INTEGER NOT NULL,
+                candidate_context_id TEXT NOT NULL,
+                candidate_draft_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('text_comment','code_replacement')),
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY(source_context_id,source_draft_id,source_revision,candidate_context_id)
+            );",
+        )
+        .map_err(db_error)?;
         Ok(Self {
             db,
             path: path.to_path_buf(),
@@ -679,6 +913,356 @@ impl DraftStore {
         Ok(CodeReplacementSnapshot {
             workspace_revision: workspace_revision(&self.db, pr)?,
             drafts,
+        })
+    }
+
+    /// Compares unpublished anchors from an older preparation with eligible lines
+    /// in a newer preparation. Relocations are proposals only; callers must get
+    /// explicit reviewer confirmation before calling either reattach method.
+    pub fn preview_anchor_repairs(
+        &self,
+        source_preparation_id: &str,
+        candidate_preparation_id: &str,
+        control: &OperationControl,
+    ) -> Result<Vec<AnchorRepairPreview>, ContractError> {
+        let preparations = PreparationStore::open(&self.path)?;
+        let source_binding = preparations.load(source_preparation_id)?;
+        let candidate = preparations.load(candidate_preparation_id)?;
+        require_same_pull_request(&source_binding, &candidate)?;
+        let index = diff_index(Path::new(&candidate.checkout), &candidate.context, control)?;
+        let old = self.list(source_preparation_id)?;
+        let replacements = self.list_replacements(source_preparation_id)?;
+        let mut previews = Vec::with_capacity(old.drafts.len() + replacements.drafts.len());
+        for draft in old.drafts {
+            let reattached_draft_id = repaired_draft_id(
+                &self.db,
+                &source_binding.context.context_id,
+                &draft.id,
+                draft.revision,
+                &candidate.context.context_id,
+            )?;
+            let exact_text = read_source(
+                Path::new(&source_binding.checkout),
+                &source_binding.context,
+                &draft.source,
+                control,
+            )
+            .ok();
+            let (status, proposed_source, explanation) = if reattached_draft_id.is_some() {
+                (
+                    AnchorRepairStatus::Reattached,
+                    None,
+                    "A copy is already attached to this preparation; the original remains available on the older review.".into(),
+                )
+            } else {
+                match exact_text.as_deref() {
+                    Some(text) => locate_exact_anchor(
+                        Path::new(&candidate.checkout),
+                        &candidate.context,
+                        &draft.source,
+                        text,
+                        &index,
+                        control,
+                    )?,
+                    None => (
+                        AnchorRepairStatus::Unsupported,
+                        None,
+                        "The original pinned source is unavailable for safe comparison.".into(),
+                    ),
+                }
+            };
+            previews.push(AnchorRepairPreview {
+                draft_id: draft.id,
+                draft_revision: draft.revision,
+                kind: "text_comment".into(),
+                source: draft.source,
+                status,
+                proposed_source,
+                reattached_draft_id,
+                exact_text,
+                explanation,
+            });
+        }
+        for draft in replacements.drafts {
+            let reattached_draft_id = repaired_draft_id(
+                &self.db,
+                &source_binding.context.context_id,
+                &draft.id,
+                draft.revision,
+                &candidate.context.context_id,
+            )?;
+            let (status, proposed_source, explanation) = if reattached_draft_id.is_some() {
+                (
+                    AnchorRepairStatus::Reattached,
+                    None,
+                    "A replacement copy is already attached to this preparation; the original remains available on the older review.".into(),
+                )
+            } else {
+                locate_exact_anchor(
+                    Path::new(&candidate.checkout),
+                    &candidate.context,
+                    &draft.source,
+                    &draft.original_text,
+                    &index,
+                    control,
+                )?
+            };
+            previews.push(AnchorRepairPreview {
+                draft_id: draft.id,
+                draft_revision: draft.revision,
+                kind: "code_replacement".into(),
+                source: draft.source,
+                status,
+                proposed_source,
+                reattached_draft_id,
+                exact_text: Some(draft.original_text),
+                explanation,
+            });
+        }
+        Ok(previews)
+    }
+
+    /// Copies a human text comment to a reviewer-selected anchor in a newer
+    /// preparation. The original draft remains on its old preparation until the
+    /// reviewer explicitly discards or defers it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reattach_text_comment(
+        &mut self,
+        source_preparation_id: &str,
+        candidate_preparation_id: &str,
+        draft_id: &str,
+        expected_source_draft_revision: u64,
+        expected_candidate_workspace_revision: u64,
+        new_source: &SourceRef,
+        control: &OperationControl,
+    ) -> Result<DraftSaveResult, ContractError> {
+        let preparations = PreparationStore::open(&self.path)?;
+        let source_binding = preparations.load(source_preparation_id)?;
+        let candidate = preparations.load(candidate_preparation_id)?;
+        require_same_pull_request(&source_binding, &candidate)?;
+        if source_binding.context.context_id == candidate.context.context_id {
+            return Err(anchor_repair_invalid(
+                "Choose a newer preparation to repair this stale anchor",
+            ));
+        }
+        let copy = repaired_draft_id(
+            &self.db,
+            &source_binding.context.context_id,
+            draft_id,
+            expected_source_draft_revision,
+            &candidate.context.context_id,
+        )?;
+        if let Some(copy) = copy {
+            let snapshot = self.list(candidate_preparation_id)?;
+            let draft = snapshot
+                .drafts
+                .into_iter()
+                .find(|draft| draft.id == copy)
+                .ok_or_else(draft_not_found)?;
+            return Ok(DraftSaveResult {
+                workspace_revision: snapshot.workspace_revision,
+                counts: snapshot.counts,
+                draft,
+            });
+        }
+        diff_index(Path::new(&candidate.checkout), &candidate.context, control)?
+            .validate_anchor(new_source)?;
+        read_source(
+            Path::new(&candidate.checkout),
+            &candidate.context,
+            new_source,
+            control,
+        )?;
+        control.check()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let current = workspace_revision(&tx, &candidate.context.pr)?;
+        require_revision(
+            current,
+            expected_candidate_workspace_revision,
+            "WORKSPACE_REVISION_STALE",
+            "Workspace content changed; reload before attaching this comment",
+        )?;
+        let row: Option<(String, i64)> = tx
+            .query_row(
+                "SELECT body,revision FROM manual_text_drafts WHERE draft_id=?1 AND context_id=?2",
+                params![draft_id, source_binding.context.context_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let Some((body, revision)) = row else {
+            return Err(draft_not_found());
+        };
+        validate_body(&body)?;
+        require_revision(
+            u64::try_from(revision).map_err(|_| state_error())?,
+            expected_source_draft_revision,
+            "DRAFT_REVISION_STALE",
+            "The source draft changed; reload it before reattaching",
+        )?;
+        let published: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM review_published_drafts WHERE context_id=?1 AND draft_id=?2 AND draft_revision=?3)",
+                params![source_binding.context.context_id, draft_id, revision],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if published {
+            return Err(draft_not_found());
+        }
+        let now = unix_millis();
+        let id = new_id();
+        let provenance = provenance_for(candidate_preparation_id, &candidate);
+        tx.execute(
+            "INSERT INTO manual_text_drafts(draft_id,context_id,host,owner,repository,number,body,source_json,provenance_json,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,1,?10,?10)",
+            params![id,candidate.context.context_id,candidate.context.pr.host,candidate.context.pr.owner,candidate.context.pr.repository,i64::try_from(candidate.context.pr.number).map_err(|_|state_error())?,body,serde_json::to_string(new_source).map_err(json_error)?,serde_json::to_string(&provenance).map_err(json_error)?,now],
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            "INSERT INTO draft_anchor_repairs(source_context_id,source_draft_id,source_revision,candidate_context_id,candidate_draft_id,kind,created_at) VALUES(?1,?2,?3,?4,?5,'text_comment',?6)",
+            params![source_binding.context.context_id,draft_id,revision,candidate.context.context_id,id,now],
+        )
+        .map_err(db_error)?;
+        advance_workspace(&tx, &candidate.context.pr, current)?;
+        tx.commit().map_err(db_error)?;
+        let snapshot = self.list(candidate_preparation_id)?;
+        let draft = snapshot
+            .drafts
+            .iter()
+            .find(|draft| draft.id == id)
+            .cloned()
+            .ok_or_else(draft_not_found)?;
+        Ok(DraftSaveResult {
+            workspace_revision: snapshot.workspace_revision,
+            counts: snapshot.counts,
+            draft,
+        })
+    }
+
+    /// Copies a replacement to a reviewer-selected anchor in a newer
+    /// preparation. The replacement text is kept; the new source excerpt is
+    /// captured from the candidate's pinned commit and must be reviewed anew.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reattach_code_replacement(
+        &mut self,
+        source_preparation_id: &str,
+        candidate_preparation_id: &str,
+        draft_id: &str,
+        expected_source_draft_revision: u64,
+        expected_candidate_workspace_revision: u64,
+        new_source: &SourceRef,
+        control: &OperationControl,
+    ) -> Result<CodeReplacementSaveResult, ContractError> {
+        let preparations = PreparationStore::open(&self.path)?;
+        let source_binding = preparations.load(source_preparation_id)?;
+        let candidate = preparations.load(candidate_preparation_id)?;
+        require_same_pull_request(&source_binding, &candidate)?;
+        if source_binding.context.context_id == candidate.context.context_id {
+            return Err(anchor_repair_invalid(
+                "Choose a newer preparation to repair this stale anchor",
+            ));
+        }
+        if let Some(copy) = repaired_draft_id(
+            &self.db,
+            &source_binding.context.context_id,
+            draft_id,
+            expected_source_draft_revision,
+            &candidate.context.context_id,
+        )? {
+            let snapshot = self.list_replacements(candidate_preparation_id)?;
+            let draft = snapshot
+                .drafts
+                .into_iter()
+                .find(|draft| draft.id == copy)
+                .ok_or_else(draft_not_found)?;
+            return Ok(CodeReplacementSaveResult {
+                workspace_revision: snapshot.workspace_revision,
+                draft,
+            });
+        }
+        let new_original = read_source(
+            Path::new(&candidate.checkout),
+            &candidate.context,
+            new_source,
+            control,
+        )?;
+        let index = diff_index(Path::new(&candidate.checkout), &candidate.context, control)?;
+        if new_source.revision != Revision::Head {
+            return Err(ContractError::new(
+                "REPLACEMENT_HEAD_ONLY",
+                "Code replacements can target only the pinned head side",
+                "/source/revision",
+            ));
+        }
+        index.validate_anchor(new_source)?;
+        control.check()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let current = workspace_revision(&tx, &candidate.context.pr)?;
+        require_revision(
+            current,
+            expected_candidate_workspace_revision,
+            "WORKSPACE_REVISION_STALE",
+            "Workspace content changed; reload before attaching this replacement",
+        )?;
+        let row: Option<(String, String, i64)> = tx
+            .query_row(
+                "SELECT original_text,replacement,revision FROM code_replacement_drafts WHERE draft_id=?1 AND context_id=?2",
+                params![draft_id, source_binding.context.context_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let Some((_, replacement, revision)) = row else {
+            return Err(draft_not_found());
+        };
+        require_revision(
+            u64::try_from(revision).map_err(|_| state_error())?,
+            expected_source_draft_revision,
+            "DRAFT_REVISION_STALE",
+            "The replacement draft changed; reload it before reattaching",
+        )?;
+        validate_replacement_text(&replacement)?;
+        let published: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM review_published_replacements WHERE context_id=?1 AND draft_id=?2 AND draft_revision=?3)",
+                params![source_binding.context.context_id, draft_id, revision],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if published {
+            return Err(draft_not_found());
+        }
+        let now = unix_millis();
+        let id = new_id();
+        let provenance = provenance_for(candidate_preparation_id, &candidate);
+        tx.execute(
+            "INSERT INTO code_replacement_drafts(draft_id,context_id,host,owner,repository,number,source_json,original_text,replacement,provenance_json,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1,?11,?11)",
+            params![id,candidate.context.context_id,candidate.context.pr.host,candidate.context.pr.owner,candidate.context.pr.repository,i64::try_from(candidate.context.pr.number).map_err(|_|state_error())?,serde_json::to_string(new_source).map_err(json_error)?,new_original,replacement,serde_json::to_string(&provenance).map_err(json_error)?,now],
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            "INSERT INTO draft_anchor_repairs(source_context_id,source_draft_id,source_revision,candidate_context_id,candidate_draft_id,kind,created_at) VALUES(?1,?2,?3,?4,?5,'code_replacement',?6)",
+            params![source_binding.context.context_id,draft_id,revision,candidate.context.context_id,id,now],
+        )
+        .map_err(db_error)?;
+        advance_workspace(&tx, &candidate.context.pr, current)?;
+        tx.commit().map_err(db_error)?;
+        let snapshot = self.list_replacements(candidate_preparation_id)?;
+        let draft = snapshot
+            .drafts
+            .iter()
+            .find(|draft| draft.id == id)
+            .cloned()
+            .ok_or_else(draft_not_found)?;
+        Ok(CodeReplacementSaveResult {
+            workspace_revision: snapshot.workspace_revision,
+            draft,
         })
     }
 
@@ -1297,6 +1881,33 @@ fn root_comment_exists(thread: &serde_json::Value, root_id: &str) -> bool {
         .into_iter()
         .flatten()
         .any(|comment| comment["id"].as_str() == Some(root_id) && comment["replyTo"].is_null())
+}
+
+fn repaired_draft_id(
+    db: &Connection,
+    source_context_id: &str,
+    source_draft_id: &str,
+    source_revision: u64,
+    candidate_context_id: &str,
+) -> Result<Option<String>, ContractError> {
+    let revision = i64::try_from(source_revision).map_err(|_| state_error())?;
+    db.query_row(
+        "SELECT candidate_draft_id FROM draft_anchor_repairs WHERE source_context_id=?1 AND source_draft_id=?2 AND source_revision=?3 AND candidate_context_id=?4",
+        params![source_context_id, source_draft_id, revision, candidate_context_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(db_error)
+}
+
+fn provenance_for(preparation_id: &str, binding: &PreparedBinding) -> DraftProvenance {
+    DraftProvenance {
+        preparation_id: preparation_id.into(),
+        context_id: binding.context.context_id.clone(),
+        base_sha: binding.context.base_sha.clone(),
+        head_sha: binding.context.head_sha.clone(),
+        merge_base_sha: binding.context.merge_base_sha.clone(),
+    }
 }
 
 fn validate_body(body: &str) -> Result<(), ContractError> {

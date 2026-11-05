@@ -1,6 +1,6 @@
 use bodh::{
-    DraftStore, OperationControl, PrIdentity, PreparationStore, ReviewContext, Revision, SourceRef,
-    diff_index,
+    AnchorRepairStatus, DraftStore, OperationControl, PrIdentity, PreparationStore, ReviewContext,
+    Revision, SourceRef, diff_index,
 };
 use std::{
     io::Write,
@@ -30,6 +30,37 @@ fn git(repo: &Path, args: &[&str]) -> String {
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).unwrap().trim().into()
+}
+
+fn prepare_candidate(fixture: &Fixture, source: &str, id: &str) -> String {
+    git(&fixture.repo, &["checkout", "--", "source.rs"]);
+    std::fs::write(fixture.repo.join("source.rs"), source).unwrap();
+    git(&fixture.repo, &["add", "source.rs"]);
+    git(&fixture.repo, &["commit", "-m", "candidate head"]);
+    let head = git(&fixture.repo, &["rev-parse", "HEAD"]);
+    let old = PreparationStore::open(&fixture.state)
+        .unwrap()
+        .load(&fixture.preparation_id)
+        .unwrap();
+    let context = ReviewContext {
+        context_id: id.into(),
+        head_sha: head,
+        ..old.context
+    };
+    let files = diff_index(&fixture.repo, &context, &OperationControl::default())
+        .unwrap()
+        .files;
+    PreparationStore::open(&fixture.state)
+        .unwrap()
+        .save(
+            &context,
+            fixture.repo.to_str().unwrap(),
+            "Newer candidate",
+            None,
+            &files,
+        )
+        .unwrap()
+        .preparation_id
 }
 
 fn invoke_cli(args: &[&str], input: Option<&serde_json::Value>) -> Output {
@@ -188,6 +219,275 @@ fn saved_comment_draft_reopens_with_pinned_provenance_and_revision() {
     assert_eq!(loaded.workspace_revision, 1);
     assert_eq!(loaded.drafts, [saved.draft]);
     assert_eq!(fixture.snapshot(), before);
+}
+
+#[test]
+fn moved_exact_anchor_is_proposed_and_requires_explicit_reattachment() {
+    let fixture = Fixture::new();
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    let old = drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "Please keep this behavior.",
+            &fixture.source,
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let candidate = prepare_candidate(
+        &fixture,
+        "// inserted line\nfn main() {\n    let count = 2;\n}\n",
+        "manual-draft-new-context",
+    );
+    let preview = drafts
+        .preview_anchor_repairs(
+            &fixture.preparation_id,
+            &candidate,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(preview.len(), 1);
+    assert_eq!(preview[0].status, AnchorRepairStatus::RelocationProposed);
+    let proposed = preview[0].proposed_source.clone().unwrap();
+    assert_eq!(proposed.start_line, 3);
+    assert_eq!(proposed.path, fixture.source.path);
+
+    let copied = drafts
+        .reattach_text_comment(
+            &fixture.preparation_id,
+            &candidate,
+            &old.draft.id,
+            old.draft.revision,
+            old.workspace_revision,
+            &proposed,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(copied.draft.body, "Please keep this behavior.");
+    assert_eq!(copied.draft.source, proposed);
+    assert_eq!(
+        drafts.list(&fixture.preparation_id).unwrap().drafts.len(),
+        1
+    );
+    assert_eq!(drafts.list(&candidate).unwrap().drafts.len(), 1);
+    let copied_again = drafts
+        .reattach_text_comment(
+            &fixture.preparation_id,
+            &candidate,
+            &old.draft.id,
+            old.draft.revision,
+            old.workspace_revision,
+            &copied.draft.source,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(copied_again.draft.id, copied.draft.id);
+    let reopened = DraftStore::open(&fixture.state).unwrap();
+    let recovered = reopened
+        .preview_anchor_repairs(
+            &fixture.preparation_id,
+            &candidate,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(recovered[0].status, AnchorRepairStatus::Reattached);
+    assert_eq!(
+        recovered[0].reattached_draft_id.as_deref(),
+        Some(copied.draft.id.as_str())
+    );
+}
+
+#[test]
+fn changed_and_ambiguous_anchor_text_is_never_auto_relocated() {
+    let fixture = Fixture::new();
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "Review this line.",
+            &fixture.source,
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+
+    let changed = prepare_candidate(
+        &fixture,
+        "fn main() {\n    let count = 3;\n}\n",
+        "manual-draft-changed-context",
+    );
+    let changed_preview = drafts
+        .preview_anchor_repairs(
+            &fixture.preparation_id,
+            &changed,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(changed_preview[0].status, AnchorRepairStatus::Changed);
+    assert!(changed_preview[0].proposed_source.is_none());
+
+    let ambiguous_fixture = Fixture::new();
+    let mut ambiguous_drafts = DraftStore::open(&ambiguous_fixture.state).unwrap();
+    ambiguous_drafts
+        .save(
+            &ambiguous_fixture.preparation_id,
+            None,
+            "Review this line.",
+            &ambiguous_fixture.source,
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let ambiguous = prepare_candidate(
+        &ambiguous_fixture,
+        "// inserted\nfn main() {\n    let count = 2;\n    let count = 2;\n}\n",
+        "manual-draft-ambiguous-context",
+    );
+    let ambiguous_preview = ambiguous_drafts
+        .preview_anchor_repairs(
+            &ambiguous_fixture.preparation_id,
+            &ambiguous,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(ambiguous_preview[0].status, AnchorRepairStatus::Ambiguous);
+    assert!(ambiguous_preview[0].proposed_source.is_none());
+}
+
+#[test]
+fn replacement_anchor_repair_captures_new_exact_text_and_preserves_the_original() {
+    let fixture = Fixture::new();
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    let old = drafts
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &fixture.source,
+            "    let count = 2;\n",
+            "    let count = 3;\n",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let candidate = prepare_candidate(
+        &fixture,
+        "// inserted line\nfn main() {\n    let count = 2;\n}\n",
+        "manual-draft-replacement-new-context",
+    );
+    let preview = drafts
+        .preview_anchor_repairs(
+            &fixture.preparation_id,
+            &candidate,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(preview[0].status, AnchorRepairStatus::RelocationProposed);
+    let proposed = preview[0].proposed_source.as_ref().unwrap();
+    let copied = drafts
+        .reattach_code_replacement(
+            &fixture.preparation_id,
+            &candidate,
+            &old.draft.id,
+            old.draft.revision,
+            old.workspace_revision,
+            proposed,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(copied.draft.source, *proposed);
+    assert_eq!(copied.draft.original_text, "    let count = 2;\n");
+    assert_eq!(copied.draft.replacement, "    let count = 3;\n");
+    assert_eq!(
+        drafts
+            .list_replacements(&fixture.preparation_id)
+            .unwrap()
+            .drafts
+            .len(),
+        1
+    );
+    assert_eq!(
+        drafts.list_replacements(&candidate).unwrap().drafts.len(),
+        1
+    );
+}
+
+#[test]
+fn renamed_file_relocation_uses_the_new_path_and_exact_eligible_lines() {
+    let fixture = Fixture::new();
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    let old = drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "Check this renamed source.",
+            &fixture.source,
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    git(&fixture.repo, &["checkout", "--", "source.rs"]);
+    git(&fixture.repo, &["mv", "source.rs", "renamed.rs"]);
+    std::fs::write(
+        fixture.repo.join("renamed.rs"),
+        "// inserted line\nfn main() {\n    let count = 2;\n}\n",
+    )
+    .unwrap();
+    git(&fixture.repo, &["add", "-A"]);
+    git(&fixture.repo, &["commit", "-m", "rename and move source"]);
+    let head = git(&fixture.repo, &["rev-parse", "HEAD"]);
+    let previous = PreparationStore::open(&fixture.state)
+        .unwrap()
+        .load(&fixture.preparation_id)
+        .unwrap();
+    let context = ReviewContext {
+        context_id: "manual-draft-renamed-context".into(),
+        head_sha: head,
+        ..previous.context
+    };
+    let files = diff_index(&fixture.repo, &context, &OperationControl::default())
+        .unwrap()
+        .files;
+    let candidate = PreparationStore::open(&fixture.state)
+        .unwrap()
+        .save(
+            &context,
+            fixture.repo.to_str().unwrap(),
+            "Renamed candidate",
+            None,
+            &files,
+        )
+        .unwrap()
+        .preparation_id;
+    let preview = drafts
+        .preview_anchor_repairs(
+            &fixture.preparation_id,
+            &candidate,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(preview[0].status, AnchorRepairStatus::RelocationProposed);
+    let proposed = preview[0].proposed_source.as_ref().unwrap();
+    assert_eq!(proposed.path, "renamed.rs");
+    assert_eq!(proposed.start_line, 3);
+    let copied = drafts
+        .reattach_text_comment(
+            &fixture.preparation_id,
+            &candidate,
+            &old.draft.id,
+            old.draft.revision,
+            old.workspace_revision,
+            proposed,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(copied.draft.source.path, "renamed.rs");
 }
 
 #[test]

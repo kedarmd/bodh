@@ -27,3 +27,7 @@ cwd='/home/kedarmd/dev/nayati': spawn succeeded; exit=0
 - `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passed. Raw output: [VALIDATE-GH-PREREQUISITE.log](VALIDATE-GH-PREREQUISITE.log).
 
 The preflight verifies the executable and version only. Authentication and per-repository access are checked when the reviewer opens that repository.
+
+## Freshness follow-up — 2026-11-05
+
+The user later reported that opening a PR succeeded but the workspace freshness banner showed `GH_UNAVAILABLE`. The cause was a value mix-up: `GhCliStatus::Available` stored the `gh --version` text, while freshness, load-latest preview and apply-latest treated that value as the executable path. The regression test failed with the version string on the left and the controlled executable path on the right. `Available` now stores an executable `PathBuf` and version separately; focused preflight tests and full desktop validation pass. A release GUI build compiled after this fix. The screenshots reviewed since then covered the Changes workspace, so a direct live check of the freshness action/banner remains outstanding.

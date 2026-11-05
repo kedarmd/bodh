@@ -1,10 +1,11 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
 use bodh::{
-    CodeReplacementSnapshot, DiscussionPlan, DiscussionPublicationStore, DiscussionSelection,
-    DraftSnapshot, DraftStore, GeneratedReviewStore, GhDiscussionPublisher, GhReviewPublisher,
-    OperationControl, PinnedDiff, PreparationManifest, PreparationStore, PreparedBinding,
-    ReviewEvent, ReviewIntent, ReviewOperation, ReviewPublicationStore, Revision, SelectedDraft,
-    SourceRef, StageReviewRequest, inspect_remote_review_with_gh, read_diff,
+    AnchorRepairPreview, AnchorRepairStatus, CodeReplacementSnapshot, DiscussionPlan,
+    DiscussionPublicationStore, DiscussionSelection, DraftSnapshot, DraftStore,
+    GeneratedReviewStore, GhDiscussionPublisher, GhReviewPublisher, OperationControl, PinnedDiff,
+    PreparationManifest, PreparationStore, PreparedBinding, ReviewEvent, ReviewIntent,
+    ReviewOperation, ReviewPublicationStore, Revision, SelectedDraft, SourceRef,
+    StageReviewRequest, inspect_remote_review_with_gh, read_diff,
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::overview::{
@@ -20,6 +21,7 @@ use bodh_sequence_spike::{
 };
 use gpui::{UniformListScrollHandle, prelude::*, uniform_list, *};
 use serde::Deserialize;
+use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -143,6 +145,7 @@ pub struct Product {
     diff_loading: bool,
     diff_error: Option<String>,
     source_ref: Option<SourceRef>,
+    source_display_ref: Option<SourceRef>,
     description_blocks: Vec<MarkdownBlock>,
     draft_snapshot: Option<DraftSnapshot>,
     draft_editor: Option<TextDraftEditor>,
@@ -153,6 +156,8 @@ pub struct Product {
     draft_focus: FocusHandle,
     discussion_state: serde_json::Value,
     discussion_loading: bool,
+    discussion_expanded: bool,
+    discussion_loaded_for: Option<String>,
     reply_thread: Option<String>,
     reply_root: Option<String>,
     reply_draft_id: Option<String>,
@@ -171,6 +176,9 @@ pub struct Product {
     latest_switch_preview: Option<bodh::LatestSwitchPreview>,
     freshness_loading: bool,
     last_freshness_check: Option<std::time::Instant>,
+    anchor_repair_source_id: Option<String>,
+    anchor_repair_previews: Vec<AnchorRepairPreview>,
+    anchor_repair_loading: bool,
     committed_overview: CommittedOverviewView,
     overview_loading: bool,
     overview_epoch: Arc<AtomicU64>,
@@ -229,6 +237,7 @@ impl Product {
             diff_loading: false,
             diff_error: None,
             source_ref: None,
+            source_display_ref: None,
             description_blocks: Vec::new(),
             draft_snapshot: None,
             draft_editor: None,
@@ -239,6 +248,8 @@ impl Product {
             draft_focus: cx.focus_handle(),
             discussion_state: serde_json::json!({"available":false,"threads":[]}),
             discussion_loading: false,
+            discussion_expanded: false,
+            discussion_loaded_for: None,
             reply_thread: None,
             reply_root: None,
             reply_draft_id: None,
@@ -257,6 +268,9 @@ impl Product {
             latest_switch_preview: None,
             freshness_loading: false,
             last_freshness_check: None,
+            anchor_repair_source_id: None,
+            anchor_repair_previews: Vec::new(),
+            anchor_repair_loading: false,
             committed_overview: CommittedOverviewView::default(),
             overview_loading: false,
             overview_epoch: Arc::new(AtomicU64::new(0)),
@@ -315,7 +329,7 @@ impl Product {
                 cx.notify();
                 return;
             }
-            GhCliStatus::Available(_) => {}
+            GhCliStatus::Available { .. } => {}
         }
         let home = home_directory();
         let submitted_path = path.trim().to_owned();
@@ -365,7 +379,7 @@ impl Product {
                     return;
                 }
                 this.gh_cli_status = result.clone();
-                if let GhCliStatus::Available(_) = result
+                if let GhCliStatus::Available { .. } = result
                     && let Some((path, initial_pr)) = this.pending_initial.take()
                 {
                     this.open_repository(path.clone(), cx);
@@ -461,16 +475,7 @@ impl Product {
                     manifest.draft_counts = drafts.counts.clone();
                     let markdown = binding.description.as_deref().unwrap_or_default();
                     let blocks = safe_markdown_blocks(markdown);
-                    let discussions =
-                        bodh::load_latest_discussions(&state, &manifest.preparation_id)?;
-                    Ok::<_, bodh::ContractError>((
-                        manifest,
-                        binding,
-                        blocks,
-                        drafts,
-                        replacements,
-                        discussions,
-                    ))
+                    Ok::<_, bodh::ContractError>((manifest, binding, blocks, drafts, replacements))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -480,17 +485,20 @@ impl Product {
                 this.loading = false;
                 this.active_control = None;
                 match result {
-                    Ok((manifest, binding, blocks, drafts, replacements, discussions)) => {
+                    Ok((manifest, binding, blocks, drafts, replacements)) => {
                         this.remember(&manifest, &binding, cx);
                         this.selected_review = Some(binding);
                         this.refresh_committed_overview(cx);
+                        this.refresh_anchor_repair_previews(cx);
                         this.description_blocks = blocks;
                         this.draft_snapshot = Some(drafts);
                         this.replacement_snapshot = Some(replacements);
                         this.draft_editor = None;
                         this.replacement_editor = None;
                         this.draft_saving = false;
-                        this.discussion_state = discussions;
+                        this.discussion_state = serde_json::json!({"available":false,"threads":[]});
+                        this.discussion_loaded_for = None;
+                        this.discussion_expanded = false;
                         this.reply_thread = None;
                         this.reply_root = None;
                         this.reply_draft_id = None;
@@ -504,6 +512,7 @@ impl Product {
                         this.source_loading = false;
                         this.source_label = None;
                         this.source_ref = None;
+                        this.source_display_ref = None;
                         this.diff_page = None;
                         this.diff_rows.clear();
                         this.diff_loading = false;
@@ -661,14 +670,7 @@ impl Product {
                     let replacements = DraftStore::open(&state)?.list_replacements(&id)?;
                     let blocks =
                         safe_markdown_blocks(binding.description.as_deref().unwrap_or_default());
-                    let discussions = bodh::load_latest_discussions(&state, &id)?;
-                    Ok::<_, bodh::ContractError>((
-                        binding,
-                        blocks,
-                        drafts,
-                        replacements,
-                        discussions,
-                    ))
+                    Ok::<_, bodh::ContractError>((binding, blocks, drafts, replacements))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -677,7 +679,7 @@ impl Product {
                 }
                 this.loading = false;
                 match result {
-                    Ok((binding, blocks, drafts, replacements, discussions)) => {
+                    Ok((binding, blocks, drafts, replacements)) => {
                         this.active_repository = Some(binding.checkout.clone());
                         this.screen = Screen::Workspace;
                         this.description_blocks = blocks;
@@ -686,7 +688,9 @@ impl Product {
                         this.draft_editor = None;
                         this.replacement_editor = None;
                         this.draft_saving = false;
-                        this.discussion_state = discussions;
+                        this.discussion_state = serde_json::json!({"available":false,"threads":[]});
+                        this.discussion_loaded_for = None;
+                        this.discussion_expanded = false;
                         this.reply_thread = None;
                         this.reply_root = None;
                         this.reply_draft_id = None;
@@ -695,6 +699,7 @@ impl Product {
                         this.reply_saving = false;
                         this.selected_review = Some(binding.clone());
                         this.refresh_committed_overview(cx);
+                        this.refresh_anchor_repair_previews(cx);
                         this.update_draft_counts(drafts.counts);
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
                         if let Some(saved) = this
@@ -760,7 +765,14 @@ impl Product {
         self.source_text = None;
         self.source_loading = true;
         self.source_ref = None;
+        self.source_display_ref = None;
         self.source_label = None;
+        self.discussion_state = serde_json::json!({"available":false,"threads":[]});
+        self.discussion_loading = false;
+        self.discussion_loaded_for = None;
+        if self.discussion_expanded {
+            self.load_selected_file_discussions(cx);
+        }
         self.diff_scroll
             .0
             .borrow()
@@ -823,6 +835,7 @@ impl Product {
                 .min(start.saturating_add(79)),
         };
         self.source_ref = Some(source.clone());
+        self.source_display_ref = Some(source.clone());
         self.source_label = Some(source_title(&source));
         let checkout = binding.checkout.clone();
         let context = binding.context.clone();
@@ -897,15 +910,38 @@ impl Product {
             start_line: line.max(1),
             end_line: line.max(1),
         };
+        let previous_discussion_path = self.selected_discussion_path();
+        let reuse_display = self.source_text.is_some()
+            && self.source_display_ref.as_ref().is_some_and(|display| {
+                display.path == source.path
+                    && display.revision == source.revision
+                    && display.start_line <= line
+                    && line <= display.end_line
+            });
         self.cancel_pending();
         self.selected_file = Some(index);
         self.source_revision = revision;
         self.source_ref = Some(source.clone());
         self.source_label = Some(source_title(&source));
-        self.source_text = None;
-        self.source_loading = true;
+        if previous_discussion_path.as_deref() != Some(source.path.as_str()) {
+            self.discussion_state = serde_json::json!({"available":false,"threads":[]});
+            self.discussion_loading = false;
+            self.discussion_loaded_for = None;
+        }
+        if self.discussion_expanded {
+            self.load_selected_file_discussions(cx);
+        }
         self.source_scroll.set_offset(point(px(0.), px(0.)));
         self.persist_navigation();
+        if reuse_display {
+            self.source_loading = false;
+            cx.notify();
+            return;
+        }
+        let display_source = source_context_range(&source, 4);
+        self.source_display_ref = Some(display_source.clone());
+        self.source_text = None;
+        self.source_loading = true;
         let repository = binding.checkout.clone();
         let context = binding.context.clone();
         let control = OperationControl::with_timeout(Duration::from_secs(10));
@@ -915,7 +951,13 @@ impl Product {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    bodh::read_source(Path::new(&repository), &context, &source, &control)
+                    read_source_context(
+                        Path::new(&repository),
+                        &context,
+                        &display_source,
+                        line,
+                        &control,
+                    )
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -927,7 +969,10 @@ impl Product {
                 this.active_control = None;
                 this.source_loading = false;
                 match result {
-                    Ok(text) => this.source_text = Some(text),
+                    Ok((display, text)) => {
+                        this.source_display_ref = Some(display);
+                        this.source_text = Some(text);
+                    }
                     Err(error) => {
                         this.source_label = Some(format!("{}: {}", error.code, error.message));
                     }
@@ -2153,6 +2198,201 @@ impl Product {
         }).detach();
     }
 
+    fn refresh_anchor_repair_previews(&mut self, cx: &mut Context<Self>) {
+        let Some(candidate) = self.selected_review.clone() else {
+            self.anchor_repair_source_id = None;
+            self.anchor_repair_previews.clear();
+            self.anchor_repair_loading = false;
+            return;
+        };
+        let sources = self
+            .prefs
+            .recent
+            .iter()
+            .filter(|review| {
+                review.preparation_id != candidate.preparation_id
+                    && review.owner == candidate.context.pr.owner
+                    && review.repository == candidate.context.pr.repository
+                    && review.number == candidate.context.pr.number
+            })
+            .map(|review| review.preparation_id.clone())
+            .collect::<Vec<_>>();
+        let state = self.preparation_db.clone();
+        let candidate_id = candidate.preparation_id.clone();
+        let candidate_id_for_work = candidate_id.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(45));
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.anchor_repair_loading = true;
+        self.anchor_repair_source_id = None;
+        self.anchor_repair_previews.clear();
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let store = DraftStore::open(Path::new(&state))?;
+                    for source_id in sources {
+                        let Ok(text) = store.list(&source_id) else {
+                            continue;
+                        };
+                        let Ok(replacements) = store.list_replacements(&source_id) else {
+                            continue;
+                        };
+                        if text.drafts.is_empty() && replacements.drafts.is_empty() {
+                            continue;
+                        }
+                        let previews = store.preview_anchor_repairs(
+                            &source_id,
+                            &candidate_id_for_work,
+                            &control,
+                        )?;
+                        if !previews.is_empty() {
+                            return Ok::<_, bodh::ContractError>(Some((source_id, previews)));
+                        }
+                    }
+                    Ok(None)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|binding| binding.preparation_id != candidate_id)
+                {
+                    return;
+                }
+                this.anchor_repair_loading = false;
+                match result {
+                    Ok(Some((source_id, previews))) => {
+                        this.anchor_repair_source_id = Some(source_id);
+                        this.anchor_repair_previews = previews;
+                    }
+                    Ok(None) => {
+                        this.anchor_repair_source_id = None;
+                        this.anchor_repair_previews.clear();
+                    }
+                    Err(error) => {
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn reattach_anchor_draft(
+        &mut self,
+        draft_id: String,
+        new_source: SourceRef,
+        cx: &mut Context<Self>,
+    ) {
+        if self.anchor_repair_loading || self.draft_saving {
+            return;
+        }
+        let (Some(candidate), Some(source_id)) = (
+            self.selected_review.clone(),
+            self.anchor_repair_source_id.clone(),
+        ) else {
+            return;
+        };
+        let Some(preview) = self
+            .anchor_repair_previews
+            .iter()
+            .find(|preview| preview.draft_id == draft_id)
+            .cloned()
+        else {
+            return;
+        };
+        let expected_workspace_revision = self
+            .draft_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.workspace_revision)
+            .or_else(|| {
+                self.replacement_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.workspace_revision)
+            })
+            .unwrap_or(0);
+        let state = self.preparation_db.clone();
+        let candidate_id = candidate.preparation_id.clone();
+        let candidate_id_for_work = candidate_id.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let control = OperationControl::with_timeout(Duration::from_secs(30));
+        self.anchor_repair_loading = true;
+        self.status = Some("Rechecking the pinned source before attaching this draft…".into());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut store = DraftStore::open(Path::new(&state))?;
+                    let message = match preview.kind.as_str() {
+                        "text_comment" => {
+                            store.reattach_text_comment(
+                                &source_id,
+                                &candidate_id_for_work,
+                                &draft_id,
+                                preview.draft_revision,
+                                expected_workspace_revision,
+                                &new_source,
+                                &control,
+                            )?;
+                            "Comment copied to the newer review. The original draft remains on the earlier review.".to_owned()
+                        }
+                        "code_replacement" => {
+                            store.reattach_code_replacement(
+                                &source_id,
+                                &candidate_id_for_work,
+                                &draft_id,
+                                preview.draft_revision,
+                                expected_workspace_revision,
+                                &new_source,
+                                &control,
+                            )?;
+                            "Replacement copied to the newer review. Review its new source text and proposal before publishing.".to_owned()
+                        }
+                        _ => return Err(bodh::ContractError::new("ANCHOR_REPAIR_INVALID", "Unknown draft kind", "")),
+                    };
+                    let text = store.list(&candidate_id_for_work)?;
+                    let replacements = store.list_replacements(&candidate_id_for_work)?;
+                    let previews = store.preview_anchor_repairs(
+                        &source_id,
+                        &candidate_id_for_work,
+                        &control,
+                    )?;
+                    Ok::<_, bodh::ContractError>((message, text, replacements, previews))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|binding| binding.preparation_id != candidate_id)
+                {
+                    return;
+                }
+                this.anchor_repair_loading = false;
+                match result {
+                    Ok((message, text, replacements, previews)) => {
+                        this.update_draft_counts(text.counts.clone());
+                        this.draft_snapshot = Some(text);
+                        this.replacement_snapshot = Some(replacements);
+                        this.anchor_repair_previews = previews;
+                        this.status = Some(message);
+                        this.error = None;
+                    }
+                    Err(error) => {
+                        this.status = None;
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn check_freshness(&mut self, cx: &mut Context<Self>) {
         if self.freshness_loading {
             return;
@@ -2162,7 +2402,7 @@ impl Product {
         };
         let state = self.preparation_db.clone();
         let gh = match &self.gh_cli_status {
-            GhCliStatus::Available(path) => PathBuf::from(path),
+            GhCliStatus::Available { executable, .. } => executable.clone(),
             _ => PathBuf::from("gh"),
         };
         let control = OperationControl::with_timeout(Duration::from_secs(12));
@@ -2207,7 +2447,7 @@ impl Product {
         };
         let state = self.preparation_db.clone();
         let gh = match &self.gh_cli_status {
-            GhCliStatus::Available(path) => PathBuf::from(path),
+            GhCliStatus::Available { executable, .. } => executable.clone(),
             _ => PathBuf::from("gh"),
         };
         let control = OperationControl::with_timeout(Duration::from_secs(90));
@@ -2274,7 +2514,7 @@ impl Product {
         };
         let state = self.preparation_db.clone();
         let gh = match &self.gh_cli_status {
-            GhCliStatus::Available(path) => PathBuf::from(path),
+            GhCliStatus::Available { executable, .. } => executable.clone(),
             _ => PathBuf::from("gh"),
         };
         let current_id = binding.preparation_id.clone();
@@ -2291,22 +2531,25 @@ impl Product {
                 let switched = bodh::apply_latest_switch_approval(&state, &approval.approval_id)?;
                 let drafts = DraftStore::open(&state)?.list(&switched.preparation_id)?;
                 let replacements = DraftStore::open(&state)?.list_replacements(&switched.preparation_id)?;
-                let discussions = bodh::load_latest_discussions(&state, &switched.preparation_id)?;
                 let freshness = bodh::refresh_freshness_with_gh(&switched, &state, &control, &gh)?;
-                Ok::<_, bodh::ContractError>((switched, drafts, replacements, discussions, freshness))
+                Ok::<_, bodh::ContractError>((switched, drafts, replacements, freshness))
             }).await;
             let _ = weak.update(cx, |this, cx| {
                 if this.operation_epoch.load(Ordering::Relaxed) != token { return; }
                 this.freshness_loading = false;
                 match result {
-                    Ok((binding, drafts, replacements, discussions, freshness)) => {
+                    Ok((binding, drafts, replacements, freshness)) => {
                         let id = binding.preparation_id.clone();
                         this.active_repository = Some(binding.checkout.clone());
                         this.description_blocks = safe_markdown_blocks(binding.description.as_deref().unwrap_or_default());
                         this.draft_snapshot = Some(drafts.clone()); this.update_draft_counts(drafts.counts);
-                        this.replacement_snapshot = Some(replacements); this.discussion_state = discussions;
+                        this.replacement_snapshot = Some(replacements);
+                        this.discussion_state = serde_json::json!({"available":false,"threads":[]});
+                        this.discussion_loaded_for = None;
+                        this.discussion_expanded = false;
                         this.selected_review = Some(binding.clone()); this.remember(&PreparationManifest::from(binding.clone()), &binding, cx);
                         this.refresh_committed_overview(cx);
+                        this.refresh_anchor_repair_previews(cx);
                         this.freshness_observation = Some(freshness); this.latest_switch_preview = None;
                         this.draft_editor = None; this.replacement_editor = None; this.reply_body.clear();
                         this.status = Some(format!("Loaded latest PR preparation {}. Previous review work remains on the earlier preparation.", id));
@@ -2596,7 +2839,7 @@ impl Product {
                 "Bodh checks for the GitHub CLI before opening a repository.",
                 false,
             ),
-            GhCliStatus::Available(version) => ("GitHub CLI ready", version.as_str(), false),
+            GhCliStatus::Available { version, .. } => ("GitHub CLI ready", version.as_str(), false),
             GhCliStatus::Missing => (
                 "GitHub CLI required",
                 "Install GitHub CLI from https://cli.github.com/ and restart Bodh.",
@@ -3075,7 +3318,7 @@ impl Product {
             p,
         ));
         if replies.is_empty() {
-            page=page.child(empty_card("No reply drafts saved","Replies are attached to the exact top-level review comment selected in Discussions.",p));
+            page=page.child(empty_card("No reply drafts saved","Replies are attached to the exact top-level review comment selected with its inline thread.",p));
         }
         for draft in replies {
             let id = draft.id.clone();
@@ -3535,7 +3778,6 @@ impl Product {
         for tab in [
             WorkspaceTab::Overview,
             WorkspaceTab::Changes,
-            WorkspaceTab::Discussions,
             WorkspaceTab::Findings,
         ] {
             let active = self.active_tab == tab;
@@ -3560,7 +3802,6 @@ impl Product {
             WorkspaceTab::Changes => self
                 .render_changes(&binding, p, cx, viewport_width, viewport_height)
                 .into_any_element(),
-            WorkspaceTab::Discussions => self.render_discussions(p, cx).into_any_element(),
             WorkspaceTab::Findings => self.render_findings(&binding, p, cx).into_any_element(),
         };
         page.child(panel)
@@ -4026,30 +4267,128 @@ impl Product {
         body
     }
 
-    fn render_discussions(&mut self, p: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn selected_discussion_path(&self) -> Option<String> {
+        if let Some(source) = &self.source_ref {
+            return Some(source.path.clone());
+        }
+        let binding = self.selected_review.as_ref()?;
+        let file = binding.changed_files.get(self.selected_file?)?;
+        file.new_path
+            .as_deref()
+            .or(file.old_path.as_deref())
+            .map(str::to_owned)
+    }
+
+    fn load_selected_file_discussions(&mut self, cx: &mut Context<Self>) {
+        if self.discussion_loading {
+            return;
+        }
+        let (Some(binding), Some(path)) = (
+            self.selected_review.clone(),
+            self.selected_discussion_path(),
+        ) else {
+            return;
+        };
+        if self.discussion_loaded_for.as_deref() == Some(path.as_str()) {
+            return;
+        }
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let path_for_ui = path.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.discussion_loading = true;
+        self.discussion_state = serde_json::json!({"available":false,"threads":[]});
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    bodh::load_latest_discussions(&state, &preparation_id)
+                        .map(|observation| discussion_observation_for_path(observation, &path))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.discussion_loading = false;
+                if !this.discussion_expanded
+                    || this.selected_discussion_path().as_deref() != Some(path_for_ui.as_str())
+                {
+                    this.discussion_state = serde_json::json!({"available":false,"threads":[]});
+                    this.discussion_loaded_for = None;
+                    if this.discussion_expanded {
+                        this.load_selected_file_discussions(cx);
+                    }
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(observation) => {
+                        this.discussion_state = observation;
+                        this.discussion_loaded_for = Some(path_for_ui);
+                    }
+                    Err(error) => {
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn render_inline_discussions(
+        &mut self,
+        selected_path: &str,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let mut view = div()
-            .id("discussion-list")
+            .id("inline-discussions")
             .flex()
             .flex_col()
-            .gap_3()
-            .p_4()
-            .overflow_scroll();
+            .gap_2()
+            .mt_4()
+            .pt_3()
+            .border_t_1()
+            .border_color(rgb(p.border));
+        let mut heading = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(section_title(
+                &format!("Review discussion · {selected_path}"),
+                p,
+            ));
+        let expanded = self.discussion_expanded;
+        heading = heading.child(button(
+            "toggle-inline-discussions",
+            if expanded { "Collapse" } else { "Show" },
+            p,
+            |this, _, _, cx| {
+                this.discussion_expanded = !this.discussion_expanded;
+                this.discussion_state = serde_json::json!({"available":false,"threads":[]});
+                this.discussion_loaded_for = None;
+                if this.discussion_expanded {
+                    this.load_selected_file_discussions(cx);
+                }
+                cx.notify();
+            },
+            cx,
+        ));
+        view = view.child(heading);
+        if !self.discussion_expanded {
+            return view;
+        }
         let summary = format!(
-            "{} of {} threads loaded · {}",
-            self.discussion_state["fetched_thread_count"]
-                .as_u64()
-                .unwrap_or(0),
-            self.discussion_state["expected_thread_count"]
-                .as_u64()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "unknown".into()),
+            "Read-only observation · {}",
             if self.discussion_state["complete"] == true {
-                "complete observation"
+                "complete"
             } else {
                 "partial or not refreshed"
             }
         );
-        view = view.child(section_title("Discussions", p)).child(
+        view = view.child(
             div()
                 .text_size(px(12.))
                 .text_color(rgb(p.muted))
@@ -4060,24 +4399,34 @@ impl Product {
             if self.discussion_loading {
                 "Loading discussions…"
             } else {
-                "Refresh read-only GitHub observation"
+                if self.discussion_state["available"] == true {
+                    "Refresh discussion"
+                } else {
+                    "Load discussion for this file"
+                }
             },
             p,
             |this, _, _, cx| this.refresh_discussions(cx),
             cx,
         ));
         if self.discussion_state["available"] != true {
-            view=view.child(empty_card("No discussion observation","This review has no saved GitHub thread observation yet. Discussion loading is available in the shared acquisition service.",p));
+            view=view.child(empty_card("Discussion not loaded","Load the read-only GitHub discussion observation to show comments beside this source.",p));
             return view;
         }
         let threads = self.discussion_state["threads"]
             .as_array()
             .cloned()
             .unwrap_or_default();
+        view = view.child(
+            div()
+                .text_size(px(11.))
+                .text_color(rgb(p.muted))
+                .child(format!("{} thread(s) on this file", threads.len())),
+        );
         if threads.is_empty() {
             return view.child(empty_card(
-                "No discussion threads",
-                "No review threads were present in the saved observation.",
+                "No discussion on this source",
+                "Review threads for the selected source appear here beside its pinned code.",
                 p,
             ));
         }
@@ -4315,17 +4664,60 @@ impl Product {
     }
 
     fn refresh_discussions(&mut self, cx: &mut Context<Self>) {
-        if self.discussion_loading {
+        if self.discussion_loading || !self.discussion_expanded {
             return;
         }
-        let Some(binding) = self.selected_review.clone() else {
+        let (Some(binding), Some(path)) = (
+            self.selected_review.clone(),
+            self.selected_discussion_path(),
+        ) else {
             return;
         };
         let state = self.preparation_db.clone();
         let control = OperationControl::with_timeout(Duration::from_secs(90));
         let epoch = self.operation_epoch.load(Ordering::Relaxed);
+        let path_for_ui = path.clone();
         self.discussion_loading = true;
-        cx.spawn(async move|weak,cx|{let result=cx.background_executor().spawn(async move{bodh::acquire_discussions(&binding,&state,&control)?;bodh::load_latest_discussions(&state,&binding.preparation_id)}).await;let _=weak.update(cx,|this,cx|{if this.operation_epoch.load(Ordering::Relaxed)!=epoch{return}this.discussion_loading=false;match result{Ok(discussions)=>{this.discussion_state=discussions;this.status=Some("Read-only discussion observation refreshed. No remote changes were made.".into());},Err(error)=>this.error=Some(format!("{}: {}",error.code,error.message))}cx.notify();});}).detach();
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    bodh::acquire_discussions(&binding, &state, &control)?;
+                    bodh::load_latest_discussions(&state, &binding.preparation_id)
+                        .map(|observation| discussion_observation_for_path(observation, &path))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != epoch {
+                    return;
+                }
+                this.discussion_loading = false;
+                if !this.discussion_expanded
+                    || this.selected_discussion_path().as_deref() != Some(path_for_ui.as_str())
+                {
+                    this.discussion_state = serde_json::json!({"available":false,"threads":[]});
+                    this.discussion_loaded_for = None;
+                    if this.discussion_expanded {
+                        this.load_selected_file_discussions(cx);
+                    }
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(discussions) => {
+                        this.discussion_state = discussions;
+                        this.discussion_loaded_for = Some(path_for_ui);
+                        this.status = Some(
+                            "Read-only discussion observation refreshed. No remote changes were made."
+                                .into(),
+                        );
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn save_reply_draft(&mut self, cx: &mut Context<Self>) {
@@ -4496,8 +4888,10 @@ impl Product {
             .prefs
             .inspector_width
             .clamp(300., (viewport_width - 520.).max(300.));
+        let narrow_workspace = viewport_width < 800.;
         let file_width = 220.;
-        let pane_height = (viewport_height - 190.).max(360.);
+        let pane_height =
+            (viewport_height - 190. - if narrow_workspace { 28. } else { 0. }).max(360.);
         let filtered = binding
             .changed_files
             .iter()
@@ -4642,7 +5036,7 @@ impl Product {
         let mut diff = div()
             .id("review-diff")
             .flex_1()
-            .min_w_0()
+            .min_w(px(240.))
             .h_full()
             .bg(rgb(p.panel))
             .border_1()
@@ -4659,7 +5053,10 @@ impl Product {
             })
             .unwrap_or("");
         let mut diff_toolbar = div()
+            .w_full()
+            .min_w_0()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap_2()
             .p_2()
@@ -4668,6 +5065,8 @@ impl Product {
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
                     .text_size(px(12.))
                     .child(selected_path.to_owned()),
             );
@@ -4781,9 +5180,6 @@ impl Product {
 
         let mut source = div()
             .id("pinned-source")
-            .track_scroll(&self.source_scroll)
-            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
-            .overflow_scroll()
             .w(px(source_width))
             .flex_shrink_0()
             .min_w_0()
@@ -4798,7 +5194,10 @@ impl Product {
         let has_base = file.is_some_and(|f| f.old_path.is_some());
         let has_head = file.is_some_and(|f| f.new_path.is_some());
         let mut source_toolbar = div()
+            .w_full()
+            .min_w_0()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap_2()
             .child(section_title("Pinned source", p));
@@ -4855,8 +5254,18 @@ impl Product {
             }
         }
         source = source.child(source_toolbar);
+        let mut source_content = div()
+            .id("pinned-source-content")
+            .track_scroll(&self.source_scroll)
+            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+            .overflow_scroll()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col();
         if let Some(label) = self.source_label.clone() {
-            source = source.child(
+            source_content = source_content.child(
                 div()
                     .mt_2()
                     .text_size(px(11.))
@@ -4864,7 +5273,7 @@ impl Product {
                     .child(label),
             );
         } else {
-            source = source.child(
+            source_content = source_content.child(
                 div()
                     .mt_2()
                     .text_size(px(11.))
@@ -4873,28 +5282,41 @@ impl Product {
             );
         }
         if self.source_loading {
-            source = source.child(
+            source_content = source_content.child(
                 div()
                     .mt_3()
                     .text_color(rgb(p.muted))
                     .child("Loading source from the pinned commit…"),
             );
         } else if let (Some(text), Some(source_ref)) = (&self.source_text, &self.source_ref) {
-            let extension = path_extension(&source_ref.path);
+            let display_ref = self.source_display_ref.as_ref().unwrap_or(source_ref);
+            let extension = path_extension(&display_ref.path);
             let mut source_rows = div().mt_3().flex().flex_col().gap_0();
             for (offset, line) in text.lines().enumerate() {
-                let number = source_ref.start_line.saturating_add(offset as u32);
-                source_rows = source_rows.child(render_source_row(number, line, extension, p));
+                let number = display_ref.start_line.saturating_add(offset as u32);
+                let selected = (source_ref.start_line..=source_ref.end_line).contains(&number);
+                source_rows =
+                    source_rows.child(render_source_row(number, line, extension, p, selected));
             }
-            source = source.child(source_rows);
+            source_content = source_content.child(source_rows);
         }
-        source = source.child(self.render_draft_panel(p, cx));
-        div()
+        source_content = source_content.child(self.render_anchor_repair_panel(p, cx));
+        let discussion_path = self
+            .source_ref
+            .as_ref()
+            .map(|source| source.path.clone())
+            .unwrap_or_else(|| selected_path.to_owned());
+        source_content =
+            source_content.child(self.render_inline_discussions(&discussion_path, p, cx));
+        source_content = source_content.child(self.render_draft_panel(p, cx));
+        source = source.child(source_content);
+        let panes = div()
             .id("changes-panes")
             .flex()
             .gap_2()
             .h(px(pane_height))
             .min_h(px(360.))
+            .overflow_scroll()
             .child(file_list)
             .child(diff)
             .child(
@@ -4910,7 +5332,162 @@ impl Product {
                         cx.listener(|this, _, _, _| this.dragging_pane = true),
                     ),
             )
-            .child(source)
+            .child(source);
+        let mut workspace = div().w_full().min_w_0().flex().flex_col().gap_1();
+        if narrow_workspace {
+            workspace = workspace.child(
+                div()
+                    .px_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child("Narrow window: scroll horizontally to view each review pane."),
+            );
+        }
+        workspace.child(panes)
+    }
+
+    fn render_anchor_repair_panel(&mut self, p: Palette, cx: &mut Context<Self>) -> Stateful<Div> {
+        if self.anchor_repair_previews.is_empty() && !self.anchor_repair_loading {
+            return div().id("anchor-repair-panel-empty");
+        }
+        let mut panel = div()
+            .id("anchor-repair-panel")
+            .mt_3()
+            .p_3()
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.raised))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(section_title("Drafts from an earlier PR revision", p));
+        if self.anchor_repair_loading && self.anchor_repair_previews.is_empty() {
+            return panel.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child("Checking older local drafts against this pinned diff…"),
+            );
+        }
+        panel = panel.child(
+            div()
+                .text_size(px(11.))
+                .text_color(rgb(p.muted))
+                .child("A relocation is only a proposal. Confirm it after checking the exact text and both locations; the original draft stays on its earlier review."),
+        );
+        let selected_source = self.source_ref.clone();
+        for preview in self.anchor_repair_previews.clone() {
+            let old_location = anchor_label(&preview.source);
+            let status = match preview.status {
+                AnchorRepairStatus::Current => "Current anchor remains valid",
+                AnchorRepairStatus::RelocationProposed => "One exact relocation proposed",
+                AnchorRepairStatus::Reattached => "Already copied to this review",
+                AnchorRepairStatus::Changed => "Source changed or is no longer eligible",
+                AnchorRepairStatus::Removed => "Source was removed",
+                AnchorRepairStatus::Unsupported => "Source content is unsupported",
+                AnchorRepairStatus::Ambiguous => "Several exact locations match",
+            };
+            let mut card = div()
+                .p_2()
+                .border_1()
+                .border_color(rgb(p.border))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.text))
+                        .child(format!("{} · {}", preview.kind, status)),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(rgb(p.muted))
+                        .child(format!("Earlier · {old_location}")),
+                );
+            if let Some(proposed) = preview.proposed_source.as_ref() {
+                card = card.child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(rgb(p.accent))
+                        .child(format!("Proposed · {}", anchor_label(proposed))),
+                );
+            }
+            if let Some(text) = preview.exact_text.as_deref() {
+                let snippet = text.chars().take(240).collect::<String>();
+                card = card.child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(rgb(p.muted))
+                        .font_family("DejaVu Sans Mono")
+                        .child(if text.chars().count() > 240 {
+                            format!("Exact text · {snippet}…")
+                        } else {
+                            format!("Exact text · {snippet}")
+                        }),
+                );
+            }
+            card = card.child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(rgb(p.muted))
+                    .child(preview.explanation.clone()),
+            );
+            if preview.status == AnchorRepairStatus::Reattached {
+                if let Some(id) = preview.reattached_draft_id.as_deref() {
+                    card = card.child(
+                        div()
+                            .text_size(px(10.))
+                            .text_color(rgb(p.accent))
+                            .child(format!("Attached draft · {id}")),
+                    );
+                }
+            } else if preview.status == AnchorRepairStatus::RelocationProposed {
+                if let Some(proposed) = preview.proposed_source.clone() {
+                    let id = preview.draft_id.clone();
+                    card = card.child(button(
+                        &format!("confirm-anchor-repair-{id}"),
+                        "Confirm proposed relocation",
+                        p,
+                        move |this, _, _, cx| {
+                            this.reattach_anchor_draft(id.clone(), proposed.clone(), cx)
+                        },
+                        cx,
+                    ));
+                }
+            } else if matches!(
+                preview.status,
+                AnchorRepairStatus::Changed
+                    | AnchorRepairStatus::Removed
+                    | AnchorRepairStatus::Unsupported
+                    | AnchorRepairStatus::Ambiguous
+            ) {
+                if let Some(source) = selected_source.clone()
+                    && (preview.kind != "code_replacement" || source.revision == Revision::Head)
+                {
+                    let id = preview.draft_id.clone();
+                    card = card.child(button(
+                        &format!("reattach-anchor-here-{id}"),
+                        "Attach to selected diff line",
+                        p,
+                        move |this, _, _, cx| {
+                            this.reattach_anchor_draft(id.clone(), source.clone(), cx)
+                        },
+                        cx,
+                    ));
+                } else {
+                    card = card.child(
+                        div()
+                            .text_size(px(10.))
+                            .text_color(rgb(p.muted))
+                            .child("Select a new eligible diff line to attach this draft."),
+                    );
+                }
+            }
+            panel = panel.child(card);
+        }
+        panel
     }
 
     fn render_draft_panel(&mut self, p: Palette, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -5263,6 +5840,10 @@ fn source_title(source: &SourceRef) -> String {
     }
 }
 
+fn anchor_label(source: &SourceRef) -> String {
+    source_title(source)
+}
+
 fn pending_draft_count(counts: &bodh::DraftCounts) -> u32 {
     counts
         .inline_comments
@@ -5577,14 +6158,59 @@ fn render_split_cell(
     element
 }
 
-fn render_source_row(line_number: u32, text: &str, language: &str, p: Palette) -> Stateful<Div> {
+fn discussion_observation_for_path(mut observation: Value, path: &str) -> Value {
+    if let Some(threads) = observation.get_mut("threads").and_then(Value::as_array_mut) {
+        threads.retain(|thread| thread["path"].as_str() == Some(path));
+    }
+    observation
+}
+
+fn source_context_range(anchor: &SourceRef, context_lines: u32) -> SourceRef {
+    SourceRef {
+        path: anchor.path.clone(),
+        revision: anchor.revision,
+        start_line: anchor.start_line.saturating_sub(context_lines).max(1),
+        end_line: anchor.end_line.saturating_add(context_lines),
+    }
+}
+
+fn read_source_context(
+    checkout: &Path,
+    context: &bodh::ReviewContext,
+    display: &SourceRef,
+    selected_line: u32,
+    control: &OperationControl,
+) -> Result<(SourceRef, String), bodh::ContractError> {
+    let mut range = display.clone();
+    loop {
+        match bodh::read_source(checkout, context, &range, control) {
+            Ok(text) => return Ok((range, text)),
+            Err(error)
+                if error.code == "SOURCE_RANGE_INVALID" && range.end_line > selected_line =>
+            {
+                range.end_line -= 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn render_source_row(
+    line_number: u32,
+    text: &str,
+    language: &str,
+    p: Palette,
+    selected: bool,
+) -> Stateful<Div> {
     div()
         .id(("source-line", line_number))
-        .h(px(22.))
+        .w_full()
+        .min_w_0()
+        .min_h(px(22.))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .whitespace_nowrap()
+        .bg(rgb(if selected { p.raised } else { p.panel }))
         .font_family("DejaVu Sans Mono")
         .text_size(px(11.))
         .child(
@@ -5596,7 +6222,7 @@ fn render_source_row(line_number: u32, text: &str, language: &str, p: Palette) -
                 .text_color(rgb(p.muted))
                 .child(line_number.to_string()),
         )
-        .child(code_text(text, language, p))
+        .child(div().flex_1().min_w_0().child(code_text(text, language, p)))
 }
 
 fn button(
