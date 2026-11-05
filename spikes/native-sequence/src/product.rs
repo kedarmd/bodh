@@ -11,8 +11,9 @@ use bodh::{
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::overview::{
-    CommittedOverviewStatus, CommittedOverviewView, apply_committed_overview_load,
-    committed_matches_context, evidence_file_index, follow_up_concerns, is_significant_assessment,
+    CommittedOverviewStatus, CommittedOverviewView, FollowUpProminence,
+    apply_committed_overview_load, committed_matches_context, evidence_file_index,
+    follow_up_concerns, is_significant_assessment,
 };
 use bodh_sequence_spike::preferences::{
     NavigationPreferences as Preferences, RecentReview, WorkspaceTab,
@@ -87,6 +88,10 @@ struct Palette {
     text: u32,
     muted: u32,
     accent: u32,
+    selection: u32,
+    danger: u32,
+    caution: u32,
+    success: u32,
 }
 impl Palette {
     fn new(dark: bool) -> Self {
@@ -99,6 +104,10 @@ impl Palette {
                 text: TEXT_DARK,
                 muted: MUTED_DARK,
                 accent: ACCENT_DARK,
+                selection: 0x303a4a,
+                danger: 0xf0a5a5,
+                caution: 0xedc680,
+                success: 0x9fceb4,
             }
         } else {
             Self {
@@ -109,6 +118,10 @@ impl Palette {
                 text: TEXT_LIGHT,
                 muted: MUTED_LIGHT,
                 accent: ACCENT_LIGHT,
+                selection: 0xe7edf7,
+                danger: 0xa33c49,
+                caution: 0x77530f,
+                success: 0x266244,
             }
         }
     }
@@ -218,7 +231,16 @@ pub struct Product {
     diagram_diff_control: Option<OperationControl>,
     diagram_source_control: Option<OperationControl>,
     selected_finding_id: Option<String>,
+    finding_source: Option<SourceRef>,
+    finding_source_display: Option<SourceRef>,
+    finding_source_text: Option<String>,
+    finding_source_loading: bool,
+    finding_source_error: Option<String>,
+    finding_source_scroll: ScrollHandle,
+    finding_source_epoch: Arc<AtomicU64>,
+    finding_source_control: Option<OperationControl>,
     prior_source_preview: Option<PriorSourcePreview>,
+    finding_prior_source: Option<bodh::PriorConcernEvidence>,
     prior_source_epoch: Arc<AtomicU64>,
     expanded_follow_up: std::collections::HashSet<String>,
 }
@@ -338,7 +360,16 @@ impl Product {
             diagram_diff_control: None,
             diagram_source_control: None,
             selected_finding_id: None,
+            finding_source: None,
+            finding_source_display: None,
+            finding_source_text: None,
+            finding_source_loading: false,
+            finding_source_error: None,
+            finding_source_scroll: ScrollHandle::new(),
+            finding_source_epoch: Arc::new(AtomicU64::new(0)),
+            finding_source_control: None,
             prior_source_preview: None,
+            finding_prior_source: None,
             prior_source_epoch: Arc::new(AtomicU64::new(0)),
             expanded_follow_up: std::collections::HashSet::new(),
         };
@@ -760,6 +791,24 @@ impl Product {
                     this.diagram_source_error = None;
                     this.selected_finding_id = None;
                 }
+                let initial_finding = if this.active_tab == WorkspaceTab::Findings
+                    && this.selected_finding_id.is_none()
+                {
+                    this.committed_overview
+                        .committed
+                        .as_ref()
+                        .and_then(|review| {
+                            bodh::prioritized_finding_indices(&review.result.findings)
+                                .first()
+                                .and_then(|index| review.result.findings.get(*index))
+                                .map(|finding| finding.id.clone())
+                        })
+                } else {
+                    None
+                };
+                if let Some(id) = initial_finding {
+                    this.select_finding(id, cx);
+                }
                 this.rebuild_diagram_views();
                 this.ensure_initial_diagram_selection(cx);
                 this.refresh_diagram_change_lines(cx);
@@ -1068,6 +1117,40 @@ impl Product {
         self.persist();
         self.refresh_committed_overview(cx);
         cx.notify();
+    }
+
+    fn select_finding(&mut self, id: String, cx: &mut Context<Self>) {
+        self.selected_finding_id = Some(id.clone());
+        self.prior_source_preview = None;
+        self.finding_prior_source = None;
+        let source = self
+            .committed_overview
+            .committed
+            .as_ref()
+            .and_then(|review| {
+                review
+                    .result
+                    .findings
+                    .iter()
+                    .find(|finding| finding.id == id)
+            })
+            .and_then(|finding| {
+                finding
+                    .evidence
+                    .first()
+                    .map(|evidence| evidence.source.clone())
+                    .or_else(|| {
+                        finding
+                            .locations
+                            .first()
+                            .map(|location| location.source.clone())
+                    })
+            });
+        if let Some(source) = source {
+            self.select_finding_source(source, cx);
+        } else {
+            cx.notify();
+        }
     }
 
     fn select_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
@@ -4270,7 +4353,10 @@ impl Product {
             .flex()
             .flex_col()
             .gap_4();
-        page = if self.active_tab == WorkspaceTab::Changes {
+        page = if matches!(
+            self.active_tab,
+            WorkspaceTab::Changes | WorkspaceTab::Findings
+        ) {
             page.overflow_hidden()
         } else {
             page.overflow_scroll()
@@ -4402,7 +4488,9 @@ impl Product {
             WorkspaceTab::Changes => self
                 .render_changes(&binding, p, cx, viewport_width)
                 .into_any_element(),
-            WorkspaceTab::Findings => self.render_findings(&binding, p, cx).into_any_element(),
+            WorkspaceTab::Findings => self
+                .render_findings(&binding, p, cx, viewport_width)
+                .into_any_element(),
         };
         page.child(panel)
     }
@@ -5010,6 +5098,65 @@ impl Product {
         )
     }
 
+    fn select_finding_source(&mut self, source: SourceRef, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if let Some(control) = self.finding_source_control.take() {
+            control.cancel();
+        }
+        let token = self.finding_source_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.finding_source_epoch.clone();
+        let checkout = binding.checkout.clone();
+        let context = binding.context.clone();
+        let display = source_context_range(&source, 4);
+        let control = OperationControl::with_timeout(Duration::from_secs(10));
+        self.finding_source_control = Some(control.clone());
+        self.finding_source = Some(source.clone());
+        self.finding_source_display = Some(display.clone());
+        self.finding_source_text = None;
+        self.finding_source_error = None;
+        self.finding_source_loading = true;
+        self.finding_prior_source = None;
+        self.prior_source_epoch.fetch_add(1, Ordering::Relaxed);
+        self.prior_source_preview = None;
+        self.finding_source_scroll.set_offset(point(px(0.), px(0.)));
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    read_source_context(
+                        Path::new(&checkout),
+                        &context,
+                        &display,
+                        source.start_line,
+                        &control,
+                    )
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.finding_source_loading = false;
+                this.finding_source_control = None;
+                match result {
+                    Ok((display, text)) => {
+                        this.finding_source_display = Some(display);
+                        this.finding_source_text = Some(text);
+                    }
+                    Err(error) => {
+                        this.finding_source_error =
+                            Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn load_prior_source(&mut self, source: bodh::PriorConcernEvidence, cx: &mut Context<Self>) {
         let key = format!(
             "{}:{}:{}-{}",
@@ -5024,6 +5171,7 @@ impl Product {
             .is_some_and(|preview| preview.key == key && preview.text.is_some())
         {
             self.prior_source_preview = None;
+            self.finding_prior_source = None;
             cx.notify();
             return;
         }
@@ -5038,6 +5186,15 @@ impl Product {
             text: None,
             error: None,
         });
+        self.finding_prior_source = Some(source.clone());
+        if let Some(control) = self.finding_source_control.take() {
+            control.cancel();
+        }
+        self.finding_source_epoch.fetch_add(1, Ordering::Relaxed);
+        self.finding_source_loading = false;
+        self.finding_source_text = None;
+        self.finding_source = None;
+        self.finding_source = None;
         cx.spawn(async move |weak, cx| {
             let result = cx
                 .background_executor()
@@ -5085,527 +5242,14 @@ impl Product {
         binding: &PreparedBinding,
         p: Palette,
         cx: &mut Context<Self>,
+        viewport_width: f32,
     ) -> impl IntoElement {
-        let mut body = div()
-            .id("generated-findings")
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .flex_1()
-            .min_h_0()
-            .overflow_scroll();
         let current = self
             .committed_overview
             .committed
             .as_ref()
             .filter(|review| committed_matches_context(review, &binding.context));
-        if self.overview_loading && current.is_none() {
-            body = body.child(empty_card(
-                "Loading committed findings",
-                "Reading the last complete result for this pinned preparation.",
-                p,
-            ));
-        }
-        if let Some(review) = current {
-            if let Some(concerns) = follow_up_concerns(review)
-                && !concerns.is_empty()
-            {
-                body = body.child(section_title("Follow-up concerns", p));
-                body = body.child(empty_card(
-                        "Assessment meaning",
-                        "Follow-up statuses are evidence-backed analysis. Local dismissal and GitHub thread resolution do not prove that the code concern was fixed.",
-                        p,
-                    ));
-                for (concern_index, row) in concerns.into_iter().enumerate() {
-                    let concern = row.concern;
-                    let assessment = row.assessment;
-                    let status = row.prominence.label();
-                    let prominent = row.prominence.is_prominent();
-                    let expanded = prominent || self.expanded_follow_up.contains(&concern.id);
-                    let mut card = div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .p_3()
-                        .border_1()
-                        .border_color(rgb(if prominent { p.accent } else { p.border }))
-                        .bg(rgb(if prominent { p.raised } else { p.panel }))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(div().font_weight(FontWeight::BOLD).child(status))
-                                .child(concern.title.clone()),
-                        )
-                        .child(concern.summary.clone());
-                    if !prominent {
-                        let concern_id = concern.id.clone();
-                        let expanded_label = if expanded {
-                            "Hide evidence"
-                        } else {
-                            "Show evidence"
-                        };
-                        card = card.child(button(
-                            &format!("follow-up-toggle-{concern_index}"),
-                            expanded_label,
-                            p,
-                            move |this, _, _, cx| {
-                                if !this.expanded_follow_up.remove(&concern_id) {
-                                    this.expanded_follow_up.insert(concern_id.clone());
-                                }
-                                cx.notify();
-                            },
-                            cx,
-                        ));
-                    }
-                    if let Some(assessment) = assessment {
-                        card = card.child(assessment.explanation.clone());
-                        if let Some(finding_id) = &assessment.finding_id
-                            && let Some(finding) = row.current_finding
-                        {
-                            card = card.child(format!(
-                                "Current finding · {} · {}",
-                                finding.title, finding_id
-                            ));
-                            if let Some(location) = finding.locations.first() {
-                                let source = location.source.clone();
-                                card = card.child(button(
-                                    &format!("follow-up-current-source-{concern_index}"),
-                                    "Open current evidence in Changes",
-                                    p,
-                                    move |this, _, _, cx| {
-                                        this.open_overview_evidence(source.clone(), cx)
-                                    },
-                                    cx,
-                                ));
-                            }
-                        }
-                        for (evidence_index, evidence) in
-                            assessment.evidence.iter().enumerate().filter(|_| expanded)
-                        {
-                            card = card.child(div().text_color(rgb(p.muted)).child(format!(
-                                "Current evidence · {} · {}:{}–{} · {}",
-                                match evidence.source.revision {
-                                    Revision::Base => "Base",
-                                    Revision::Head => "Head",
-                                },
-                                evidence.source.path,
-                                evidence.source.start_line,
-                                evidence.source.end_line,
-                                evidence.explanation
-                            )));
-                            let source = evidence.source.clone();
-                            card = card.child(button(
-                                &format!("follow-up-evidence-{concern_index}-{evidence_index}"),
-                                "Open current source in Changes",
-                                p,
-                                move |this, _, _, cx| {
-                                    this.open_overview_evidence(source.clone(), cx)
-                                },
-                                cx,
-                            ));
-                        }
-                    } else {
-                        card = card
-                            .child("This prior concern was not assessed in the current result.");
-                    }
-                    if expanded && concern.evidence.is_empty() {
-                        card = card.child(div().text_color(rgb(p.muted)).child(
-                            "Historical source references were not retained for this prior result.",
-                        ));
-                    }
-                    for (evidence_index, evidence) in
-                        concern.evidence.iter().enumerate().filter(|_| expanded)
-                    {
-                        let key = format!(
-                            "{}:{}:{}-{}",
-                            evidence.commit_sha,
-                            evidence.source.path,
-                            evidence.source.start_line,
-                            evidence.source.end_line
-                        );
-                        let preview = self
-                            .prior_source_preview
-                            .as_ref()
-                            .filter(|preview| preview.key == key);
-                        card = card.child(div().text_color(rgb(p.muted)).child(format!(
-                            "Prior evidence · {}:{}–{} · {} · {}",
-                            evidence.source.path,
-                            evidence.source.start_line,
-                            evidence.source.end_line,
-                            short_sha(&evidence.commit_sha),
-                            evidence.explanation
-                        )));
-                        let source = evidence.clone();
-                        card = card.child(button(
-                            &format!("follow-up-prior-source-{concern_index}-{evidence_index}"),
-                            if preview.is_some_and(|view| view.loading) {
-                                "Loading exact prior source…"
-                            } else if preview.is_some_and(|view| view.text.is_some()) {
-                                "Close prior source"
-                            } else {
-                                "Open exact prior source"
-                            },
-                            p,
-                            move |this, _, _, cx| this.load_prior_source(source.clone(), cx),
-                            cx,
-                        ));
-                        if let Some(preview) = preview {
-                            if let Some(error) = &preview.error {
-                                card = card.child(empty_card(
-                                        "Historical source unavailable",
-                                        &format!(
-                                            "Could not read the exact prior commit {}. Current evidence remains shown above; no current worktree source was substituted. {error}",
-                                            evidence.commit_sha
-                                        ),
-                                        p,
-                                    ));
-                            }
-                            if let Some(text) = &preview.text {
-                                let mut source_rows =
-                                    div().flex().flex_col().p_2().bg(rgb(p.canvas));
-                                for (offset, line) in text.lines().enumerate() {
-                                    source_rows = source_rows.child(format!(
-                                        "{}  {}",
-                                        evidence.source.start_line + offset as u32,
-                                        line
-                                    ));
-                                }
-                                card = card.child(source_rows);
-                            }
-                        }
-                    }
-                    body = body.child(card);
-                }
-            }
-            body = body.child(section_title("Committed findings", p));
-            if review.result.findings.is_empty() {
-                body = body.child(empty_card(
-                    "No findings recorded",
-                    "This committed review contains no actionable findings.",
-                    p,
-                ));
-            }
-            for finding_index in bodh::prioritized_finding_indices(&review.result.findings) {
-                let finding = &review.result.findings[finding_index];
-                let is_new_concern = review
-                    .context
-                    .prior_concerns
-                    .as_ref()
-                    .is_some_and(|prior| !prior.iter().any(|concern| concern.id == finding.id));
-                let selected_finding =
-                    self.selected_finding_id.as_deref() == Some(finding.id.as_str());
-                let mut card = div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_4()
-                    .border_1()
-                    .border_color(rgb(if selected_finding { p.accent } else { p.border }))
-                    .bg(rgb(if selected_finding { p.raised } else { p.panel }))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(finding.title.clone()),
-                            )
-                            .child(format!("{:?} severity", finding.severity)),
-                    )
-                    .child(format!("Confidence: {:?}", finding.confidence))
-                    .child(finding.summary.clone())
-                    .child(finding.reason.clone())
-                    .child(finding.impact.clone());
-                if is_new_concern {
-                    card = card.child(
-                        div()
-                            .text_color(rgb(p.accent))
-                            .font_weight(FontWeight::BOLD)
-                            .child("New concern"),
-                    );
-                }
-                let triage_entry = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
-                    snapshot
-                        .entries
-                        .iter()
-                        .find(|entry| entry.finding_id == finding.id)
-                });
-                let selected_suggestion =
-                    triage_entry.and_then(|entry| entry.selected_suggestion_id.as_deref());
-                let disposition = triage_entry
-                    .map(|entry| format!("{:?}", entry.disposition))
-                    .unwrap_or_else(|| "Unreviewed".into());
-                card = card.child(
-                    div()
-                        .text_color(rgb(p.muted))
-                        .child(match selected_suggestion {
-                            Some(suggestion_id) => {
-                                format!("{disposition} · alternative {suggestion_id}")
-                            }
-                            None if triage_entry
-                                .and_then(|entry| entry.manual_feedback.as_ref())
-                                .is_some() =>
-                            {
-                                format!("{disposition} · independent feedback saved locally")
-                            }
-                            None => disposition,
-                        }),
-                );
-                if !finding.related_thread_ids.is_empty() {
-                    card = card.child(div().text_color(rgb(p.muted)).child("Related discussions"));
-                    for (thread_index, thread_id) in finding.related_thread_ids.iter().enumerate() {
-                        let related_id = thread_id.clone();
-                        card = card.child(button(
-                            &format!("finding-related-thread-{finding_index}-{thread_index}"),
-                            &format!("Open thread {thread_id}"),
-                            p,
-                            move |this, _, _, cx| {
-                                this.open_related_discussion(related_id.clone(), cx)
-                            },
-                            cx,
-                        ));
-                    }
-                }
-                for (evidence_index, evidence) in finding.evidence.iter().enumerate() {
-                    let source = evidence.source.clone();
-                    card = card.child(
-                        div()
-                            .text_color(rgb(p.muted))
-                            .child(evidence.explanation.clone()),
-                    );
-                    card = card.child(button(
-                        &format!("finding-evidence-{finding_index}-{evidence_index}"),
-                        &format!("Open {}", source_title(&source)),
-                        p,
-                        move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
-                        cx,
-                    ));
-                }
-                for (suggestion_index, suggestion) in finding.suggestions.iter().enumerate() {
-                    let (suggestion_id, generated_body, source) = match suggestion {
-                        bodh::Suggestion::TextComment { id, body, source } => {
-                            (id.clone(), body.clone(), source.clone())
-                        }
-                        bodh::Suggestion::CodeReplacement {
-                            id,
-                            body,
-                            source,
-                            replacement,
-                            ..
-                        } => (
-                            id.clone(),
-                            format!("{body}\n\nProposed replacement:\n{replacement}"),
-                            source.clone(),
-                        ),
-                    };
-                    let saved_edit = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
-                        snapshot.alternative_edits.iter().find(|edit| {
-                            edit.finding_id == finding.id && edit.suggestion_id == suggestion_id
-                        })
-                    });
-                    let label = match (suggestion, saved_edit) {
-                        (bodh::Suggestion::TextComment { .. }, Some(edit)) => edit.body.clone(),
-                        (bodh::Suggestion::CodeReplacement { .. }, Some(edit)) => format!(
-                            "{}\n\nProposed replacement:\n{}",
-                            edit.body,
-                            edit.replacement.as_deref().unwrap_or_default()
-                        ),
-                        (_, None) => generated_body,
-                    };
-                    let alt_title = if saved_edit.is_some() {
-                        format!(
-                            "Alternative {} · edited locally · {}",
-                            suggestion_index + 1,
-                            source_title(&source)
-                        )
-                    } else {
-                        format!(
-                            "Alternative {} · {}",
-                            suggestion_index + 1,
-                            source_title(&source)
-                        )
-                    };
-                    card = card.child(
-                        div()
-                            .p_2()
-                            .bg(rgb(p.raised))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(p.muted))
-                                    .child(alt_title),
-                            )
-                            .child(label),
-                    );
-                    let source_to_open = source.clone();
-                    card = card.child(button(
-                        &format!("finding-alternative-source-{finding_index}-{suggestion_index}"),
-                        "Open source in Changes",
-                        p,
-                        move |this, _, _, cx| {
-                            this.open_overview_evidence(source_to_open.clone(), cx)
-                        },
-                        cx,
-                    ));
-                    let is_selected = selected_suggestion == Some(suggestion_id.as_str());
-                    let action_finding = finding.id.clone();
-                    let action_suggestion = suggestion_id.clone();
-                    card = card.child(button(
-                        &format!("finding-alternative-stage-{finding_index}-{suggestion_index}"),
-                        if is_selected {
-                            "Unstage alternative"
-                        } else {
-                            "Stage alternative"
-                        },
-                        p,
-                        move |this, _, _, cx| {
-                            if is_selected {
-                                this.set_finding_disposition(
-                                    action_finding.clone(),
-                                    bodh::FindingDisposition::Unreviewed,
-                                    cx,
-                                );
-                            } else {
-                                this.stage_finding_alternative(
-                                    action_finding.clone(),
-                                    action_suggestion.clone(),
-                                    cx,
-                                );
-                            }
-                        },
-                        cx,
-                    ));
-                }
-                for (location_index, location) in finding.locations.iter().enumerate() {
-                    let source = location.source.clone();
-                    card = card.child(button(
-                        &format!("finding-location-{finding_index}-{location_index}"),
-                        &format!(
-                            "{} source · {}",
-                            if location.primary {
-                                "Primary"
-                            } else {
-                                "Related"
-                            },
-                            source_title(&source)
-                        ),
-                        p,
-                        move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
-                        cx,
-                    ));
-                }
-                let feedback_finding_id = finding.id.clone();
-                let current_feedback = triage_entry
-                    .and_then(|entry| entry.manual_feedback.as_deref())
-                    .unwrap_or("")
-                    .to_owned();
-                let editor_open =
-                    self.finding_feedback_target.as_deref() == Some(finding.id.as_str());
-                if editor_open {
-                    let feedback_display = if self.finding_feedback_body.is_empty() {
-                        "|Type independent feedback. Enter inserts a line.".to_owned()
-                    } else {
-                        format!("{}|", self.finding_feedback_body)
-                    };
-                    card = card.child(
-                        div()
-                            .id("finding-independent-feedback-editor")
-                            .track_focus(&self.finding_feedback_focus)
-                            .min_h(px(72.))
-                            .p_2()
-                            .border_1()
-                            .border_color(rgb(p.border))
-                            .bg(rgb(p.raised))
-                            .child(feedback_display)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, _| {
-                                    window.focus(&this.finding_feedback_focus)
-                                }),
-                            )
-                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                                window.focus(&this.finding_feedback_focus);
-                                let key = event.keystroke.key.as_str();
-                                let command = event.keystroke.modifiers.control
-                                    || event.keystroke.modifiers.platform;
-                                match key {
-                                    "backspace" => {
-                                        this.finding_feedback_body.pop();
-                                    }
-                                    "enter" => this.finding_feedback_body.push('\n'),
-                                    "a" if command => this.finding_feedback_body.clear(),
-                                    text if text.chars().count() == 1 && !command => {
-                                        this.finding_feedback_body.push_str(text)
-                                    }
-                                    _ => return,
-                                }
-                                cx.notify();
-                            })),
-                    );
-                    let save_finding = feedback_finding_id.clone();
-                    card = card.child(button(
-                        &format!("save-finding-feedback-{finding_index}"),
-                        if self.finding_action_saving {
-                            "Saving…"
-                        } else {
-                            "Save feedback locally"
-                        },
-                        p,
-                        move |this, _, _, cx| this.save_finding_feedback(save_finding.clone(), cx),
-                        cx,
-                    ));
-                } else {
-                    let open_finding = feedback_finding_id.clone();
-                    card = card.child(button(
-                        &format!("edit-finding-feedback-{finding_index}"),
-                        if current_feedback.is_empty() {
-                            "Add independent feedback"
-                        } else {
-                            "Edit independent feedback"
-                        },
-                        p,
-                        move |this, _, window, cx| {
-                            this.finding_feedback_target = Some(open_finding.clone());
-                            this.finding_feedback_body = this
-                                .finding_triage_snapshot
-                                .as_ref()
-                                .and_then(|snapshot| {
-                                    snapshot
-                                        .entries
-                                        .iter()
-                                        .find(|entry| entry.finding_id == open_finding)
-                                })
-                                .and_then(|entry| entry.manual_feedback.clone())
-                                .unwrap_or_default();
-                            window.focus(&this.finding_feedback_focus);
-                            cx.notify();
-                        },
-                        cx,
-                    ));
-                }
-                for (action, label) in [
-                    (bodh::FindingDisposition::Dismissed, "Dismiss finding"),
-                    (bodh::FindingDisposition::Deferred, "Defer finding"),
-                ] {
-                    let action_finding = finding.id.clone();
-                    card = card.child(button(
-                        &format!("finding-disposition-{finding_index}-{label}"),
-                        label,
-                        p,
-                        move |this, _, _, cx| {
-                            this.set_finding_disposition(action_finding.clone(), action, cx)
-                        },
-                        cx,
-                    ));
-                }
-                body = body.child(card);
-            }
-        } else {
+        let Some(review) = current else {
             let (title, message) = match self.committed_overview.status {
                 CommittedOverviewStatus::StaleContext => (
                     "Earlier result hidden",
@@ -5616,24 +5260,750 @@ impl Product {
                     "The committed result could not be read. A prior result remains visible after same-context refresh failures when available.",
                 ),
                 CommittedOverviewStatus::Missing | CommittedOverviewStatus::Ready => (
-                    "No committed findings",
+                    if self.overview_loading {
+                        "Loading committed findings"
+                    } else {
+                        "No committed findings"
+                    },
                     "No complete generated result is attached to this pinned preparation.",
                 ),
             };
-            body = body.child(empty_card(title, message, p));
-            body = body.child(button(
-                "refresh-committed-findings",
-                if self.overview_loading {
-                    "Refreshing…"
+            return div()
+                .id("generated-findings")
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                .flex_1()
+                .min_h_0()
+                .child(empty_card(title, message, p))
+                .child(button(
+                    "refresh-committed-findings",
+                    if self.overview_loading {
+                        "Refreshing…"
+                    } else {
+                        "Refresh result"
+                    },
+                    p,
+                    |this, _, _, cx| this.refresh_committed_overview(cx),
+                    cx,
+                ));
+        };
+
+        let prioritized = bodh::prioritized_finding_indices(&review.result.findings);
+        let selected_index = prioritized
+            .iter()
+            .copied()
+            .find(|index| {
+                self.selected_finding_id.as_deref()
+                    == Some(review.result.findings[*index].id.as_str())
+            })
+            .or_else(|| prioritized.first().copied());
+        let selected_id = selected_index.map(|index| review.result.findings[index].id.clone());
+        let inspector_width = 340.;
+
+        let mut list = div()
+            .id("finding-list")
+            .w(px(310.))
+            .flex_shrink_0()
+            .min_w_0()
+            .h_full()
+            .overflow_scroll()
+            .px_3()
+            .pt(px(18.))
+            .pb_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .border_r_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.canvas))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(p.muted))
+                    .child(format!("ACTIONABLE · {}", prioritized.len())),
+            );
+        if prioritized.is_empty() {
+            list = list.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child("No findings recorded."),
+            );
+        }
+        for (position, index) in prioritized.iter().enumerate() {
+            let finding = &review.result.findings[*index];
+            let selected = selected_id.as_deref() == Some(finding.id.as_str());
+            let is_new = review
+                .context
+                .prior_concerns
+                .as_ref()
+                .is_some_and(|prior| !prior.iter().any(|concern| concern.id == finding.id));
+            let metadata = format!("{} · {:?} confidence", finding.id, finding.confidence);
+            let id = finding.id.clone();
+            let mut row = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_2()
+                .border_1()
+                .border_color(rgb(if selected { p.border } else { p.canvas }))
+                .bg(rgb(if selected { p.selection } else { p.canvas }))
+                .child(status_badge(
+                    &format!("{:?}", finding.severity),
+                    severity_color(&finding.severity, p),
+                ));
+            if is_new {
+                row = row.child(status_badge("New", p.accent));
+            }
+            row = row
+                .child(
+                    button(
+                        &format!("finding-select-{position}"),
+                        &finding.title,
+                        p,
+                        move |this, _, _, cx| this.select_finding(id.clone(), cx),
+                        cx,
+                    )
+                    .w_full()
+                    .text_left()
+                    .border_0()
+                    .bg(transparent_black())
+                    .text_size(px(13.)),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(metadata),
+                );
+            list = list.child(row);
+        }
+
+        let concerns = follow_up_concerns(review).unwrap_or_default();
+        let unresolved = concerns
+            .iter()
+            .filter(|row| row.prominence.is_prominent())
+            .collect::<Vec<_>>();
+        let resolved = concerns
+            .iter()
+            .filter(|row| !row.prominence.is_prominent())
+            .collect::<Vec<_>>();
+        if !unresolved.is_empty() || !resolved.is_empty() {
+            list = list.child(section_title("Follow-up", p));
+            for (index, row) in unresolved.iter().enumerate() {
+                let status = row.prominence.label();
+                if let Some(finding) = row.current_finding {
+                    let id = finding.id.clone();
+                    list = list.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_2()
+                            .child(status_badge(status, follow_up_color(row.prominence, p)))
+                            .child(
+                                button(
+                                    &format!("follow-up-select-{index}"),
+                                    &row.concern.title,
+                                    p,
+                                    move |this, _, _, cx| this.select_finding(id.clone(), cx),
+                                    cx,
+                                )
+                                .w_full()
+                                .text_left(),
+                            ),
+                    );
                 } else {
-                    "Refresh result"
-                },
+                    list = list.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .p_2()
+                            .child(status_badge(status, follow_up_color(row.prominence, p)))
+                            .child(row.concern.title.clone()),
+                    );
+                }
+            }
+            if !resolved.is_empty() {
+                let resolved_expanded = resolved
+                    .iter()
+                    .any(|row| self.expanded_follow_up.contains(&row.concern.id));
+                let toggle_ids = resolved
+                    .iter()
+                    .map(|row| row.concern.id.clone())
+                    .collect::<Vec<_>>();
+                list = list.child(
+                    button(
+                        "toggle-resolved-prior-concerns",
+                        &format!(
+                            "Resolved prior concerns · {} {}",
+                            resolved.len(),
+                            if resolved_expanded { "▾" } else { "▸" }
+                        ),
+                        p,
+                        move |this, _, _, cx| {
+                            for id in &toggle_ids {
+                                if resolved_expanded {
+                                    this.expanded_follow_up.remove(id);
+                                } else {
+                                    this.expanded_follow_up.insert(id.clone());
+                                }
+                            }
+                            cx.notify();
+                        },
+                        cx,
+                    )
+                    .w_full()
+                    .text_left(),
+                );
+                if resolved_expanded {
+                    let mut resolved_list = div().flex().flex_col().gap_2();
+                    for (index, row) in resolved.iter().enumerate() {
+                        resolved_list = resolved_list.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(status_badge(
+                                    row.prominence.label(),
+                                    follow_up_color(row.prominence, p),
+                                ))
+                                .child(
+                                    div()
+                                        .text_color(rgb(p.muted))
+                                        .child(row.concern.title.clone()),
+                                ),
+                        );
+                        if let Some(source) = row.concern.evidence.first().cloned() {
+                            resolved_list = resolved_list.child(button(
+                                &format!("resolved-prior-source-{index}"),
+                                "View prior source",
+                                p,
+                                move |this, _, _, cx| this.load_prior_source(source.clone(), cx),
+                                cx,
+                            ));
+                        }
+                    }
+                    list = list.child(
+                        div()
+                            .child(resolved_list)
+                            .id("resolved-prior-concerns")
+                            .p_2()
+                            .bg(rgb(p.raised)),
+                    );
+                }
+            }
+        }
+
+        let mut detail = div()
+            .id("finding-detail")
+            .flex_1()
+            .min_w(px(430.))
+            .min_h_0()
+            .h_full()
+            .overflow_scroll()
+            .p_6()
+            .flex()
+            .flex_col()
+            .gap_3();
+        if let Some(index) = selected_index {
+            let finding = &review.result.findings[index];
+            let is_new = review
+                .context
+                .prior_concerns
+                .as_ref()
+                .is_some_and(|prior| !prior.iter().any(|concern| concern.id == finding.id));
+            let mut detail_status = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(status_badge(
+                    &format!("{:?}", finding.severity),
+                    severity_color(&finding.severity, p),
+                ))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(rgb(p.muted))
+                        .child(format!("{:?} confidence", finding.confidence)),
+                );
+            if is_new {
+                detail_status = detail_status.child(status_badge("New concern", p.accent));
+            }
+            detail = detail
+                .child(detail_status)
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(FontWeight::BOLD)
+                        .child(finding.title.clone()),
+                )
+                .child(finding.summary.clone())
+                .child(finding.reason.clone())
+                .child(finding.impact.clone());
+            let triage_entry = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.finding_id == finding.id)
+            });
+            let selected_suggestion =
+                triage_entry.and_then(|entry| entry.selected_suggestion_id.as_deref());
+            let disposition = triage_entry
+                .map(|entry| format!("{:?}", entry.disposition))
+                .unwrap_or_else(|| "Unreviewed".into());
+            detail = detail.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child(match selected_suggestion {
+                        Some(suggestion_id) => {
+                            format!("{disposition} · alternative {suggestion_id}")
+                        }
+                        None if triage_entry
+                            .and_then(|entry| entry.manual_feedback.as_ref())
+                            .is_some() =>
+                        {
+                            format!("{disposition} · independent feedback saved locally")
+                        }
+                        None => disposition,
+                    }),
+            );
+            if !finding.evidence.is_empty() {
+                detail = detail.child(section_title("Source evidence", p));
+            }
+            for (evidence_index, evidence) in finding.evidence.iter().enumerate() {
+                let source = evidence.source.clone();
+                detail = detail.child(
+                    div()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.panel))
+                        .child(
+                            div()
+                                .text_color(rgb(p.muted))
+                                .child(evidence.explanation.clone()),
+                        )
+                        .child(link_button(
+                            &format!("finding-evidence-{evidence_index}"),
+                            &format!(
+                                "{} · {}:{}–{}",
+                                source_title(&source),
+                                source.path,
+                                source.start_line,
+                                source.end_line
+                            ),
+                            p,
+                            move |this, _, _, cx| this.select_finding_source(source.clone(), cx),
+                            cx,
+                        )),
+                );
+            }
+            if !finding.related_thread_ids.is_empty() {
+                detail = detail.child(section_title("Related discussions", p));
+                for (thread_index, thread_id) in finding.related_thread_ids.iter().enumerate() {
+                    let related_id = thread_id.clone();
+                    detail = detail.child(link_button(
+                        &format!("finding-related-thread-{thread_index}"),
+                        &format!("Open thread {thread_id} in Changes"),
+                        p,
+                        move |this, _, _, cx| this.open_related_discussion(related_id.clone(), cx),
+                        cx,
+                    ));
+                }
+            }
+            if !finding.suggestions.is_empty() {
+                detail = detail.child(section_title(
+                    "Suggested feedback · choose an alternative",
+                    p,
+                ));
+            }
+            for (suggestion_index, suggestion) in finding.suggestions.iter().enumerate() {
+                let (suggestion_id, generated_body, source) = match suggestion {
+                    bodh::Suggestion::TextComment { id, body, source } => {
+                        (id.clone(), body.clone(), source.clone())
+                    }
+                    bodh::Suggestion::CodeReplacement {
+                        id,
+                        body,
+                        source,
+                        replacement,
+                        ..
+                    } => (
+                        id.clone(),
+                        format!("{body}\n\nProposed replacement:\n{replacement}"),
+                        source.clone(),
+                    ),
+                };
+                let saved_edit = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
+                    snapshot.alternative_edits.iter().find(|edit| {
+                        edit.finding_id == finding.id && edit.suggestion_id == suggestion_id
+                    })
+                });
+                let label = match (suggestion, saved_edit) {
+                    (bodh::Suggestion::TextComment { .. }, Some(edit)) => edit.body.clone(),
+                    (bodh::Suggestion::CodeReplacement { .. }, Some(edit)) => format!(
+                        "{}\n\nProposed replacement:\n{}",
+                        edit.body,
+                        edit.replacement.as_deref().unwrap_or_default()
+                    ),
+                    (_, None) => generated_body,
+                };
+                detail = detail.child(
+                    div()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.raised))
+                        .child(div().text_color(rgb(p.muted)).child(format!(
+                            "Alternative {}{} · {}",
+                            suggestion_index + 1,
+                            if saved_edit.is_some() {
+                                " · edited locally"
+                            } else {
+                                ""
+                            },
+                            source_title(&source)
+                        )))
+                        .child(label),
+                );
+                let source_to_open = source.clone();
+                detail = detail.child(link_button(
+                    &format!("finding-alternative-source-{suggestion_index}"),
+                    "View source",
+                    p,
+                    move |this, _, _, cx| this.select_finding_source(source_to_open.clone(), cx),
+                    cx,
+                ));
+                let is_selected = selected_suggestion == Some(suggestion_id.as_str());
+                let action_finding = finding.id.clone();
+                let action_suggestion = suggestion_id.clone();
+                detail = detail.child(button(
+                    &format!("finding-alternative-stage-{suggestion_index}"),
+                    if is_selected {
+                        "Unstage alternative"
+                    } else {
+                        "Stage alternative"
+                    },
+                    p,
+                    move |this, _, _, cx| {
+                        if is_selected {
+                            this.set_finding_disposition(
+                                action_finding.clone(),
+                                bodh::FindingDisposition::Unreviewed,
+                                cx,
+                            );
+                        } else {
+                            this.stage_finding_alternative(
+                                action_finding.clone(),
+                                action_suggestion.clone(),
+                                cx,
+                            );
+                        }
+                    },
+                    cx,
+                ));
+            }
+            for (location_index, location) in finding.locations.iter().enumerate() {
+                let source = location.source.clone();
+                detail = detail.child(link_button(
+                    &format!("finding-location-{location_index}"),
+                    &format!(
+                        "{} source · {}",
+                        if location.primary {
+                            "Primary"
+                        } else {
+                            "Related"
+                        },
+                        source_title(&source)
+                    ),
+                    p,
+                    move |this, _, _, cx| this.select_finding_source(source.clone(), cx),
+                    cx,
+                ));
+            }
+            for (action, label) in [
+                (bodh::FindingDisposition::Dismissed, "Dismiss finding"),
+                (bodh::FindingDisposition::Deferred, "Defer finding"),
+            ] {
+                let id = finding.id.clone();
+                detail = detail.child(button(
+                    &format!("finding-disposition-{label}"),
+                    label,
+                    p,
+                    move |this, _, _, cx| this.set_finding_disposition(id.clone(), action, cx),
+                    cx,
+                ));
+            }
+        } else {
+            detail = detail.child(empty_card(
+                "No findings to show",
+                "This result has no actionable findings. Follow-up concerns, when present, appear in the list.",
                 p,
-                |this, _, _, cx| this.refresh_committed_overview(cx),
+            ));
+        }
+
+        let mut inspector = div()
+            .id("finding-source-inspector")
+            .w(px(inspector_width))
+            .flex_shrink_0()
+            .min_w_0()
+            .h_full()
+            .border_l_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.canvas))
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .overflow_scroll()
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(rgb(p.muted))
+                    .child("PINNED SOURCE"),
+            );
+        if let Some(prior) = self.finding_prior_source.as_ref() {
+            inspector = inspector.child(
+                div()
+                    .font_family("DejaVu Sans Mono")
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(format!(
+                        "Prior source · {}:{}–{} · {}",
+                        prior.source.path,
+                        prior.source.start_line,
+                        prior.source.end_line,
+                        short_sha(&prior.commit_sha)
+                    )),
+            );
+            if let Some(preview) = self.prior_source_preview.as_ref() {
+                if preview.loading {
+                    inspector = inspector.child(
+                        div()
+                            .text_color(rgb(p.muted))
+                            .child("Loading exact prior source…"),
+                    );
+                }
+                if let Some(error) = &preview.error {
+                    inspector = inspector.child(empty_card("Prior source unavailable", error, p));
+                }
+                if let Some(text) = &preview.text {
+                    let mut rows = div().flex().flex_col();
+                    for (offset, line) in text.lines().enumerate() {
+                        let number = prior.source.start_line.saturating_add(offset as u32);
+                        let selected =
+                            (prior.source.start_line..=prior.source.end_line).contains(&number);
+                        rows = rows.child(render_source_row(
+                            number,
+                            line,
+                            path_extension(&prior.source.path),
+                            p,
+                            selected,
+                        ));
+                    }
+                    inspector = inspector.child(
+                        div()
+                            .id("finding-prior-pinned-source-code")
+                            .overflow_scroll()
+                            .flex_1()
+                            .min_h_0()
+                            .child(rows),
+                    );
+                }
+            }
+        } else if let Some(source) = self.finding_source.clone() {
+            inspector = inspector.child(
+                div()
+                    .font_family("DejaVu Sans Mono")
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(format!(
+                        "{} · {}:{}–{}",
+                        match source.revision {
+                            Revision::Base => "Base",
+                            Revision::Head => "Head",
+                        },
+                        source.path,
+                        source.start_line,
+                        source.end_line
+                    )),
+            );
+        }
+        if self.finding_source_loading {
+            inspector = inspector.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child("Loading source from the pinned commit…"),
+            );
+        }
+        if let Some(error) = self.finding_source_error.clone() {
+            inspector = inspector.child(empty_card("Pinned source unavailable", &error, p));
+        }
+        if self.finding_prior_source.is_none() {
+            if let (Some(text), Some(display), Some(source)) = (
+                &self.finding_source_text,
+                &self.finding_source_display,
+                &self.finding_source,
+            ) {
+                let extension = path_extension(&display.path);
+                let mut rows = div().flex().flex_col();
+                for (offset, line) in text.lines().enumerate() {
+                    let number = display.start_line.saturating_add(offset as u32);
+                    let selected = (source.start_line..=source.end_line).contains(&number);
+                    rows = rows.child(render_source_row(number, line, extension, p, selected));
+                }
+                inspector = inspector.child(
+                    div()
+                        .id("finding-pinned-source-code")
+                        .track_scroll(&self.finding_source_scroll)
+                        .overflow_scroll()
+                        .flex_1()
+                        .min_h_0()
+                        .child(rows),
+                );
+            } else if self.finding_source.is_none() {
+                inspector = inspector.child(div().flex_1().min_h_0().child(empty_card(
+                    "Select source evidence",
+                    "Choose an evidence or source link to inspect the exact pinned code here.",
+                    p,
+                )));
+            }
+        }
+
+        if let Some(source) = self.finding_source.clone() {
+            inspector = inspector.child(link_button(
+                "open-finding-source-in-changes",
+                "Open in Changes →",
+                p,
+                move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
                 cx,
             ));
         }
-        body
+
+        if let Some(index) = selected_index {
+            let finding = &review.result.findings[index];
+            let finding_id = finding.id.clone();
+            let current_feedback = self
+                .finding_triage_snapshot
+                .as_ref()
+                .and_then(|snapshot| {
+                    snapshot
+                        .entries
+                        .iter()
+                        .find(|entry| entry.finding_id == finding.id)
+                })
+                .and_then(|entry| entry.manual_feedback.as_deref())
+                .unwrap_or("")
+                .to_owned();
+            inspector = inspector
+                .child(div().border_t_1().border_color(rgb(p.border)).pt_3())
+                .child(section_title("Add a comment", p))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child("Saved locally with this finding. Nothing is sent to GitHub."),
+                );
+            if self.finding_feedback_target.as_deref() == Some(finding.id.as_str()) {
+                let feedback_display = if self.finding_feedback_body.is_empty() {
+                    "|Type a review comment. Enter inserts a new line.".to_owned()
+                } else {
+                    format!("{}|", self.finding_feedback_body)
+                };
+                inspector = inspector.child(
+                    div()
+                        .id("finding-independent-feedback-editor")
+                        .track_focus(&self.finding_feedback_focus)
+                        .min_h(px(72.))
+                        .p_2()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.raised))
+                        .child(feedback_display)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, _| {
+                                window.focus(&this.finding_feedback_focus)
+                            }),
+                        )
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                            window.focus(&this.finding_feedback_focus);
+                            let key = event.keystroke.key.as_str();
+                            let command = event.keystroke.modifiers.control
+                                || event.keystroke.modifiers.platform;
+                            match key {
+                                "backspace" => {
+                                    this.finding_feedback_body.pop();
+                                }
+                                "enter" => this.finding_feedback_body.push('\n'),
+                                "a" if command => this.finding_feedback_body.clear(),
+                                text if text.chars().count() == 1 && !command => {
+                                    this.finding_feedback_body.push_str(text)
+                                }
+                                _ => return,
+                            }
+                            cx.notify();
+                        })),
+                );
+                let save_finding = finding_id.clone();
+                inspector = inspector.child(button(
+                    "save-finding-feedback",
+                    if self.finding_action_saving {
+                        "Saving locally…"
+                    } else {
+                        "Save comment locally"
+                    },
+                    p,
+                    move |this, _, _, cx| this.save_finding_feedback(save_finding.clone(), cx),
+                    cx,
+                ));
+            } else {
+                let open_finding = finding_id;
+                inspector = inspector.child(button(
+                    "edit-finding-feedback",
+                    if current_feedback.is_empty() {
+                        "Add comment"
+                    } else {
+                        "Edit local comment"
+                    },
+                    p,
+                    move |this, _, window, cx| {
+                        this.finding_feedback_target = Some(open_finding.clone());
+                        this.finding_feedback_body = this
+                            .finding_triage_snapshot
+                            .as_ref()
+                            .and_then(|snapshot| {
+                                snapshot
+                                    .entries
+                                    .iter()
+                                    .find(|entry| entry.finding_id == open_finding)
+                            })
+                            .and_then(|entry| entry.manual_feedback.clone())
+                            .unwrap_or_default();
+                        window.focus(&this.finding_feedback_focus);
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+        }
+
+        div()
+            .id("generated-findings")
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .overflow_x_scroll()
+            .min_w(px(if viewport_width < 1080. { 1080. } else { 0. }))
+            .child(list)
+            .child(detail)
+            .child(inspector)
     }
 
     fn stage_finding_alternative(
@@ -7584,6 +7954,50 @@ fn source_title(source: &SourceRef) -> String {
             "{side} · {}:{}–{}",
             source.path, source.start_line, source.end_line
         )
+    }
+}
+
+fn status_badge(label: &str, color: u32) -> Div {
+    div()
+        .text_size(px(10.))
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(color))
+        .child(label.to_uppercase())
+}
+
+fn link_button(
+    id: &str,
+    label: &str,
+    p: Palette,
+    action: impl Fn(&mut Product, &ClickEvent, &mut Window, &mut Context<Product>) + 'static,
+    cx: &mut Context<Product>,
+) -> Stateful<Div> {
+    div()
+        .id(ElementId::Name(SharedString::from(id.to_owned())))
+        .px_0()
+        .py_0()
+        .border_0()
+        .bg(transparent_black())
+        .text_color(rgb(p.accent))
+        .cursor_pointer()
+        .focus(|style| style.text_color(rgb(p.accent)))
+        .child(label.to_owned())
+        .on_click(cx.listener(action))
+}
+
+fn severity_color(severity: &bodh::Severity, p: Palette) -> u32 {
+    match severity {
+        bodh::Severity::Critical | bodh::Severity::High => p.danger,
+        bodh::Severity::Medium => p.caution,
+        bodh::Severity::Low => p.success,
+    }
+}
+
+fn follow_up_color(status: FollowUpProminence, p: Palette) -> u32 {
+    match status {
+        FollowUpProminence::Regressed => p.danger,
+        FollowUpProminence::Unresolved | FollowUpProminence::Uncertain => p.caution,
+        FollowUpProminence::Resolved | FollowUpProminence::Unassessed => p.success,
     }
 }
 
