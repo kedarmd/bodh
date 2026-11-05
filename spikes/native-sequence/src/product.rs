@@ -1,15 +1,15 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
 use bodh::{
-    OperationControl, PinnedDiff, PreparationManifest, PreparationStore, PreparedBinding, Revision,
-    SourceRef, read_diff,
+    DraftSnapshot, DraftStore, OperationControl, PinnedDiff, PreparationManifest, PreparationStore,
+    PreparedBinding, Revision, SourceRef, read_diff,
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::preferences::{
     NavigationPreferences as Preferences, RecentReview, WorkspaceTab,
 };
 use bodh_sequence_spike::{
-    DiffLine, DiffLineKind, MarkdownBlock, MarkdownBlockKind, diff_rows, safe_markdown_blocks,
-    split_diff_rows, syntax_spans,
+    DiffLine, DiffLineKind, MarkdownBlock, MarkdownBlockKind, TextDraftEditor, diff_rows,
+    safe_markdown_blocks, split_diff_rows, syntax_spans,
 };
 use gpui::{UniformListScrollHandle, prelude::*, uniform_list, *};
 use serde::Deserialize;
@@ -136,6 +136,11 @@ pub struct Product {
     diff_error: Option<String>,
     source_ref: Option<SourceRef>,
     description_blocks: Vec<MarkdownBlock>,
+    draft_snapshot: Option<DraftSnapshot>,
+    draft_editor: Option<TextDraftEditor>,
+    draft_saving: bool,
+    draft_epoch: Arc<AtomicU64>,
+    draft_focus: FocusHandle,
     dragging_pane: bool,
 }
 
@@ -192,6 +197,11 @@ impl Product {
             diff_error: None,
             source_ref: None,
             description_blocks: Vec::new(),
+            draft_snapshot: None,
+            draft_editor: None,
+            draft_saving: false,
+            draft_epoch: Arc::new(AtomicU64::new(0)),
+            draft_focus: cx.focus_handle(),
             dragging_pane: false,
         };
         app.refresh_gh_cli(cx);
@@ -211,6 +221,19 @@ impl Product {
     }
 
     fn open_repository(&mut self, path: String, cx: &mut Context<Self>) {
+        if self.draft_saving
+            || self
+                .draft_editor
+                .as_ref()
+                .is_some_and(TextDraftEditor::is_dirty)
+        {
+            self.error = Some(
+                "Save or explicitly discard the current draft before switching repositories."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
         match self.gh_cli_status {
             GhCliStatus::Checking => {
                 self.status =
@@ -331,6 +354,19 @@ impl Product {
     }
 
     fn prepare(&mut self, path: String, number: u64, cx: &mut Context<Self>) {
+        if self.draft_saving
+            || self
+                .draft_editor
+                .as_ref()
+                .is_some_and(TextDraftEditor::is_dirty)
+        {
+            self.error = Some(
+                "Save or explicitly discard the current draft before opening another review."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
         self.cancel_pending();
         self.screen = Screen::Repository;
         self.active_repository = Some(path.clone());
@@ -346,12 +382,15 @@ impl Product {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let manifest =
+                    let mut manifest =
                         bodh::prepare_local_pr(Path::new(&path), number, None, &state, &control)?;
                     let binding = PreparationStore::open(&state)?.load(&manifest.preparation_id)?;
+                    let drafts = DraftStore::open(&state)?.list(&manifest.preparation_id)?;
+                    manifest.expected_generation = drafts.workspace_revision;
+                    manifest.draft_counts = drafts.counts.clone();
                     let markdown = binding.description.as_deref().unwrap_or_default();
                     let blocks = safe_markdown_blocks(markdown);
-                    Ok::<_, bodh::ContractError>((manifest, binding, blocks))
+                    Ok::<_, bodh::ContractError>((manifest, binding, blocks, drafts))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -361,10 +400,13 @@ impl Product {
                 this.loading = false;
                 this.active_control = None;
                 match result {
-                    Ok((manifest, binding, blocks)) => {
+                    Ok((manifest, binding, blocks, drafts)) => {
                         this.remember(&manifest, &binding, cx);
                         this.selected_review = Some(binding);
                         this.description_blocks = blocks;
+                        this.draft_snapshot = Some(drafts);
+                        this.draft_editor = None;
+                        this.draft_saving = false;
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
                         this.screen = Screen::Workspace;
                         this.selected_file = None;
@@ -408,7 +450,7 @@ impl Product {
                 owner: pr.owner.clone(),
                 repository: pr.repository.clone(),
                 number: pr.number,
-                pending_work: 0,
+                pending_work: pending_draft_count(&manifest.draft_counts),
                 selected_file: None,
                 source_revision: None,
                 split_diff: false,
@@ -424,6 +466,18 @@ impl Product {
     }
 
     fn resume(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.draft_saving
+            || self
+                .draft_editor
+                .as_ref()
+                .is_some_and(TextDraftEditor::is_dirty)
+        {
+            self.error = Some(
+                "Save or explicitly discard the current draft before switching reviews.".into(),
+            );
+            cx.notify();
+            return;
+        }
         self.cancel_pending();
         self.loading = true;
         self.busy_label = "Resuming review…".into();
@@ -435,9 +489,10 @@ impl Product {
                 .background_executor()
                 .spawn(async move {
                     let binding = PreparationStore::open(&state)?.load(&id)?;
+                    let drafts = DraftStore::open(&state)?.list(&id)?;
                     let blocks =
                         safe_markdown_blocks(binding.description.as_deref().unwrap_or_default());
-                    Ok::<_, bodh::ContractError>((binding, blocks))
+                    Ok::<_, bodh::ContractError>((binding, blocks, drafts))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -446,11 +501,15 @@ impl Product {
                 }
                 this.loading = false;
                 match result {
-                    Ok((binding, blocks)) => {
+                    Ok((binding, blocks, drafts)) => {
                         this.active_repository = Some(binding.checkout.clone());
                         this.screen = Screen::Workspace;
                         this.description_blocks = blocks;
+                        this.draft_snapshot = Some(drafts.clone());
+                        this.draft_editor = None;
+                        this.draft_saving = false;
                         this.selected_review = Some(binding.clone());
+                        this.update_draft_counts(drafts.counts);
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
                         if let Some(saved) = this
                             .prefs
@@ -686,6 +745,297 @@ impl Product {
         cx.notify();
     }
 
+    fn begin_text_draft(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving {
+            return;
+        }
+        let Some(source) = self.source_ref.clone() else {
+            self.status = Some("Select a changed diff line before drafting a comment.".into());
+            cx.notify();
+            return;
+        };
+        if self
+            .draft_editor
+            .as_ref()
+            .is_some_and(TextDraftEditor::is_dirty)
+        {
+            self.status = Some(
+                "Save or explicitly discard the current draft before starting another.".into(),
+            );
+            cx.notify();
+            return;
+        }
+        let workspace_revision = self
+            .draft_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.workspace_revision)
+            .unwrap_or_else(|| {
+                self.selected_review
+                    .as_ref()
+                    .map(|binding| binding.expected_generation)
+                    .unwrap_or(0)
+            });
+        self.draft_editor = Some(TextDraftEditor::new(source, workspace_revision));
+        self.status =
+            Some("New inline comment draft. Saving keeps it local; nothing is published.".into());
+        cx.notify();
+    }
+
+    fn resume_text_draft(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.draft_saving
+            || self
+                .draft_editor
+                .as_ref()
+                .is_some_and(TextDraftEditor::is_dirty)
+        {
+            self.status = Some(
+                "Save or explicitly discard the current draft before resuming another.".into(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(snapshot) = self.draft_snapshot.clone() else {
+            return;
+        };
+        let Some(draft) = snapshot.drafts.iter().find(|draft| draft.id == id).cloned() else {
+            self.error = Some("That saved draft is no longer in this review context.".into());
+            cx.notify();
+            return;
+        };
+        let index = self.selected_review.as_ref().and_then(|binding| {
+            binding
+                .changed_files
+                .iter()
+                .position(|file| match draft.source.revision {
+                    Revision::Base => file.old_path.as_deref() == Some(draft.source.path.as_str()),
+                    Revision::Head => file.new_path.as_deref() == Some(draft.source.path.as_str()),
+                })
+        });
+        self.draft_editor = Some(TextDraftEditor::resume(&draft, snapshot.workspace_revision));
+        if let Some(index) = index {
+            self.select_source_line(index, draft.source.revision, draft.source.start_line, cx);
+        }
+        self.status = Some("Saved local comment draft resumed.".into());
+        cx.notify();
+    }
+
+    fn save_text_draft(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving {
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let Some(editor) = self.draft_editor.clone() else {
+            return;
+        };
+        if !editor.can_save() {
+            self.status = Some("Add comment text before saving the local draft.".into());
+            cx.notify();
+            return;
+        }
+        let submitted_body = editor.body.clone();
+        let draft_id = editor.draft_id.clone();
+        let source = editor.source.clone();
+        let workspace_revision = editor.workspace_revision;
+        let draft_revision = editor.draft_revision;
+        let preparation_id = binding.preparation_id.clone();
+        let preparation_id_for_ui = preparation_id.clone();
+        let submitted_body_for_save = submitted_body.clone();
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(20));
+        let epoch = self.draft_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let draft_epoch = self.draft_epoch.clone();
+        self.draft_saving = true;
+        self.status = Some("Saving local comment draft…".into());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut store = DraftStore::open(Path::new(&state))?;
+                    let saved = store.save(
+                        &preparation_id,
+                        draft_id.as_deref(),
+                        &submitted_body_for_save,
+                        &source,
+                        workspace_revision,
+                        draft_revision,
+                        &control,
+                    );
+                    let snapshot = store.list(&preparation_id).ok();
+                    Ok::<_, bodh::ContractError>((saved, snapshot))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if draft_epoch.load(Ordering::Relaxed) != epoch
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|current| current.preparation_id != preparation_id_for_ui)
+                {
+                    return;
+                }
+                this.draft_saving = false;
+                match result {
+                    Ok((Ok(saved), snapshot)) => {
+                        if let Some(snapshot) = snapshot {
+                            this.update_draft_counts(snapshot.counts.clone());
+                            this.draft_snapshot = Some(snapshot);
+                        }
+                        if let Some(editor) = &mut this.draft_editor {
+                            editor.save_succeeded(&saved, &submitted_body);
+                        }
+                        this.status =
+                            Some("Draft saved locally. It has not been published.".into());
+                        this.error = None;
+                    }
+                    Ok((Err(error), snapshot)) => {
+                        if let Some(snapshot) = snapshot {
+                            this.update_draft_counts(snapshot.counts.clone());
+                            this.draft_snapshot = Some(snapshot);
+                        }
+                        if let Some(editor) = &mut this.draft_editor {
+                            editor.save_failed(error.code.clone(), error.message.clone());
+                        }
+                        this.status =
+                            Some("Save failed; your entered text is still in this editor.".into());
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                    Err(error) => {
+                        if let Some(editor) = &mut this.draft_editor {
+                            editor.save_failed(error.code.clone(), error.message.clone());
+                        }
+                        this.status =
+                            Some("Save failed; your entered text is still in this editor.".into());
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn discard_text_draft(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving {
+            return;
+        }
+        let Some(editor) = self.draft_editor.clone() else {
+            return;
+        };
+        let Some(id) = editor.draft_id.clone() else {
+            if let Some(editor) = &mut self.draft_editor {
+                editor.clear_new_draft();
+            }
+            self.status = Some("Unsaved local text cleared; no stored draft was changed.".into());
+            cx.notify();
+            return;
+        };
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let preparation_id_for_ui = preparation_id.clone();
+        let epoch = self.draft_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let draft_epoch = self.draft_epoch.clone();
+        self.draft_saving = true;
+        self.status = Some("Discarding local draft…".into());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut store = DraftStore::open(Path::new(&state))?;
+                    let discarded = store.discard(
+                        &preparation_id,
+                        &id,
+                        editor.workspace_revision,
+                        editor.draft_revision,
+                    );
+                    let snapshot = store.list(&preparation_id).ok();
+                    Ok::<_, bodh::ContractError>((discarded, snapshot))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if draft_epoch.load(Ordering::Relaxed) != epoch
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|current| current.preparation_id != preparation_id_for_ui)
+                {
+                    return;
+                }
+                this.draft_saving = false;
+                match result {
+                    Ok((Ok(snapshot), current)) => {
+                        this.draft_snapshot = Some(current.unwrap_or(snapshot.clone()));
+                        this.update_draft_counts(snapshot.counts);
+                        if let Some(editor) = &mut this.draft_editor {
+                            editor.discard_succeeded(snapshot.workspace_revision);
+                        }
+                        this.status = Some("Local draft discarded. Nothing was published.".into());
+                        this.error = None;
+                    }
+                    Ok((Err(error), snapshot)) => {
+                        if let Some(snapshot) = snapshot {
+                            this.update_draft_counts(snapshot.counts.clone());
+                            this.draft_snapshot = Some(snapshot);
+                        }
+                        if let Some(editor) = &mut this.draft_editor {
+                            editor.save_failed(error.code.clone(), error.message.clone());
+                        }
+                        this.status = Some(
+                            "Discard failed; the saved draft and your entered text were retained."
+                                .into(),
+                        );
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                    Err(error) => {
+                        if let Some(editor) = &mut this.draft_editor {
+                            editor.save_failed(error.code.clone(), error.message.clone());
+                        }
+                        this.status = Some(
+                            "Discard failed; the saved draft and your entered text were retained."
+                                .into(),
+                        );
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn recover_draft_as_new(&mut self, cx: &mut Context<Self>) {
+        let Some(snapshot) = self.draft_snapshot.as_ref() else {
+            return;
+        };
+        let Some(editor) = &mut self.draft_editor else {
+            return;
+        };
+        editor.recover_as_new(snapshot.workspace_revision);
+        self.status =
+            Some("Local text is now a new draft; the newer saved version remains intact.".into());
+        self.error = None;
+        cx.notify();
+    }
+
+    fn update_draft_counts(&mut self, counts: bodh::DraftCounts) {
+        if let Some(binding) = &self.selected_review
+            && let Some(recent) = self
+                .prefs
+                .recent
+                .iter_mut()
+                .find(|recent| recent.preparation_id == binding.preparation_id)
+        {
+            recent.pending_work = pending_draft_count(&counts);
+            self.persist();
+        }
+    }
+
     fn persist_navigation(&mut self) {
         let Some(binding) = &self.selected_review else {
             return;
@@ -716,6 +1066,18 @@ impl Product {
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving
+            || self
+                .draft_editor
+                .as_ref()
+                .is_some_and(TextDraftEditor::is_dirty)
+        {
+            self.error = Some(
+                "Save or explicitly discard the current draft before leaving this review.".into(),
+            );
+            cx.notify();
+            return;
+        }
         self.cancel_pending();
         self.error = None;
         self.status = None;
@@ -755,6 +1117,9 @@ impl Product {
     }
 
     fn workspace_key(&mut self, event: &KeyDownEvent, window: &Window, cx: &mut Context<Self>) {
+        if self.draft_focus.is_focused(window) {
+            return;
+        }
         if self.screen == Screen::Repository {
             if self.search_focus.is_focused(window) {
                 return;
@@ -907,10 +1272,23 @@ impl Product {
             "Home",
             p,
             |this, _, _, cx| {
-                this.cancel_pending();
-                this.screen = Screen::Home;
-                this.error = None;
-                cx.notify();
+                if this.draft_saving
+                    || this
+                        .draft_editor
+                        .as_ref()
+                        .is_some_and(TextDraftEditor::is_dirty)
+                {
+                    this.error = Some(
+                        "Save or explicitly discard the current draft before leaving this review."
+                            .into(),
+                    );
+                    cx.notify();
+                } else {
+                    this.cancel_pending();
+                    this.screen = Screen::Home;
+                    this.error = None;
+                    cx.notify();
+                }
             },
             cx,
         ));
@@ -926,15 +1304,31 @@ impl Product {
             cx,
         ));
         if self.selected_review.is_some() {
+            let pending = self
+                .draft_snapshot
+                .as_ref()
+                .map(|snapshot| pending_draft_count(&snapshot.counts))
+                .unwrap_or(0);
+            let finish_label = if pending > 0 {
+                format!("Finish Review · {pending} local")
+            } else {
+                "Finish Review".to_owned()
+            };
             bar = bar.child(button(
                 "finish-review",
-                "Finish Review",
+                &finish_label,
                 p,
                 move |this, _, _, cx| {
-                    this.status = Some(
-                        "No review content has been staged yet. Your saved workspace is unchanged."
-                            .into(),
-                    );
+                    let pending = this
+                        .draft_snapshot
+                        .as_ref()
+                        .map(|snapshot| pending_draft_count(&snapshot.counts))
+                        .unwrap_or(0);
+                    this.status = Some(if pending > 0 {
+                        format!("{pending} local comment draft(s) are saved. Nothing has been published.")
+                    } else {
+                        "No review content has been staged yet. Your saved workspace is unchanged.".into()
+                    });
                     cx.notify();
                 },
                 cx,
@@ -1744,6 +2138,15 @@ impl Product {
                 );
             }
         }
+        if self.source_ref.is_some() {
+            source_toolbar = source_toolbar.child(button(
+                "new-inline-comment-draft",
+                "Draft comment",
+                p,
+                |this, _, _, cx| this.begin_text_draft(cx),
+                cx,
+            ));
+        }
         source = source.child(source_toolbar);
         if let Some(label) = self.source_label.clone() {
             source = source.child(
@@ -1778,6 +2181,7 @@ impl Product {
             }
             source = source.child(source_rows);
         }
+        source = source.child(self.render_draft_panel(p, cx));
         div()
             .id("changes-panes")
             .flex()
@@ -1800,6 +2204,185 @@ impl Product {
                     ),
             )
             .child(source)
+    }
+
+    fn render_draft_panel(&mut self, p: Palette, cx: &mut Context<Self>) -> Stateful<Div> {
+        let counts = self
+            .draft_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.counts.inline_comments)
+            .unwrap_or(0);
+        let mut panel = div()
+            .id("manual-draft-panel")
+            .mt_4()
+            .p_3()
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.raised))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(section_title(
+                &format!("Local comment drafts · {counts}"),
+                p,
+            ));
+
+        if let Some(editor) = self.draft_editor.clone() {
+            let anchor = format!(
+                "{} · {}:{}–{}",
+                editor.source.path,
+                match editor.source.revision {
+                    Revision::Base => "Base",
+                    Revision::Head => "Head",
+                },
+                editor.source.start_line,
+                editor.source.end_line
+            );
+            panel = panel.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(anchor),
+            );
+            let display = if editor.body.is_empty() {
+                "|Type a review comment. Enter inserts a new line; Ctrl+A replaces all text."
+                    .to_owned()
+            } else {
+                editor.display_text_with_cursor()
+            };
+            panel = panel.child(
+                div()
+                    .id("manual-comment-editor")
+                    .track_focus(&self.draft_focus)
+                    .min_h(px(92.))
+                    .max_h(px(180.))
+                    .overflow_scroll()
+                    .p_2()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.panel))
+                    .focus(|style| style.border_color(rgb(p.accent)))
+                    .text_size(px(12.))
+                    .text_color(rgb(p.text))
+                    .child(display)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, _| {
+                            window.focus(&this.draft_focus);
+                            if let Some(editor) = &mut this.draft_editor {
+                                editor.move_cursor_to_edge(true);
+                            }
+                        }),
+                    )
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        window.focus(&this.draft_focus);
+                        let key = event.keystroke.key.as_str();
+                        let command =
+                            event.keystroke.modifiers.control || event.keystroke.modifiers.platform;
+                        let Some(editor) = &mut this.draft_editor else {
+                            return;
+                        };
+                        match key {
+                            "backspace" => editor.backspace(),
+                            "delete" => editor.delete_forward(),
+                            "left" => editor.move_cursor(-1),
+                            "right" => editor.move_cursor(1),
+                            "home" => editor.move_cursor_to_edge(false),
+                            "end" => editor.move_cursor_to_edge(true),
+                            "enter" => editor.insert_text("\n"),
+                            "tab" => editor.insert_text("    "),
+                            "a" if command => editor.select_all(),
+                            text if text.chars().count() == 1 && !command => {
+                                editor.insert_text(text)
+                            }
+                            _ => return,
+                        }
+                        cx.notify();
+                    })),
+            );
+            if let Some(error) = editor.error.as_deref() {
+                panel = panel.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(
+                            if editor.error_code.as_deref().is_some_and(|code| {
+                                code == "WORKSPACE_REVISION_STALE" || code == "DRAFT_REVISION_STALE"
+                            }) {
+                                0xffb7b7
+                            } else {
+                                p.muted
+                            },
+                        ))
+                        .child(error.to_owned()),
+                );
+            }
+            let mut actions = div().flex().items_center().gap_2();
+            actions = actions.child(button(
+                "save-local-comment-draft",
+                if self.draft_saving {
+                    "Saving…"
+                } else {
+                    "Save locally"
+                },
+                p,
+                |this, _, _, cx| this.save_text_draft(cx),
+                cx,
+            ));
+            actions = actions.child(button(
+                "discard-local-comment-draft",
+                if editor.draft_id.is_some() {
+                    "Discard draft"
+                } else {
+                    "Clear text"
+                },
+                p,
+                |this, _, _, cx| this.discard_text_draft(cx),
+                cx,
+            ));
+            if editor.error_code.as_deref().is_some_and(|code| {
+                code == "WORKSPACE_REVISION_STALE" || code == "DRAFT_REVISION_STALE"
+            }) {
+                actions = actions.child(button(
+                    "recover-as-new-draft",
+                    "Recover as new draft",
+                    p,
+                    |this, _, _, cx| this.recover_draft_as_new(cx),
+                    cx,
+                ));
+            }
+            panel = panel.child(actions);
+        } else if self.source_ref.is_some() {
+            panel = panel.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child("Select a diff line, then choose Draft comment to add a local note."),
+            );
+        }
+
+        if let Some(snapshot) = self.draft_snapshot.clone()
+            && !snapshot.drafts.is_empty()
+        {
+            let mut saved = div().mt_2().flex().flex_col().gap_1();
+            for draft in snapshot.drafts {
+                let id = draft.id.clone();
+                let label = format!(
+                    "Resume · {}:{} · {}",
+                    draft.source.path,
+                    draft.source.start_line,
+                    draft.body.lines().next().unwrap_or_default()
+                );
+                saved = saved.child(button(
+                    &format!("resume-draft-{id}"),
+                    &label,
+                    p,
+                    move |this, _, _, cx| this.resume_text_draft(&id, cx),
+                    cx,
+                ));
+            }
+            panel = panel.child(saved);
+        }
+        panel
     }
 
     fn notice(&self, p: Palette, text: &str, danger: bool) -> impl IntoElement {
@@ -1833,6 +2416,15 @@ fn source_title(source: &SourceRef) -> String {
             source.path, source.start_line, source.end_line
         )
     }
+}
+
+fn pending_draft_count(counts: &bodh::DraftCounts) -> u32 {
+    counts
+        .inline_comments
+        .saturating_add(counts.replies)
+        .saturating_add(counts.thread_intents)
+        .saturating_add(counts.review_comments)
+        .min(u64::from(u32::MAX)) as u32
 }
 
 fn path_extension(path: &str) -> &str {

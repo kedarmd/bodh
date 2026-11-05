@@ -1,3 +1,4 @@
+use bodh::{DraftSaveResult, ManualTextDraft, SourceRef};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,6 +23,204 @@ pub struct DiffLine {
 pub struct SplitDiffRow {
     pub left: Option<DiffLine>,
     pub right: Option<DiffLine>,
+}
+
+/// Local editor state is retained when persistence reports a stale revision or I/O error.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextDraftEditor {
+    pub draft_id: Option<String>,
+    pub source: SourceRef,
+    pub body: String,
+    pub cursor: usize,
+    pub select_all: bool,
+    pub workspace_revision: u64,
+    pub draft_revision: u64,
+    pub error_code: Option<String>,
+    pub error: Option<String>,
+    saved_body: Option<String>,
+}
+
+impl TextDraftEditor {
+    pub fn new(source: SourceRef, workspace_revision: u64) -> Self {
+        Self {
+            draft_id: None,
+            source,
+            body: String::new(),
+            cursor: 0,
+            select_all: false,
+            workspace_revision,
+            draft_revision: 0,
+            error_code: None,
+            error: None,
+            saved_body: None,
+        }
+    }
+
+    pub fn resume(draft: &ManualTextDraft, workspace_revision: u64) -> Self {
+        Self {
+            draft_id: Some(draft.id.clone()),
+            source: draft.source.clone(),
+            body: draft.body.clone(),
+            cursor: draft.body.len(),
+            select_all: false,
+            workspace_revision,
+            draft_revision: draft.revision,
+            error_code: None,
+            error: None,
+            saved_body: Some(draft.body.clone()),
+        }
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.saved_body.as_deref() != Some(self.body.as_str())
+    }
+
+    pub fn can_save(&self) -> bool {
+        self.is_dirty() && !self.body.trim().is_empty()
+    }
+
+    pub fn set_body(&mut self, body: String) {
+        self.body = body;
+        self.cursor = self.body.len();
+        self.select_all = false;
+        self.error_code = None;
+        self.error = None;
+    }
+
+    pub fn insert_text(&mut self, text: &str) {
+        if self.select_all {
+            self.body.clear();
+            self.cursor = 0;
+            self.select_all = false;
+        }
+        self.cursor = self.cursor.min(self.body.len());
+        while !self.body.is_char_boundary(self.cursor) {
+            self.cursor -= 1;
+        }
+        self.body.insert_str(self.cursor, text);
+        self.cursor += text.len();
+        self.error_code = None;
+        self.error = None;
+    }
+
+    pub fn backspace(&mut self) {
+        if self.select_all {
+            self.body.clear();
+            self.cursor = 0;
+            self.select_all = false;
+        } else if self.cursor > 0 {
+            let mut previous = self.cursor - 1;
+            while !self.body.is_char_boundary(previous) {
+                previous -= 1;
+            }
+            self.body.replace_range(previous..self.cursor, "");
+            self.cursor = previous;
+        }
+        self.error_code = None;
+        self.error = None;
+    }
+
+    pub fn delete_forward(&mut self) {
+        if self.select_all {
+            self.body.clear();
+            self.cursor = 0;
+            self.select_all = false;
+        } else if self.cursor < self.body.len() {
+            let mut next = self.cursor + 1;
+            while !self.body.is_char_boundary(next) {
+                next += 1;
+            }
+            self.body.replace_range(self.cursor..next, "");
+        }
+        self.error_code = None;
+        self.error = None;
+    }
+
+    pub fn move_cursor(&mut self, direction: i32) {
+        self.select_all = false;
+        if direction < 0 && self.cursor > 0 {
+            let mut previous = self.cursor - 1;
+            while !self.body.is_char_boundary(previous) {
+                previous -= 1;
+            }
+            self.cursor = previous;
+        } else if direction > 0 && self.cursor < self.body.len() {
+            let mut next = self.cursor + 1;
+            while !self.body.is_char_boundary(next) {
+                next += 1;
+            }
+            self.cursor = next;
+        }
+    }
+
+    pub fn move_cursor_to_edge(&mut self, end: bool) {
+        self.cursor = if end { self.body.len() } else { 0 };
+        self.select_all = false;
+    }
+
+    pub fn select_all(&mut self) {
+        self.select_all = true;
+        self.cursor = 0;
+    }
+
+    pub fn display_text_with_cursor(&self) -> String {
+        if self.select_all {
+            return format!("[{}]", self.body);
+        }
+        format!(
+            "{}|{}",
+            &self.body[..self.cursor],
+            &self.body[self.cursor..]
+        )
+    }
+
+    pub fn save_succeeded(&mut self, result: &DraftSaveResult, submitted_body: &str) {
+        self.draft_id = Some(result.draft.id.clone());
+        self.source = result.draft.source.clone();
+        self.workspace_revision = result.workspace_revision;
+        self.draft_revision = result.draft.revision;
+        self.saved_body = Some(submitted_body.to_owned());
+        self.error_code = None;
+        self.error = None;
+    }
+
+    pub fn save_failed(&mut self, code: impl Into<String>, message: impl Into<String>) {
+        self.error_code = Some(code.into());
+        self.error = Some(message.into());
+    }
+
+    /// Keeps the conflicted editor body while giving it a new draft identity/revision base.
+    pub fn recover_as_new(&mut self, current_workspace_revision: u64) {
+        self.draft_id = None;
+        self.draft_revision = 0;
+        self.workspace_revision = current_workspace_revision;
+        self.saved_body = None;
+        self.error_code = None;
+        self.error = None;
+    }
+
+    pub fn discard_succeeded(&mut self, workspace_revision: u64) {
+        self.workspace_revision = workspace_revision;
+        self.draft_id = None;
+        self.draft_revision = 0;
+        self.body.clear();
+        self.cursor = 0;
+        self.select_all = false;
+        self.saved_body = None;
+        self.error_code = None;
+        self.error = None;
+    }
+
+    pub fn clear_new_draft(&mut self) {
+        if self.draft_id.is_none() {
+            self.body.clear();
+            self.cursor = 0;
+            self.select_all = false;
+            self.saved_body = None;
+            self.error_code = None;
+            self.error = None;
+        }
+    }
 }
 
 /// Converts a bounded Git unified patch into rows with exact base/head line numbers.

@@ -40,6 +40,9 @@ fn run() -> Result<Value, ContractError> {
     if args.first().is_some_and(|a| a == "prepare") {
         return prepare_command(&args[1..]);
     }
+    if args.first().is_some_and(|a| a == "draft") {
+        return draft_command(&args[1..]);
+    }
     if args.first().is_some_and(|a| a == "inspect") {
         return inspect_command(&args[1..]);
     }
@@ -203,8 +206,9 @@ fn with_discussion_summary(mut manifest: Value, state: &str) -> Result<Value, Co
     let preparation_id = manifest
         .get("preparation_id")
         .and_then(Value::as_str)
-        .ok_or_else(arguments)?;
-    let summary = bodh::latest_discussion_summary(std::path::Path::new(state), preparation_id)?;
+        .ok_or_else(arguments)?
+        .to_owned();
+    let summary = bodh::latest_discussion_summary(std::path::Path::new(state), &preparation_id)?;
     if let Some(object) = manifest.as_object_mut() {
         object.insert(
             "discussions_complete".into(),
@@ -214,8 +218,105 @@ fn with_discussion_summary(mut manifest: Value, state: &str) -> Result<Value, Co
                 .unwrap_or(Value::Bool(false)),
         );
         object.insert("discussions".into(), summary);
+        let drafts = bodh::DraftStore::open(std::path::Path::new(state))?.list(&preparation_id)?;
+        object.insert(
+            "expected_generation".into(),
+            json!(drafts.workspace_revision),
+        );
+        object.insert("draft_counts".into(), json!(drafts.counts));
     }
     Ok(manifest)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DraftSaveInput {
+    draft_id: Option<String>,
+    body: String,
+    source: bodh::SourceRef,
+    expected_workspace_revision: u64,
+    expected_draft_revision: u64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DraftDiscardInput {
+    draft_id: String,
+    expected_workspace_revision: u64,
+    expected_draft_revision: u64,
+}
+
+fn draft_command(args: &[String]) -> Result<Value, ContractError> {
+    match args.first().map(String::as_str) {
+        Some("list") => {
+            let o = options(&args[1..], &["--prepared", "--state"])?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let snapshot = bodh::DraftStore::open(std::path::Path::new(state))?.list(prepared)?;
+            serde_json::to_value(snapshot).map_err(|_| {
+                ContractError::new("SERIALIZATION_ERROR", "Cannot encode draft state", "")
+            })
+        }
+        Some("save") => {
+            let o = options(
+                &args[1..],
+                &["--prepared", "--state", "--input", "--timeout-ms"],
+            )?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let input = o.get("--input").ok_or_else(arguments)?;
+            let request: DraftSaveInput =
+                serde_json::from_slice(&read_input(input)?).map_err(|_| {
+                    ContractError::new(
+                        "DRAFT_INPUT_INVALID",
+                        "Expected a valid draft save request",
+                        "",
+                    )
+                })?;
+            let mut store = bodh::DraftStore::open(std::path::Path::new(state))?;
+            let saved = store.save(
+                prepared,
+                request.draft_id.as_deref(),
+                &request.body,
+                &request.source,
+                request.expected_workspace_revision,
+                request.expected_draft_revision,
+                &inspect_control(&o)?,
+            )?;
+            serde_json::to_value(saved).map_err(|_| {
+                ContractError::new("SERIALIZATION_ERROR", "Cannot encode saved draft", "")
+            })
+        }
+        Some("discard") => {
+            let o = options(&args[1..], &["--prepared", "--state", "--input"])?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let input = o.get("--input").ok_or_else(arguments)?;
+            let request: DraftDiscardInput =
+                serde_json::from_slice(&read_input(input)?).map_err(|_| {
+                    ContractError::new(
+                        "DRAFT_INPUT_INVALID",
+                        "Expected a valid draft discard request",
+                        "",
+                    )
+                })?;
+            let mut store = bodh::DraftStore::open(std::path::Path::new(state))?;
+            let snapshot = store.discard(
+                prepared,
+                &request.draft_id,
+                request.expected_workspace_revision,
+                request.expected_draft_revision,
+            )?;
+            serde_json::to_value(snapshot).map_err(|_| {
+                ContractError::new(
+                    "SERIALIZATION_ERROR",
+                    "Cannot encode discarded draft state",
+                    "",
+                )
+            })
+        }
+        _ => Err(arguments()),
+    }
 }
 fn inspect_control(
     o: &std::collections::BTreeMap<String, String>,
@@ -318,7 +419,7 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
 }
 fn exit_category(error: &ContractError) -> i32 {
     match error.code.as_str() {
-        "CONTEXT_MISMATCH" => 3,
+        "CONTEXT_MISMATCH" | "WORKSPACE_REVISION_STALE" | "DRAFT_REVISION_STALE" => 3,
         "AUTH_ACCESS" | "GIT_UNAVAILABLE" | "GH_UNAVAILABLE" | "GIT_OBJECT_UNAVAILABLE" => 4,
         "OPERATION_TIMEOUT" | "CANCELLED" | "NETWORK_UNCERTAIN" => 5,
         "GIT_FAILED" | "STATE_UNAVAILABLE" | "STATE_INVALID" | "GH_RESPONSE_INVALID" => 10,
@@ -328,7 +429,7 @@ fn exit_category(error: &ContractError) -> i32 {
 fn arguments() -> ContractError {
     ContractError::new(
         "INVALID_ARGUMENTS",
-        "Use contract describe/schema, prepare --repo <checkout> --pr <number> --state <database> [--remote <name>], inspect --prepared <id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>, or a validate command; optional --json",
+        "Use contract describe/schema, prepare --repo <checkout> --pr <number> --state <database> [--remote <name>], inspect --prepared <id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>, draft list|save|discard, or a validate command; optional --json",
         "",
     )
 }
