@@ -1542,6 +1542,24 @@ impl Product {
                         }
                     });
                 }
+                if pending.is_none()
+                    && let Some(snapshot) = self.replacement_snapshot.as_ref()
+                {
+                    intent.selected_replacements.retain_mut(|selected| {
+                        if let Some(draft) =
+                            snapshot.drafts.iter().find(|draft| draft.id == selected.id)
+                        {
+                            if selected.revision != draft.revision {
+                                selected.revision = draft.revision;
+                                stale_selection = true;
+                            }
+                            true
+                        } else {
+                            stale_selection = true;
+                            false
+                        }
+                    });
+                }
                 self.review_intent = Some(intent);
                 self.screen = Screen::FinishReview;
                 self.error = None;
@@ -1575,6 +1593,7 @@ impl Product {
             expected_workspace_revision: snapshot.workspace_revision,
             expected_intent_revision: intent.revision,
             selected: intent.selected.clone(),
+            selected_replacements: intent.selected_replacements.clone(),
             summary: if self.review_summary.trim().is_empty() {
                 None
             } else {
@@ -1613,6 +1632,35 @@ impl Product {
             .and_then(|s| s.drafts.iter().find(|d| d.id == id))
         {
             intent.selected.push(SelectedDraft {
+                id: draft.id.clone(),
+                revision: draft.revision,
+            });
+        }
+        self.save_review_intent();
+        cx.notify();
+    }
+
+    fn toggle_review_replacement(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self
+            .review_plan
+            .as_ref()
+            .is_some_and(|plan| matches!(plan.state.as_str(), "planned" | "sending" | "unknown"))
+        {
+            self.status = Some("This operation is already planned or has an uncertain outcome. Reconcile it before changing its drafts.".into());
+            cx.notify();
+            return;
+        }
+        let Some(intent) = self.review_intent.as_mut() else {
+            return;
+        };
+        if let Some(index) = intent.selected_replacements.iter().position(|s| s.id == id) {
+            intent.selected_replacements.remove(index);
+        } else if let Some(draft) = self
+            .replacement_snapshot
+            .as_ref()
+            .and_then(|s| s.drafts.iter().find(|d| d.id == id))
+        {
+            intent.selected_replacements.push(SelectedDraft {
                 id: draft.id.clone(),
                 revision: draft.revision,
             });
@@ -1708,9 +1756,60 @@ impl Product {
                 let publisher=GhReviewPublisher{executable:PathBuf::from("gh"),checkout:PathBuf::from(&binding.checkout),timeout:Duration::from_secs(35)};
                 let operation=store.publish_confirmed(&plan.id,&remote,&publisher,&control)?;
                 let snapshot=if operation.state=="confirmed" { Some(DraftStore::open(&state)?.list(&binding.preparation_id)?) } else { None };
-                Ok::<_,bodh::ContractError>((operation,snapshot))
+                let replacements=if operation.state=="confirmed" { Some(DraftStore::open(&state)?.list_replacements(&binding.preparation_id)?) } else { None };
+                Ok::<_,bodh::ContractError>((operation,snapshot,replacements))
             }).await;
-            let _=weak.update(cx,|this,cx| { if this.operation_epoch.load(Ordering::Relaxed)!=token{return;} this.review_loading=false; this.active_control=None; match result { Ok((operation,snapshot))=>{if let Some(snapshot)=snapshot {this.update_draft_counts(snapshot.counts.clone());this.draft_snapshot=Some(snapshot);} this.status=Some(match operation.state.as_str(){"confirmed"=>format!("Review published · {}",operation.remote_url.as_deref().unwrap_or(operation.remote_review_id.as_deref().unwrap_or("confirmed"))),"failed"=>format!("GitHub rejected this review: {}",operation.failure.as_deref().unwrap_or("unknown error")),_=>format!("Publication outcome is uncertain. Do not resend. Reconcile operation {} before continuing.",operation.id)});this.review_plan=Some(operation);this.error=None;},Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;} } cx.notify(); });
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.review_loading = false;
+                this.active_control = None;
+                match result {
+                    Ok((operation, snapshot, replacements)) => {
+                        if let Some(snapshot) = snapshot {
+                            this.update_draft_counts(snapshot.counts.clone());
+                            this.draft_snapshot = Some(snapshot);
+                        }
+                        if let Some(replacements) = replacements {
+                            this.replacement_snapshot = Some(replacements);
+                        }
+                        this.status = Some(match operation.state.as_str() {
+                            "confirmed" => format!(
+                                "Review published · {}",
+                                operation.remote_url.as_deref().unwrap_or(
+                                    operation.remote_review_id.as_deref().unwrap_or("confirmed")
+                                )
+                            ),
+                            "failed"
+                                if operation.failure.as_deref().is_some_and(|f| {
+                                    f.starts_with("No GitHub request was sent.")
+                                }) =>
+                            {
+                                format!(
+                                    "Nothing was sent to GitHub: {}",
+                                    operation.failure.as_deref().unwrap_or("validation failed")
+                                )
+                            }
+                            "failed" => format!(
+                                "GitHub rejected this review: {}",
+                                operation.failure.as_deref().unwrap_or("unknown error")
+                            ),
+                            _ => format!(
+                                "Publication outcome is uncertain. Do not resend. Reconcile operation {} before continuing.",
+                                operation.id
+                            ),
+                        });
+                        this.review_plan = Some(operation);
+                        this.error = None;
+                    }
+                    Err(error) => {
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                        this.status = None;
+                    }
+                }
+                cx.notify();
+            });
         }).detach();
     }
 
@@ -2521,6 +2620,92 @@ impl Product {
                 page = page.child(entry);
             }
         }
+        let selected_replacements = intent
+            .as_ref()
+            .map(|i| {
+                i.selected_replacements
+                    .iter()
+                    .map(|s| s.id.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let replacements = self
+            .replacement_snapshot
+            .as_ref()
+            .map(|s| s.drafts.clone())
+            .unwrap_or_default();
+        page = page.child(section_title(
+            "Code replacement suggestions · select or unstage",
+            p,
+        ));
+        if replacements.is_empty() {
+            page = page.child(empty_card("No code replacements saved", "Replacement suggestions are authored in Changes and remain local until you publish a confirmed review.", p));
+        } else {
+            for draft in replacements {
+                let id = draft.id.clone();
+                let select_id = id.clone();
+                let edit_id = id.clone();
+                let label = if selected_replacements.contains(id.as_str()) {
+                    "✓ Selected"
+                } else {
+                    "＋ Add suggestion"
+                };
+                page = page.child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap_3()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.panel))
+                        .child(button(
+                            &format!("review-replacement-select-{id}"),
+                            label,
+                            p,
+                            move |this, _, _, cx| this.toggle_review_replacement(&select_id, cx),
+                            cx,
+                        ))
+                        .child(button(
+                            &format!("review-replacement-edit-{id}"),
+                            "Edit in Changes",
+                            p,
+                            move |this, _, _, cx| {
+                                this.screen = Screen::Workspace;
+                                this.active_tab = WorkspaceTab::Changes;
+                                this.resume_code_replacement(&edit_id, cx);
+                                cx.notify();
+                            },
+                            cx,
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .font_family("DejaVu Sans Mono")
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.muted))
+                                        .child(source_title(&draft.source)),
+                                )
+                                .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
+                                    format!(
+                                        "Replace {} character(s)",
+                                        draft.original_text.chars().count()
+                                    ),
+                                ))
+                                .child(
+                                    div()
+                                        .font_family("DejaVu Sans Mono")
+                                        .child(draft.replacement),
+                                ),
+                        ),
+                );
+            }
+        }
         page = page.child(section_title("Review event · choose explicitly", p));
         let event = intent.as_ref().and_then(|i| i.event);
         let events = [
@@ -2576,9 +2761,10 @@ impl Product {
             page = page.child(section_title("Exact confirmed plan", p));
             page = page.child(empty_card(
                 &format!(
-                    "{} · {} inline comment(s)",
+                    "{} · {} inline comment(s) · {} code suggestion(s)",
                     format!("{:?}", plan.payload.event).to_ascii_uppercase(),
-                    plan.payload.comments.len()
+                    plan.payload.comments.len(),
+                    plan.payload.suggestions.len()
                 ),
                 &format!(
                     "Summary: {}",
@@ -2601,6 +2787,28 @@ impl Product {
                                 .child(source_title(&comment.source)),
                         )
                         .child(comment.body.clone()),
+                );
+            }
+            for suggestion in &plan.payload.suggestions {
+                page = page.child(
+                    div()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.raised))
+                        .child(
+                            div()
+                                .font_family("DejaVu Sans Mono")
+                                .text_size(px(11.))
+                                .text_color(rgb(p.muted))
+                                .child(source_title(&suggestion.source)),
+                        )
+                        .child(
+                            div()
+                                .font_family("DejaVu Sans Mono")
+                                .text_size(px(11.))
+                                .child(suggestion.body.clone()),
+                        ),
                 );
             }
             page = page.child(
@@ -2631,8 +2839,12 @@ impl Product {
                 );
             }
         } else {
-            let can_confirm =
-                intent.as_ref().is_some_and(|i| i.event.is_some()) && !self.review_loading;
+            let can_confirm = intent.as_ref().is_some_and(|i| {
+                i.event.is_some()
+                    && (!i.selected.is_empty()
+                        || !i.selected_replacements.is_empty()
+                        || !self.review_summary.trim().is_empty())
+            }) && !self.review_loading;
             if can_confirm {
                 page = page.child(button(
                     "confirm-review-plan",
@@ -4131,6 +4343,7 @@ fn pending_draft_count(counts: &bodh::DraftCounts) -> u32 {
         .inline_comments
         .saturating_add(counts.replies)
         .saturating_add(counts.thread_intents)
+        .saturating_add(counts.code_replacements)
         .saturating_add(counts.review_comments)
         .min(u64::from(u32::MAX)) as u32
 }

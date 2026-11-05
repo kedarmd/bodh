@@ -3,7 +3,10 @@
 //! Intent and operation payloads are stored separately from drafts. Network I/O
 //! always happens after the journal leaves SQLite; interrupted sends are unknown
 //! and deliberately cannot be retried through this API.
-use crate::{ContractError, DraftStore, OperationControl, PreparationStore, SourceRef, diff_index};
+use crate::{
+    ContractError, DraftStore, OperationControl, PreparationStore, Revision, SourceRef, diff_index,
+    read_source,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -37,6 +40,8 @@ pub struct ReviewIntent {
     pub preparation_id: String,
     pub revision: u64,
     pub selected: Vec<SelectedDraft>,
+    #[serde(default)]
+    pub selected_replacements: Vec<SelectedDraft>,
     pub summary: Option<String>,
     /// `None` is a real state; callers must never infer APPROVE.
     pub event: Option<ReviewEvent>,
@@ -65,6 +70,8 @@ pub struct ReviewPayload {
     pub event: ReviewEvent,
     pub summary: Option<String>,
     pub comments: Vec<ReviewPayloadComment>,
+    #[serde(default)]
+    pub suggestions: Vec<ReviewPayloadSuggestion>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,6 +81,19 @@ pub struct ReviewPayloadComment {
     pub draft_revision: u64,
     pub body: String,
     pub source: SourceRef,
+}
+
+/// A code suggestion is constructed from a structured human replacement and
+/// binds the exact source text and draft revision used to build the body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewPayloadSuggestion {
+    pub draft_id: String,
+    pub draft_revision: u64,
+    pub source: SourceRef,
+    pub original_text: String,
+    pub replacement: String,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -90,6 +110,35 @@ pub struct ReviewOperation {
 
 pub struct ReviewPublicationStore {
     db: Connection,
+    path: PathBuf,
+}
+
+/// Encodes replacement text as GitHub's suggestion block. A longer fence is
+/// used when the replacement itself contains a backtick fence.
+pub fn suggestion_markdown(replacement: &str) -> Result<String, ContractError> {
+    if replacement.chars().count() > 65_536 {
+        return Err(invalid(
+            "Replacement exceeds the supported length",
+            "/replacement",
+        ));
+    }
+    let mut longest_run = 0usize;
+    let mut current_run = 0usize;
+    for ch in replacement.chars() {
+        if ch == '`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    let fence = "`".repeat(3usize.max(longest_run.saturating_add(1)));
+    let mut body = format!("{fence}suggestion\n{replacement}");
+    if !replacement.ends_with('\n') {
+        body.push('\n');
+    }
+    body.push_str(&fence);
+    Ok(body)
 }
 
 impl ReviewPublicationStore {
@@ -118,7 +167,11 @@ impl ReviewPublicationStore {
             1 => {},
             _ => return Err(ContractError::new("REVIEW_SCHEMA_UNSUPPORTED", "Review publication schema is newer than this application", "")),
         }
-        Ok(Self { db })
+        db.execute_batch("CREATE TABLE IF NOT EXISTS review_published_replacements(operation_id TEXT NOT NULL REFERENCES review_operations(operation_id), preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), context_id TEXT NOT NULL, draft_id TEXT NOT NULL, draft_revision INTEGER NOT NULL, PRIMARY KEY(operation_id,draft_id,draft_revision));").map_err(db_error)?;
+        Ok(Self {
+            db,
+            path: path.to_path_buf(),
+        })
     }
 
     pub fn intent(&self, preparation_id: &str) -> Result<ReviewIntent, ContractError> {
@@ -137,6 +190,7 @@ impl ReviewPublicationStore {
                 preparation_id: preparation_id.into(),
                 revision: 0,
                 selected: vec![],
+                selected_replacements: vec![],
                 summary: None,
                 event: None,
             }),
@@ -156,6 +210,8 @@ impl ReviewPublicationStore {
             ));
         }
         let drafts = DraftStore::open(&request.state)?.list(&request.preparation_id)?;
+        let replacements =
+            DraftStore::open(&request.state)?.list_replacements(&request.preparation_id)?;
         if drafts.workspace_revision != request.expected_workspace_revision {
             return Err(ContractError::new(
                 "WORKSPACE_REVISION_STALE",
@@ -182,6 +238,27 @@ impl ReviewPublicationStore {
                 ));
             }
         }
+        for selected in &request.selected_replacements {
+            if !ids.insert(selected.id.as_str()) {
+                return Err(invalid(
+                    "Selected draft IDs must be unique across comments and suggestions",
+                    "/selected_replacements",
+                ));
+            }
+            let Some(draft) = replacements.drafts.iter().find(|d| d.id == selected.id) else {
+                return Err(invalid(
+                    "Selected replacement is no longer available",
+                    "/selected_replacements",
+                ));
+            };
+            if draft.revision != selected.revision {
+                return Err(ContractError::new(
+                    "DRAFT_REVISION_STALE",
+                    "A selected replacement changed; reload before staging the review",
+                    "/selected_replacements",
+                ));
+            }
+        }
         let current = self.intent(&request.preparation_id)?;
         if current.revision != request.expected_intent_revision {
             return Err(ContractError::new(
@@ -195,6 +272,7 @@ impl ReviewPublicationStore {
             preparation_id: request.preparation_id,
             revision: next,
             selected: request.selected,
+            selected_replacements: request.selected_replacements,
             summary: request.summary,
             event: request.event,
         };
@@ -262,7 +340,10 @@ impl ReviewPublicationStore {
         if remote.pull_request_id.trim().is_empty() {
             return Err(invalid("GitHub did not return a pull request node ID", ""));
         }
-        if intent.selected.is_empty() && intent.summary.as_deref().unwrap_or("").trim().is_empty() {
+        if intent.selected.is_empty()
+            && intent.selected_replacements.is_empty()
+            && intent.summary.as_deref().unwrap_or("").trim().is_empty()
+        {
             return Err(invalid(
                 "Select at least one comment or write a review summary",
                 "",
@@ -277,6 +358,14 @@ impl ReviewPublicationStore {
             ));
         }
         let draft_snapshot = DraftStore::open(state)?.list(preparation_id)?;
+        let replacement_snapshot = DraftStore::open(state)?.list_replacements(preparation_id)?;
+        if replacement_snapshot.workspace_revision != draft_snapshot.workspace_revision {
+            return Err(ContractError::new(
+                "WORKSPACE_REVISION_STALE",
+                "Workspace content changed; reload before confirming the review",
+                "",
+            ));
+        }
         let index = diff_index(Path::new(&binding.checkout), &binding.context, control)?;
         let mut comments = Vec::with_capacity(intent.selected.len());
         for selected in &intent.selected {
@@ -300,6 +389,42 @@ impl ReviewPublicationStore {
                 source: draft.source.clone(),
             });
         }
+        let mut suggestions = Vec::with_capacity(intent.selected_replacements.len());
+        for selected in &intent.selected_replacements {
+            let draft = replacement_snapshot
+                .drafts
+                .iter()
+                .find(|draft| draft.id == selected.id)
+                .ok_or_else(|| {
+                    invalid(
+                        "Selected replacement no longer exists",
+                        "/selected_replacements",
+                    )
+                })?;
+            if draft.revision != selected.revision {
+                return Err(ContractError::new(
+                    "DRAFT_REVISION_STALE",
+                    "A selected replacement changed; reopen Finish Review",
+                    "/selected_replacements",
+                ));
+            }
+            validate_replacement_target(
+                Path::new(&binding.checkout),
+                &binding.context,
+                &draft.source,
+                &draft.original_text,
+                control,
+                &index,
+            )?;
+            suggestions.push(ReviewPayloadSuggestion {
+                draft_id: draft.id.clone(),
+                draft_revision: draft.revision,
+                source: draft.source.clone(),
+                original_text: draft.original_text.clone(),
+                replacement: draft.replacement.clone(),
+                body: suggestion_markdown(&draft.replacement)?,
+            });
+        }
         let payload = ReviewPayload {
             preparation_id: preparation_id.into(),
             context_id: binding.context.context_id,
@@ -311,6 +436,7 @@ impl ReviewPublicationStore {
             event,
             summary: intent.summary,
             comments,
+            suggestions,
         };
         let payload_json = serde_json::to_string(&payload).map_err(json_error)?;
         let fingerprint = format!("{:x}", Sha256::digest(payload_json.as_bytes()));
@@ -364,6 +490,7 @@ impl ReviewPublicationStore {
             ));
         }
         verify_remote_state(&operation.payload, remote)?;
+        verify_replacement_revisions(&tx, &operation.payload)?;
         tx.execute("UPDATE review_operations SET state='sending',updated_at=?1 WHERE operation_id=?2 AND state='planned'", params![now_ms(), operation_id]).map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         let mut updated = operation;
@@ -414,6 +541,9 @@ impl ReviewPublicationStore {
             for comment in payload.comments {
                 tx.execute("INSERT OR IGNORE INTO review_published_drafts(operation_id,preparation_id,context_id,draft_id,draft_revision) VALUES(?1,?2,?3,?4,?5)",params![operation_id,payload.preparation_id,payload.context_id,comment.draft_id,i64::try_from(comment.draft_revision).map_err(|_|state_error())?]).map_err(db_error)?;
             }
+            for suggestion in payload.suggestions {
+                tx.execute("INSERT OR IGNORE INTO review_published_replacements(operation_id,preparation_id,context_id,draft_id,draft_revision) VALUES(?1,?2,?3,?4,?5)",params![operation_id,payload.preparation_id,payload.context_id,suggestion.draft_id,i64::try_from(suggestion.draft_revision).map_err(|_|state_error())?]).map_err(db_error)?;
+            }
         }
         tx.commit().map_err(db_error)?;
         self.operation(operation_id)
@@ -458,9 +588,54 @@ impl ReviewPublicationStore {
         publisher: &dyn ReviewPublisher,
         control: &OperationControl,
     ) -> Result<ReviewOperation, ContractError> {
-        let sending = self.begin_send(operation_id, remote)?;
+        let plan = self.operation(operation_id)?;
+        let binding = PreparationStore::open(&self.path)?.load(&plan.payload.preparation_id)?;
+        let index = diff_index(Path::new(&binding.checkout), &binding.context, control)?;
+        for suggestion in &plan.payload.suggestions {
+            if suggestion.body != suggestion_markdown(&suggestion.replacement)? {
+                let failure = ContractError::new(
+                    "REVIEW_PLAN_INVALID",
+                    "The confirmed suggestion body no longer matches its structured replacement",
+                    "/suggestions",
+                );
+                return self.fail_unstarted(operation_id, &failure.message);
+            }
+            if let Err(error) = validate_replacement_target(
+                Path::new(&binding.checkout),
+                &binding.context,
+                &suggestion.source,
+                &suggestion.original_text,
+                control,
+                &index,
+            ) {
+                return self.fail_unstarted(operation_id, &error.message);
+            }
+        }
+        // `begin_send` checks replacement IDs/revisions again inside the same
+        // immediate transaction that records the sending state. This closes the
+        // local edit race between the pinned Git read above and network I/O.
+        let sending = match self.begin_send(operation_id, remote) {
+            Ok(sending) => sending,
+            Err(error) if error.code == "DRAFT_REVISION_STALE" => {
+                return self.fail_unstarted(operation_id, &error.message);
+            }
+            Err(error) => return Err(error),
+        };
         let outcome = publisher.publish(&sending.payload, control);
         self.finish_send(operation_id, outcome)
+    }
+
+    fn fail_unstarted(
+        &mut self,
+        operation_id: &str,
+        message: &str,
+    ) -> Result<ReviewOperation, ContractError> {
+        let failure = format!("No GitHub request was sent. {message}");
+        self.db.execute(
+            "UPDATE review_operations SET state='failed',failure=?1,updated_at=?2 WHERE operation_id=?3 AND state='planned'",
+            params![bound(&failure), now_ms(), operation_id],
+        ).map_err(db_error)?;
+        self.operation(operation_id)
     }
 }
 
@@ -471,8 +646,45 @@ pub struct StageReviewRequest {
     pub expected_workspace_revision: u64,
     pub expected_intent_revision: u64,
     pub selected: Vec<SelectedDraft>,
+    pub selected_replacements: Vec<SelectedDraft>,
     pub summary: Option<String>,
     pub event: Option<ReviewEvent>,
+}
+
+fn verify_replacement_revisions(
+    tx: &rusqlite::Transaction<'_>,
+    payload: &ReviewPayload,
+) -> Result<(), ContractError> {
+    for suggestion in &payload.suggestions {
+        let row: Option<(String, String, String, i64)> = tx
+            .query_row(
+                "SELECT source_json,original_text,replacement,revision
+                 FROM code_replacement_drafts WHERE draft_id=?1 AND context_id=?2",
+                params![suggestion.draft_id, payload.context_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let Some((source, original, replacement, revision)) = row else {
+            return Err(ContractError::new(
+                "DRAFT_REVISION_STALE",
+                "A selected replacement was removed after confirmation; no GitHub request was sent",
+                "/suggestions",
+            ));
+        };
+        if source != serde_json::to_string(&suggestion.source).map_err(json_error)?
+            || original != suggestion.original_text
+            || replacement != suggestion.replacement
+            || u64::try_from(revision).map_err(|_| state_error())? != suggestion.draft_revision
+        {
+            return Err(ContractError::new(
+                "DRAFT_REVISION_STALE",
+                "A selected replacement changed after confirmation; no GitHub request was sent",
+                "/suggestions",
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -501,29 +713,17 @@ pub struct GhReviewPublisher {
 }
 impl ReviewPublisher for GhReviewPublisher {
     fn publish(&self, payload: &ReviewPayload, control: &OperationControl) -> SendOutcome {
-        let comments: Vec<Value> = payload
+        let mut comments: Vec<Value> = payload
             .comments
             .iter()
-            .map(|c| {
-                let mut item = json!({"path": c.source.path, "body": c.body});
-                if let Some(map) = item.as_object_mut() {
-                    let revision = format!("{:?}", c.source.revision).to_ascii_uppercase();
-                    map.insert(
-                        "side".into(),
-                        Value::String(if revision == "HEAD" { "RIGHT" } else { "LEFT" }.into()),
-                    );
-                    map.insert("line".into(), json!(c.source.end_line));
-                    if c.source.start_line != c.source.end_line {
-                        map.insert("startLine".into(), json!(c.source.start_line));
-                        map.insert(
-                            "startSide".into(),
-                            Value::String(if revision == "HEAD" { "RIGHT" } else { "LEFT" }.into()),
-                        );
-                    }
-                }
-                item
-            })
+            .map(|comment| review_thread(comment.body.as_str(), &comment.source))
             .collect();
+        comments.extend(
+            payload
+                .suggestions
+                .iter()
+                .map(|suggestion| review_thread(&suggestion.body, &suggestion.source)),
+        );
         let mutation = "mutation($pullRequestId:ID!,$event:PullRequestReviewEvent!,$body:String,$commitOID:GitObjectID!,$threads:[DraftPullRequestReviewThread!]){addPullRequestReview(input:{pullRequestId:$pullRequestId,event:$event,body:$body,commitOID:$commitOID,threads:$threads}){pullRequestReview{id url state}}}";
         let event = match payload.event {
             ReviewEvent::Comment => "COMMENT",
@@ -577,6 +777,25 @@ impl ReviewPublisher for GhReviewPublisher {
             }
         }
     }
+}
+
+fn review_thread(body: &str, source: &SourceRef) -> Value {
+    let side = if source.revision == Revision::Head {
+        "RIGHT"
+    } else {
+        "LEFT"
+    };
+    let mut thread = json!({
+        "path": source.path,
+        "body": body,
+        "side": side,
+        "line": source.end_line,
+    });
+    if source.start_line != source.end_line {
+        thread["startLine"] = json!(source.start_line);
+        thread["startSide"] = Value::String(side.into());
+    }
+    thread
 }
 
 enum ProcessFailure {
@@ -831,6 +1050,34 @@ fn verify_remote_state(
 fn invalid(message: &str, pointer: &str) -> ContractError {
     ContractError::new("REVIEW_PLAN_INVALID", message, pointer)
 }
+
+fn validate_replacement_target(
+    checkout: &Path,
+    context: &crate::ReviewContext,
+    source: &SourceRef,
+    expected: &str,
+    control: &OperationControl,
+    index: &crate::DiffIndex,
+) -> Result<(), ContractError> {
+    if source.revision != Revision::Head {
+        return Err(ContractError::new(
+            "REPLACEMENT_HEAD_ONLY",
+            "Code suggestions must target the reviewed head side",
+            "/source/revision",
+        ));
+    }
+    index.validate_anchor(source)?;
+    let exact = read_source(checkout, context, source, control)?;
+    if exact != expected {
+        return Err(ContractError::new(
+            "REPLACEMENT_SOURCE_CHANGED",
+            "The exact pinned head text changed; revalidate this replacement before sending",
+            "/original_text",
+        ));
+    }
+    Ok(())
+}
+
 fn state_error() -> ContractError {
     ContractError::new(
         "STATE_INVALID",
