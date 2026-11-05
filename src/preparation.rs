@@ -467,12 +467,25 @@ pub fn prepare_local_pr_with_gh(
         description.as_deref(),
         &diff.files,
     )?;
+    let pull_request_state = api
+        .get("state")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    crate::record_initial_remote_snapshot(
+        state,
+        &binding.preparation_id,
+        base_ref,
+        head_ref,
+        &context.base_sha,
+        &context.head_sha,
+        pull_request_state,
+    )?;
     let _ = url;
     let _ = remote;
     Ok(binding.into())
 }
 
-fn run_gh(
+pub(crate) fn run_gh(
     program: &Path,
     args: &[&str],
     control: &crate::OperationControl,
