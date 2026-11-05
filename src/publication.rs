@@ -148,10 +148,9 @@ pub fn suggestion_markdown(replacement: &str) -> Result<String, ContractError> {
 impl ReviewPublicationStore {
     pub fn open(path: &Path) -> Result<Self, ContractError> {
         let db = Connection::open(path).map_err(db_error)?;
-        db.busy_timeout(Duration::from_secs(5)).map_err(db_error)?;
-        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
-            .map_err(db_error)?;
+        crate::sqlite::configure(&db).map_err(db_error)?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS review_publication_migrations(version INTEGER PRIMARY KEY); ").map_err(db_error)?;
+        db.execute_batch("BEGIN IMMEDIATE;").map_err(db_error)?;
         let version: Option<i64> = db
             .query_row(
                 "SELECT max(version) FROM review_publication_migrations",
@@ -162,15 +161,19 @@ impl ReviewPublicationStore {
             .map_err(db_error)?
             .flatten();
         match version.unwrap_or(0) {
-            0 => db.execute_batch("BEGIN IMMEDIATE;
+            0 => db.execute_batch("
                 CREATE TABLE review_intents(preparation_id TEXT PRIMARY KEY NOT NULL REFERENCES preparations(preparation_id), revision INTEGER NOT NULL, intent_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
                 CREATE TABLE review_operations(operation_id TEXT PRIMARY KEY NOT NULL, preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('planned','sending','confirmed','failed','unknown')), payload_json TEXT NOT NULL, remote_review_id TEXT, remote_url TEXT, failure TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
                 CREATE TABLE review_published_drafts(operation_id TEXT NOT NULL REFERENCES review_operations(operation_id), preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), context_id TEXT NOT NULL, draft_id TEXT NOT NULL, draft_revision INTEGER NOT NULL, PRIMARY KEY(operation_id,draft_id,draft_revision));
                 CREATE UNIQUE INDEX one_unresolved_review_operation ON review_operations(preparation_id) WHERE state IN ('planned','sending','unknown');
-                INSERT INTO review_publication_migrations(version) VALUES(1); COMMIT;").map_err(db_error)?,
+                INSERT INTO review_publication_migrations(version) VALUES(1);").map_err(db_error)?,
             1 => {},
-            _ => return Err(ContractError::new("REVIEW_SCHEMA_UNSUPPORTED", "Review publication schema is newer than this application", "")),
+            _ => {
+                let _ = db.execute_batch("ROLLBACK;");
+                return Err(ContractError::new("REVIEW_SCHEMA_UNSUPPORTED", "Review publication schema is newer than this application", ""));
+            },
         }
+        db.execute_batch("COMMIT;").map_err(db_error)?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS review_published_replacements(operation_id TEXT NOT NULL REFERENCES review_operations(operation_id), preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), context_id TEXT NOT NULL, draft_id TEXT NOT NULL, draft_revision INTEGER NOT NULL, PRIMARY KEY(operation_id,draft_id,draft_revision));").map_err(db_error)?;
         Ok(Self {
             db,

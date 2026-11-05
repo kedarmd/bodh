@@ -7,7 +7,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,9 +69,7 @@ impl FindingTriageStore {
         drop(PreparationStore::open(path)?);
         drop(GeneratedReviewStore::open(path)?);
         let db = Connection::open(path).map_err(db_error)?;
-        db.busy_timeout(Duration::from_secs(5)).map_err(db_error)?;
-        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
-            .map_err(db_error)?;
+        crate::sqlite::configure(&db).map_err(db_error)?;
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS finding_triage_migrations(version INTEGER PRIMARY KEY NOT NULL);
              CREATE TABLE IF NOT EXISTS finding_triage_entries(

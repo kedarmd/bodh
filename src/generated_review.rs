@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::{
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -360,9 +360,7 @@ impl GeneratedReviewStore {
 
 fn open_connection(path: &Path) -> Result<Connection, ContractError> {
     let db = Connection::open(path).map_err(db_error)?;
-    db.busy_timeout(Duration::from_secs(5)).map_err(db_error)?;
-    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
-        .map_err(db_error)?;
+    crate::sqlite::configure(&db).map_err(db_error)?;
     Ok(db)
 }
 

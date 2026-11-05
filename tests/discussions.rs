@@ -156,6 +156,58 @@ esac"#,
 }
 
 #[test]
+fn discussion_cache_keeps_the_latest_attempt_and_one_complete_fallback() {
+    let (root, state, binding) = fixture();
+    let complete = fake_gh(
+        &root,
+        r#"printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'"#,
+    );
+    let success = run_gh(&binding, &state, &complete);
+    assert_eq!(success["complete"], true);
+
+    let failure = fake_gh(&root, "echo 'HTTP 503 unavailable' >&2; exit 1");
+    for _ in 0..3 {
+        let partial = run_gh(&binding, &state, &failure);
+        assert_eq!(partial["complete"], false);
+    }
+    let db = rusqlite::Connection::open(&state).unwrap();
+    let retained: i64 = db
+        .query_row(
+            "SELECT count(*) FROM discussion_observations WHERE preparation_id=?1",
+            [&binding.preparation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let complete_count: i64 = db
+        .query_row(
+            "SELECT count(*) FROM discussion_observations WHERE preparation_id=?1 AND complete=1",
+            [&binding.preparation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(retained, 2, "keep current partial plus last complete cache");
+    assert_eq!(complete_count, 1);
+    assert_eq!(
+        load_latest_discussions(&state, &binding.preparation_id).unwrap()["complete"],
+        false
+    );
+
+    let refreshed = run_gh(&binding, &state, &complete);
+    assert_eq!(refreshed["complete"], true);
+    let retained: i64 = db
+        .query_row(
+            "SELECT count(*) FROM discussion_observations WHERE preparation_id=?1",
+            [&binding.preparation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        retained, 1,
+        "successful refresh replaces transient cache history"
+    );
+}
+
+#[test]
 fn repeated_cursors_duplicates_null_nodes_and_count_changes_are_incomplete() {
     let (root, state, binding) = fixture();
     let gh = fake_gh(
