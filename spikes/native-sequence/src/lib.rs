@@ -2,6 +2,7 @@
 pub mod gh_prerequisite;
 pub mod manual_review;
 pub mod preferences;
+pub mod repository_input;
 
 pub use manual_review::{
     DiffLine, DiffLineKind, MarkdownBlock, MarkdownBlockKind, SplitDiffRow, SyntaxSpan,
