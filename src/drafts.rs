@@ -182,6 +182,7 @@ impl DraftStore {
                 ));
             }
         }
+        drop(crate::ReviewPublicationStore::open(path)?);
         Ok(Self { db })
     }
 
@@ -196,6 +197,11 @@ impl DraftStore {
                 "SELECT draft_id, body, source_json, provenance_json, revision, created_at, updated_at
                  FROM manual_text_drafts
                  WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5
+                   AND NOT EXISTS (
+                       SELECT 1 FROM review_published_drafts p
+                       WHERE p.context_id=?6 AND p.draft_id=manual_text_drafts.draft_id
+                         AND p.draft_revision=manual_text_drafts.revision
+                   )
                  ORDER BY created_at, draft_id",
             )
             .map_err(db_error)?;
@@ -206,6 +212,7 @@ impl DraftStore {
                     pr.owner,
                     pr.repository,
                     i64::try_from(pr.number).map_err(|_| state_error())?,
+                    prepared.context.context_id,
                     prepared.context.context_id
                 ],
                 |r| {
@@ -742,13 +749,16 @@ fn count_drafts(
     context_id: &str,
 ) -> Result<usize, ContractError> {
     tx.query_row(
-        "SELECT count(*) FROM manual_text_drafts
-         WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5",
+        "SELECT count(*) FROM manual_text_drafts d
+         WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5
+           AND NOT EXISTS (SELECT 1 FROM review_published_drafts p
+               WHERE p.context_id=?6 AND p.draft_id=d.draft_id AND p.draft_revision=d.revision)",
         params![
             pr.host,
             pr.owner,
             pr.repository,
             i64::try_from(pr.number).map_err(|_| state_error())?,
+            context_id,
             context_id
         ],
         |r| r.get::<_, i64>(0),
