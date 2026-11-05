@@ -462,6 +462,28 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 1, 2, 3]
         );
+        for (index, (interaction, link)) in interactions.iter().zip(&adapted.links).enumerate() {
+            assert_eq!(
+                adapted.scene.rows[index].interaction, index,
+                "diagram hit row must retain its original interaction index"
+            );
+            let source = link
+                .source
+                .as_ref()
+                .expect("fixture interaction has a source");
+            assert_eq!(interaction.source.start, source.start_line as usize);
+            assert_eq!(interaction.source.end, source.end_line as usize);
+            assert_eq!(
+                (interaction.label.as_str(), link.id.as_str()),
+                [
+                    ("Send request", "call"),
+                    ("Return value", "ok"),
+                    ("Show error", "failure"),
+                    ("Record request", "record"),
+                ][index],
+                "the visible interaction and its pinned source link stay aligned"
+            );
+        }
     }
 
     #[test]

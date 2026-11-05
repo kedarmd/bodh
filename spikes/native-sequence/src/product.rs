@@ -4386,7 +4386,7 @@ impl Product {
                 .render_overview(&binding, p, cx, viewport_width, viewport_height)
                 .into_any_element(),
             WorkspaceTab::Changes => self
-                .render_changes(&binding, p, cx, viewport_width, viewport_height)
+                .render_changes(&binding, p, cx, viewport_width)
                 .into_any_element(),
             WorkspaceTab::Findings => self.render_findings(&binding, p, cx).into_any_element(),
         };
@@ -4871,6 +4871,7 @@ impl Product {
                     diagram.id
                 ))))
                 .track_scroll(scroll)
+                .on_scroll_wheel(|event, _, cx| stop_vertical_wheel_bubbling(event, cx))
                 .overflow_scroll()
                 .flex_1()
                 .min_h_0()
@@ -6190,7 +6191,6 @@ impl Product {
         p: Palette,
         cx: &mut Context<Self>,
         viewport_width: f32,
-        viewport_height: f32,
     ) -> impl IntoElement {
         let selected = self.selected_file;
         let source_width = self
@@ -6199,8 +6199,6 @@ impl Product {
             .clamp(300., (viewport_width - 520.).max(300.));
         let narrow_workspace = viewport_width < 800.;
         let file_width = 220.;
-        let pane_height =
-            (viewport_height - 190. - if narrow_workspace { 28. } else { 0. }).max(360.);
         let filtered = binding
             .changed_files
             .iter()
@@ -6221,22 +6219,14 @@ impl Product {
         let file_rows = filtered
             .iter()
             .map(|(index, file)| {
-                let name = file
-                    .new_path
-                    .as_deref()
-                    .or(file.old_path.as_deref())
-                    .unwrap_or("(unknown path)");
-                let label = if file.old_path.as_deref().is_some_and(|old| old != name) {
-                    format!(
-                        "{} → {}  {}",
-                        file.old_path.as_deref().unwrap(),
-                        name,
-                        file.status
-                    )
-                } else {
-                    format!("{name}  {}", file.status)
-                };
-                (*index, label)
+                (
+                    *index,
+                    changed_file_presentation(
+                        file.old_path.as_deref(),
+                        file.new_path.as_deref(),
+                        &file.status,
+                    ),
+                )
             })
             .collect::<Vec<_>>();
         let current_file = selected;
@@ -6253,9 +6243,13 @@ impl Product {
                         let owner = owner.clone();
                         div()
                             .id(file_index)
-                            .h(px(34.))
+                            .h(px(48.))
                             .w_full()
                             .px_2()
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .gap_0()
                             .border_1()
                             .border_color(rgb(p.border))
                             .bg(rgb(if current_file == Some(file_index) {
@@ -6268,10 +6262,38 @@ impl Product {
                             } else {
                                 p.muted
                             }))
-                            .text_size(px(12.))
-                            .overflow_hidden()
                             .cursor_pointer()
-                            .child(label)
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_size(px(12.))
+                                            .truncate()
+                                            .child(label.name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(px(10.))
+                                            .text_color(rgb(p.muted))
+                                            .child(label.status.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .min_w_0()
+                                    .text_size(px(10.))
+                                    .text_color(rgb(p.muted))
+                                    .truncate()
+                                    .child(label.directory.clone()),
+                            )
                             .on_click(move |_, window, app| {
                                 let _ = owner.update(app, |this, cx| {
                                     window.focus(&this.focus);
@@ -6283,7 +6305,10 @@ impl Product {
             },
         )
         .track_scroll(self.file_scroll.clone())
-        .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+        .on_scroll_wheel(cx.listener(|this, event, _, cx| {
+            this.persist_navigation();
+            stop_vertical_wheel_bubbling(event, cx);
+        }))
         .flex_1()
         .min_h_0();
         let file_list = div()
@@ -6377,6 +6402,7 @@ impl Product {
                     .min_w_0()
                     .overflow_hidden()
                     .text_size(px(12.))
+                    .truncate()
                     .child(selected_path.to_owned()),
             );
         for (label, split) in [("Unified", false), ("Split", true)] {
@@ -6393,6 +6419,16 @@ impl Product {
                     cx,
                 )
                 .text_size(px(12.))
+                .border_color(rgb(if self.split_diff == split {
+                    p.accent
+                } else {
+                    p.border
+                }))
+                .bg(rgb(if self.split_diff == split {
+                    p.raised
+                } else {
+                    p.panel
+                }))
                 .text_color(rgb(if self.split_diff == split {
                     p.text
                 } else {
@@ -6413,6 +6449,7 @@ impl Product {
             let truncated = page.truncated;
             let mut rows_view = div()
                 .id("diff-rows")
+                .w_full()
                 .flex_1()
                 .min_h_0()
                 .overflow_hidden()
@@ -6474,9 +6511,13 @@ impl Product {
                 )
             }
             .track_scroll(self.diff_scroll.clone())
-            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+            .on_scroll_wheel(cx.listener(|this, event, _, cx| {
+                this.persist_navigation();
+                stop_vertical_wheel_bubbling(event, cx);
+            }))
             .flex_1()
             .min_h_0();
+            let virtual_rows = virtual_rows.w_full();
             rows_view = rows_view.child(virtual_rows);
             diff = diff.child(rows_view);
         } else {
@@ -6532,6 +6573,16 @@ impl Product {
                         cx,
                     )
                     .text_size(px(12.))
+                    .border_color(rgb(if self.source_revision == revision {
+                        p.accent
+                    } else {
+                        p.border
+                    }))
+                    .bg(rgb(if self.source_revision == revision {
+                        p.raised
+                    } else {
+                        p.panel
+                    }))
                     .text_color(rgb(if self.source_revision == revision {
                         p.text
                     } else {
@@ -6541,32 +6592,57 @@ impl Product {
             }
         }
         if self.source_ref.is_some() {
-            source_toolbar = source_toolbar.child(button(
-                "new-inline-comment-draft",
-                "Draft comment",
-                p,
-                |this, _, _, cx| this.begin_text_draft(cx),
-                cx,
-            ));
+            let draft_editor_open = self.draft_editor.is_some();
+            source_toolbar = source_toolbar.child(
+                button(
+                    "new-inline-comment-draft",
+                    "Draft comment",
+                    p,
+                    |this, _, _, cx| this.begin_text_draft(cx),
+                    cx,
+                )
+                .border_color(rgb(if draft_editor_open {
+                    p.accent
+                } else {
+                    p.border
+                }))
+                .bg(rgb(if draft_editor_open { p.raised } else { p.panel })),
+            );
             if self
                 .source_ref
                 .as_ref()
                 .is_some_and(|source| source.revision == Revision::Head)
             {
-                source_toolbar = source_toolbar.child(button(
-                    "new-code-replacement-draft",
-                    "Draft replacement",
-                    p,
-                    |this, _, _, cx| this.begin_code_replacement(cx),
-                    cx,
-                ));
+                let replacement_editor_open = self.replacement_editor.is_some();
+                source_toolbar = source_toolbar.child(
+                    button(
+                        "new-code-replacement-draft",
+                        "Draft replacement",
+                        p,
+                        |this, _, _, cx| this.begin_code_replacement(cx),
+                        cx,
+                    )
+                    .border_color(rgb(if replacement_editor_open {
+                        p.accent
+                    } else {
+                        p.border
+                    }))
+                    .bg(rgb(if replacement_editor_open {
+                        p.raised
+                    } else {
+                        p.panel
+                    })),
+                );
             }
         }
         source = source.child(source_toolbar);
         let mut source_content = div()
             .id("pinned-source-content")
             .track_scroll(&self.source_scroll)
-            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+            .on_scroll_wheel(cx.listener(|this, event, _, cx| {
+                this.persist_navigation();
+                stop_vertical_wheel_bubbling(event, cx);
+            }))
             .overflow_scroll()
             .flex_1()
             .min_h_0()
@@ -6623,9 +6699,9 @@ impl Product {
             .id("changes-panes")
             .flex()
             .gap_2()
-            .h(px(pane_height))
-            .min_h(px(360.))
-            .overflow_scroll()
+            .flex_1()
+            .min_h_0()
+            .overflow_x_scroll()
             .child(file_list)
             .child(diff)
             .child(
@@ -6642,7 +6718,14 @@ impl Product {
                     ),
             )
             .child(source);
-        let mut workspace = div().w_full().min_w_0().flex().flex_col().gap_1();
+        let mut workspace = div()
+            .w_full()
+            .min_w_0()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap_1();
         if narrow_workspace {
             workspace = workspace.child(
                 div()
@@ -7144,6 +7227,82 @@ fn select_product_diagram_interaction(
     product.select_diagram_interaction(index, cx);
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChangedFilePresentation {
+    name: String,
+    directory: String,
+    status: String,
+}
+
+fn path_parts(path: Option<&str>) -> (&str, &str) {
+    let Some(path) = path else {
+        return ("(root)", "(unknown path)");
+    };
+    path.rsplit_once('/')
+        .map_or(("(root)", path), |(directory, name)| (directory, name))
+}
+
+fn changed_file_presentation(
+    old_path: Option<&str>,
+    new_path: Option<&str>,
+    status: &str,
+) -> ChangedFilePresentation {
+    let display_path = new_path.or(old_path);
+    let (directory, name) = path_parts(display_path);
+    let directory = match (old_path, new_path) {
+        (Some(old), Some(new)) if old != new => {
+            let (old_directory, _) = path_parts(Some(old));
+            let (new_directory, _) = path_parts(Some(new));
+            if old_directory == new_directory {
+                new_directory.to_owned()
+            } else {
+                format!("{old_directory} → {new_directory}")
+            }
+        }
+        _ => directory.to_owned(),
+    };
+    ChangedFilePresentation {
+        name: name.to_owned(),
+        directory,
+        status: status.to_owned(),
+    }
+}
+
+fn stop_vertical_wheel_bubbling(event: &ScrollWheelEvent, cx: &mut App) {
+    if !event.delta.pixel_delta(px(16.)).y.is_zero() {
+        cx.stop_propagation();
+    }
+}
+
+#[cfg(test)]
+mod changed_file_presentation_tests {
+    use super::changed_file_presentation;
+
+    #[test]
+    fn deep_paths_keep_the_filename_and_directory_separate_for_two_line_rows() {
+        let row = changed_file_presentation(
+            Some("config/quickshell/components/BarModule.qml"),
+            Some("config/quickshell/components/BarModule.qml"),
+            "M",
+        );
+        assert_eq!(row.name, "BarModule.qml");
+        assert_eq!(row.directory, "config/quickshell/components");
+        assert_eq!(row.status, "M");
+    }
+
+    #[test]
+    fn renames_show_the_new_filename_and_both_directories() {
+        let row = changed_file_presentation(
+            Some("old/widgets/Launcher.qml"),
+            Some("config/quickshell/LauncherBase.qml"),
+            "R100",
+        );
+        assert_eq!(row.name, "LauncherBase.qml");
+        assert_eq!(row.directory, "old/widgets → config/quickshell");
+        assert_eq!(row.status, "R100");
+    }
+}
+
 fn source_title(source: &SourceRef) -> String {
     let side = match source.revision {
         Revision::Base => "Base",
@@ -7406,10 +7565,19 @@ fn render_split_diff_row(
     );
     div()
         .id(("split-diff-row", index))
+        .w_full()
         .h(px(24.))
         .flex_shrink_0()
         .flex()
         .child(left_cell)
+        .child(
+            div()
+                .id(("split-diff-divider", index))
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(p.border)),
+        )
         .child(right_cell)
 }
 
@@ -7841,5 +8009,95 @@ mod gh_prerequisite_tests {
         .unwrap();
         assert!(result.is_empty());
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod nested_scroll_tests {
+    use super::stop_vertical_wheel_bubbling;
+    use gpui::{
+        AppContext, Context, InteractiveElement, IntoElement, Modifiers, ParentElement, Pixels,
+        Render, ScrollDelta, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement, Styled,
+        TestAppContext, Window, div, point, px,
+    };
+
+    struct NestedScrollView {
+        page: ScrollHandle,
+        diagram: ScrollHandle,
+        wheel_seen: std::rc::Rc<std::cell::Cell<bool>>,
+    }
+
+    impl Render for NestedScrollView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let wheel_seen = self.wheel_seen.clone();
+            div()
+                .id("page-scroll-probe")
+                .w(px(300.))
+                .h(px(300.))
+                .track_scroll(&self.page)
+                .overflow_scroll()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .id("diagram-scroll-probe")
+                        .w(px(200.))
+                        .h(px(100.))
+                        .track_scroll(&self.diagram)
+                        .overflow_scroll()
+                        .on_scroll_wheel(move |event, _, cx| {
+                            wheel_seen.set(true);
+                            stop_vertical_wheel_bubbling(event, cx);
+                        })
+                        .child(div().w(px(400.)).h(px(500.))),
+                )
+                .child(div().h(px(800.)))
+        }
+    }
+
+    #[gpui::test]
+    fn scrolling_inside_diagram_does_not_also_scroll_overview_page(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let page = ScrollHandle::new();
+        let diagram = ScrollHandle::new();
+        let wheel_seen = std::rc::Rc::new(std::cell::Cell::new(false));
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(300.), px(300.)),
+            |_, cx| {
+                cx.new(|_| NestedScrollView {
+                    page: page.clone(),
+                    diagram: diagram.clone(),
+                    wheel_seen: wheel_seen.clone(),
+                })
+            },
+        );
+        let diagram_bounds = diagram.bounds();
+        let pointer = point(
+            diagram_bounds.origin.x + px(20.),
+            diagram_bounds.origin.y + px(20.),
+        );
+        cx.simulate_mouse_move(pointer, None, Modifiers::default());
+        cx.simulate_event(ScrollWheelEvent {
+            position: pointer,
+            delta: ScrollDelta::Pixels(point(Pixels::ZERO, px(40.))),
+            ..Default::default()
+        });
+        assert!(
+            wheel_seen.get(),
+            "diagram scroll hitbox should receive wheel"
+        );
+        assert_ne!(diagram.offset().y, Pixels::ZERO, "diagram should scroll");
+        assert_eq!(page.offset().y, Pixels::ZERO, "overview page must not move");
+        cx.simulate_event(ScrollWheelEvent {
+            position: point(px(250.), px(250.)),
+            delta: ScrollDelta::Pixels(point(Pixels::ZERO, px(40.))),
+            ..Default::default()
+        });
+        assert_ne!(
+            page.offset().y,
+            Pixels::ZERO,
+            "overview scrolls outside diagram"
+        );
     }
 }
