@@ -6,7 +6,7 @@ The current runner targets the application contract/CLI in the root Cargo packag
 | --- | --- |
 | `./scripts/validate` | Runner regression tests, Rust formatting, headless typecheck, Clippy and behavior tests |
 | `./scripts/validate desktop` | Core checks plus native GPUI typecheck, Clippy and full tests; opens no GUI |
-| `./scripts/validate gui` | Build and run the interactive demonstration in release mode |
+| `./scripts/validate gui` | Build and run the default Bodh product mode in release mode |
 | `./scripts/validate profile` | Build and run the release native CPU redraw diagnostic |
 
 Install Bash, Git, Python 3 and rustup. `rust-toolchain.toml` pins Rust and its rustfmt/Clippy components; rustup installs them on first use. Cargo uses the committed lockfile. Desktop builds additionally need Linux C/C++ build tools, pkg-config, fontconfig/freetype, xkbcommon and Wayland/X11 development libraries. The CI workflow records the Ubuntu package recipe. GUI/profile modes additionally need a working graphical session and Vulkan driver; a successful desktop build alone verifies neither.
@@ -21,10 +21,10 @@ The runner tests replace external tool invocations to check failure propagation,
 
 ## Native GUI trial
 
-1. State the trial's purpose and visual fidelity before opening it. The current spike evaluates rendering and immutable-source interaction. Its outlined controls and monospace chrome are unapproved diagnostic UI, not a product design proposal.
-2. Run `./scripts/validate desktop`, then `./scripts/validate gui`. The first release build can take several minutes. During long builds, report the active stage, completed checks and remaining work at least once per minute; distinguish compilation from a running demo.
-3. Try selection and pane dragging on the ordinary, 120-step and 1,000-step fixtures. Verify the selected source excerpt, line numbers and explanation against the fixture. Include returns, self-calls, notes and both conditional branches.
-4. Scroll horizontally and vertically, select partially visible rows, switch flows and return. Check source identity, retained selection/scroll state, window shrinking, pane resizing, themes, keyboard navigation and visible focus. A hit on empty space must not select unrelated source.
+1. State the trial's purpose and visual fidelity before opening it. `./scripts/validate gui` launches the default product mode through `product::open_product`, using the approved D2 styling. The separate renderer demo is selected explicitly with `--diagnostic`; its outlined controls and monospace chrome are unapproved diagnostic UI, not the product design.
+2. Run `./scripts/validate desktop`, then `./scripts/validate gui` for product-mode trials. To evaluate only the renderer demo, run `cargo run --release --locked --manifest-path spikes/native-sequence/Cargo.toml -- --diagnostic`. The first release build can take several minutes. During long builds, report the active stage, completed checks and remaining work at least once per minute; distinguish compilation from a running application.
+3. For product-mode trials, inspect the Home/repository/PR browser and a prepared review's Overview, Changes, Findings, and Finish Review surfaces. Use a pinned preparation and verify that displayed source/diff context remains exact. Test only workflows in the ticket's scope; a rendered surface or smoke launch does not establish an integrated release workflow.
+4. For diagnostic-renderer trials, try selection and pane dragging on the ordinary, 120-step and 1,000-step fixtures. Verify the selected source excerpt, line numbers and explanation against the fixture. Include returns, self-calls, notes and both conditional branches. Scroll horizontally and vertically, select partially visible rows, switch flows and return. Check source identity, retained selection/scroll state, window shrinking, pane resizing, themes, keyboard navigation and visible focus. A hit on empty space must not select unrelated source.
 5. Record user feedback separately from test results. A process staying alive is a smoke observation; responsiveness and source-selection acceptance require interaction evidence. Record any failed trial before subsequent successful feedback.
 
 For GUI automation, use a dedicated graphical session when available. Validate the target PID/window and fresh geometry before input or screenshots. Coordinate automation with the user so it does not compete with their pointer or keyboard. Capture only the target window. Keep PID, build/revision, logs, exit status/signal, session/backend and driver versions with crash evidence. An unexplained termination remains unexplained even if later trials succeed.
@@ -45,7 +45,7 @@ Give baseline packages distinct Cargo identities or separate `CARGO_TARGET_DIR` 
 
 When modifying the diagnostic, follow GPUI's normal frame lifecycle: return the `ArenaClearNeeded` token from the window update and clear it before the next draw. Include cleanup in the timer. Review evidence for that lifecycle and the exact measured layer; a fast number from an incomplete frame is insufficient.
 
-The accepted spike's measurements, failed trials, successful user feedback and limitations are preserved in [EVIDENCE.md](spikes/native-sequence/EVIDENCE.md). Product visual design still needs its own proposal and approval.
+The renderer spike's measurements, failed trials, successful user feedback and limitations are preserved in [EVIDENCE.md](spikes/native-sequence/EVIDENCE.md). The default product mode follows the approved D2 visual baseline; the user's accepted Findings composition is recorded in `contracts/v1/EVIDENCE-32.md`. Neither visual acceptance nor renderer measurements establish complete V1 workflow qualification; see `contracts/v1/EVIDENCE-37.md`.
 
 ## Headless contract checks
 
