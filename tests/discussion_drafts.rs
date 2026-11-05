@@ -256,3 +256,30 @@ fn cli_reply_and_action_commands_return_revision_checked_json_without_remote_wri
     assert_eq!(envelope["data"]["counts"]["replies"], 1);
     assert_eq!(envelope["data"]["counts"]["thread_intents"], 1);
 }
+
+#[test]
+fn shared_version_two_migration_repairs_tables_from_independent_ticket_orderings() {
+    let (_root, state, prep) = seed();
+    drop(DraftStore::open(&state).unwrap());
+    let db = rusqlite::Connection::open(&state).unwrap();
+    db.execute_batch("DROP TABLE code_replacement_drafts; DROP TABLE reply_drafts; DROP TABLE thread_action_drafts;").unwrap();
+    drop(db);
+    let snapshot = DraftStore::open(&state).unwrap().list(&prep).unwrap();
+    assert_eq!(snapshot.counts.replies, 0);
+    assert_eq!(snapshot.counts.thread_intents, 0);
+    let db = rusqlite::Connection::open(&state).unwrap();
+    for table in [
+        "code_replacement_drafts",
+        "reply_drafts",
+        "thread_action_drafts",
+    ] {
+        let exists: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists, "missing additive v2 table {table}");
+    }
+}
