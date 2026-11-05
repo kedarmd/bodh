@@ -16,6 +16,6 @@ User feedback from the native PR review trial on 2026-11-05. The user confirmed 
 
 ## User screenshots
 
-- [Changed file row alignment](evidence/changes-screen-feedback-2026-11-05/changed-files-alignment.png)
-- [Pinned source active state](evidence/changes-screen-feedback-2026-11-05/pinned-source-active-state.png)
-- [Split diff width and divider](evidence/changes-screen-feedback-2026-11-05/split-diff-width-and-divider.png)
+- [Changed file row alignment](https://github.com/kedarmd/bodh/blob/integration/1-bodh-v1/contracts/v1/evidence/changes-screen-feedback-2026-11-05/changed-files-alignment.png)
+- [Pinned source active state](https://github.com/kedarmd/bodh/blob/integration/1-bodh-v1/contracts/v1/evidence/changes-screen-feedback-2026-11-05/pinned-source-active-state.png)
+- [Split diff width and divider](https://github.com/kedarmd/bodh/blob/integration/1-bodh-v1/contracts/v1/evidence/changes-screen-feedback-2026-11-05/split-diff-width-and-divider.png)
