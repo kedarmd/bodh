@@ -4,10 +4,12 @@ mod diagrams;
 mod diff;
 mod discussion_acquisition;
 mod discussions;
+mod drafts;
 mod evidence;
 pub use diff::*;
 pub use discussion_acquisition::*;
 pub use discussions::*;
+pub use drafts::*;
 mod findings;
 pub use findings::*;
 mod follow_up;
@@ -109,7 +111,7 @@ pub fn validate_structure(input: &[u8]) -> Result<ReviewResult, ContractError> {
 }
 
 pub fn describe() -> Value {
-    json!({"schema_version":"1.0","status":"frozen_contract_fixture_validation_complete","validation":"complete_fixture_context","semantic_validation_complete":true,"production_preparation_validation_available":true,"limits":{"input_bytes":MAX_INPUT_BYTES,"string_characters":MAX_STRING_CHARS,"collection_items":MAX_COLLECTION_ITEMS},"commands":["contract describe","contract schema","prepare --repo <checkout> --pr <number> --state <database> [--remote <name>]","inspect --prepared <preparation-id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>","validate --input <file> --structural","validate --input <file> --evidence-only --context <fixture.json> --repository <checkout>","validate --input <file> --findings-only --context <fixture.json> --repository <checkout>","validate --input <file> --complete-fixture --context <fixture.json> --repository <checkout>"],"reserved_commands":["validate --prepared <preparation-id> --input <file>","commit --prepared <preparation-id> --input <file> [--approval <grant-id>]","authorize-replacement --prepared <preparation-id> [...human interaction]","open --repo <checkout> --pr <number>"],"exit_categories":{"success":0,"input_contract":2,"stale_state":3,"auth_access":4,"network_uncertain":5,"internal":10}})
+    json!({"schema_version":"1.0","status":"frozen_contract_fixture_validation_complete","validation":"complete_fixture_context","semantic_validation_complete":true,"production_preparation_validation_available":true,"limits":{"input_bytes":MAX_INPUT_BYTES,"string_characters":MAX_STRING_CHARS,"collection_items":MAX_COLLECTION_ITEMS},"commands":["contract describe","contract schema","prepare --repo <checkout> --pr <number> --state <database> [--remote <name>]","inspect --prepared <preparation-id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>","draft list --prepared <preparation-id> --state <database>","draft save --prepared <preparation-id> --state <database> --input <json-file|->","draft discard --prepared <preparation-id> --state <database> --input <json-file|->","validate --input <file> --structural","validate --input <file> --evidence-only --context <fixture.json> --repository <checkout>","validate --input <file> --findings-only --context <fixture.json> --repository <checkout>","validate --input <file> --complete-fixture --context <fixture.json> --repository <checkout>"],"reserved_commands":["validate --prepared <preparation-id> --input <file>","commit --prepared <preparation-id> --input <file> [--approval <grant-id>]","authorize-replacement --prepared <preparation-id> [...human interaction]","open --repo <checkout> --pr <number>"],"exit_categories":{"success":0,"input_contract":2,"stale_state":3,"auth_access":4,"network_uncertain":5,"internal":10}})
 }
 
 fn bound_schema(value: &mut Value) {

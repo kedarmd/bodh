@@ -1,6 +1,7 @@
+use bodh::{DraftCounts, DraftProvenance, DraftSaveResult, ManualTextDraft, Revision, SourceRef};
 use bodh_sequence_spike::{
-    DiffLineKind, MarkdownBlockKind, SyntaxTokenKind, diff_rows, safe_markdown_blocks,
-    split_diff_rows, syntax_spans,
+    DiffLineKind, MarkdownBlockKind, SyntaxTokenKind, TextDraftEditor, diff_rows,
+    safe_markdown_blocks, split_diff_rows, syntax_spans,
 };
 
 #[test]
@@ -125,4 +126,145 @@ fn syntax_highlights_common_code_tokens_and_leaves_unknown_languages_plain() {
                 span.kind == SyntaxTokenKind::Number && span.start == 12 && span.end == 14
             })
     );
+}
+
+#[test]
+fn failed_save_retains_typed_text_and_success_keeps_newer_keystrokes() {
+    let source = SourceRef {
+        path: "src/lib.rs".into(),
+        revision: Revision::Head,
+        start_line: 8,
+        end_line: 8,
+    };
+    let mut editor = TextDraftEditor::new(source.clone(), 4);
+    editor.set_body("Retain this typed review note.".into());
+    editor.save_failed(
+        "WORKSPACE_REVISION_STALE",
+        "Workspace changed elsewhere; reload before saving this draft",
+    );
+    assert_eq!(editor.body, "Retain this typed review note.");
+    assert!(editor.is_dirty());
+    assert!(editor.can_save());
+    assert!(
+        editor
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Workspace changed")
+    );
+    assert_eq!(
+        editor.error_code.as_deref(),
+        Some("WORKSPACE_REVISION_STALE")
+    );
+
+    let submitted = editor.body.clone();
+    editor.set_body("Retain this typed review note, with another thought.".into());
+    let persisted = ManualTextDraft {
+        id: "d-1".into(),
+        body: submitted.clone(),
+        source,
+        revision: 1,
+        provenance: DraftProvenance {
+            preparation_id: "prep-1".into(),
+            context_id: "context-1".into(),
+            base_sha: "a".repeat(40),
+            head_sha: "b".repeat(40),
+            merge_base_sha: "a".repeat(40),
+        },
+        created_at: 1,
+        updated_at: 2,
+    };
+    let result = DraftSaveResult {
+        workspace_revision: 5,
+        counts: DraftCounts {
+            inline_comments: 1,
+            replies: 0,
+            thread_intents: 0,
+            review_comments: 0,
+        },
+        draft: persisted,
+    };
+    editor.save_succeeded(&result, &submitted);
+    assert_eq!(editor.draft_id.as_deref(), Some("d-1"));
+    assert_eq!(editor.draft_revision, 1);
+    assert_eq!(editor.workspace_revision, 5);
+    assert_eq!(
+        editor.body,
+        "Retain this typed review note, with another thought."
+    );
+    assert!(
+        editor.is_dirty(),
+        "keystrokes typed while saving remain unsaved"
+    );
+    assert!(editor.error.is_none());
+}
+
+#[test]
+fn stale_draft_can_be_recovered_as_a_new_copy_without_overwriting_the_winner() {
+    let source = SourceRef {
+        path: "src/lib.rs".into(),
+        revision: Revision::Head,
+        start_line: 3,
+        end_line: 3,
+    };
+    let persisted = ManualTextDraft {
+        id: "d-3".into(),
+        body: "Latest persisted body".into(),
+        source: source.clone(),
+        revision: 2,
+        provenance: DraftProvenance {
+            preparation_id: "prep-3".into(),
+            context_id: "context-3".into(),
+            base_sha: "e".repeat(40),
+            head_sha: "f".repeat(40),
+            merge_base_sha: "e".repeat(40),
+        },
+        created_at: 1,
+        updated_at: 2,
+    };
+    let mut editor = TextDraftEditor::resume(&persisted, 10);
+    editor.set_body("Stale local text I need to recover".into());
+    editor.save_failed("DRAFT_REVISION_STALE", "A newer edit exists");
+    editor.recover_as_new(11);
+    assert_eq!(editor.draft_id, None);
+    assert_eq!(editor.draft_revision, 0);
+    assert_eq!(editor.workspace_revision, 11);
+    assert_eq!(editor.body, "Stale local text I need to recover");
+    assert!(editor.is_dirty());
+    assert!(editor.can_save());
+}
+
+#[test]
+fn restored_draft_is_clean_until_edited_and_new_draft_discard_is_local() {
+    let source = SourceRef {
+        path: "src/lib.rs".into(),
+        revision: Revision::Base,
+        start_line: 7,
+        end_line: 8,
+    };
+    let draft = ManualTextDraft {
+        id: "d-2".into(),
+        body: "A saved comment".into(),
+        source: source.clone(),
+        revision: 3,
+        provenance: DraftProvenance {
+            preparation_id: "prep-2".into(),
+            context_id: "context-2".into(),
+            base_sha: "c".repeat(40),
+            head_sha: "d".repeat(40),
+            merge_base_sha: "c".repeat(40),
+        },
+        created_at: 1,
+        updated_at: 2,
+    };
+    let mut resumed = TextDraftEditor::resume(&draft, 8);
+    assert!(!resumed.is_dirty());
+    resumed.set_body("Edited locally".into());
+    assert!(resumed.is_dirty());
+
+    let mut new_draft = TextDraftEditor::new(source, 8);
+    new_draft.set_body("Unsaved note".into());
+    new_draft.clear_new_draft();
+    assert!(new_draft.body.is_empty());
+    assert_eq!(new_draft.draft_id, None);
 }

@@ -42,7 +42,7 @@ pub struct PreparationManifest {
     pub supported_contract_versions: Vec<&'static str>,
     pub inspect: Vec<&'static str>,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DraftCounts {
     pub inline_comments: u64,
     pub replies: u64,
