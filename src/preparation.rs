@@ -206,7 +206,8 @@ impl PreparationStore {
 }
 
 /// Read-only preparation for an ordinary PR whose base and head commits already exist locally.
-/// Missing objects and non-github.com hosts fail explicitly; this slice never substitutes refs.
+/// DNS hosts are routed through `gh --hostname`; live Enterprise compatibility remains unqualified.
+/// Missing objects fail explicitly, and this path never substitutes refs.
 pub fn prepare_local_pr(
     checkout: &Path,
     number: u64,

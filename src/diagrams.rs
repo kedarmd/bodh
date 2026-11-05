@@ -68,6 +68,149 @@ pub(crate) fn validate_diagrams(
     Ok(())
 }
 
+enum CommonStep<'a> {
+    Message {
+        id: &'a str,
+        from: &'a str,
+        to: &'a str,
+        label: &'a str,
+        source: Option<&'a crate::SourceRef>,
+    },
+    Return {
+        id: &'a str,
+        from: &'a str,
+        to: &'a str,
+        label: &'a str,
+        in_reply_to: &'a str,
+        source: Option<&'a crate::SourceRef>,
+    },
+    SelfCall {
+        id: &'a str,
+        participant: &'a str,
+        label: &'a str,
+        source: Option<&'a crate::SourceRef>,
+    },
+    Note {
+        id: &'a str,
+        participants: &'a [String],
+        text: &'a str,
+        source: Option<&'a crate::SourceRef>,
+    },
+}
+
+impl<'a> CommonStep<'a> {
+    fn from_top(step: &'a Step) -> Option<Self> {
+        match step {
+            Step::Message {
+                id,
+                from,
+                to,
+                label,
+                source,
+            } => Some(Self::Message {
+                id,
+                from,
+                to,
+                label,
+                source: source.as_ref(),
+            }),
+            Step::Return {
+                id,
+                from,
+                to,
+                label,
+                in_reply_to,
+                source,
+            } => Some(Self::Return {
+                id,
+                from,
+                to,
+                label,
+                in_reply_to,
+                source: source.as_ref(),
+            }),
+            Step::SelfCall {
+                id,
+                participant,
+                label,
+                source,
+            } => Some(Self::SelfCall {
+                id,
+                participant,
+                label,
+                source: source.as_ref(),
+            }),
+            Step::Note {
+                id,
+                participants,
+                text,
+                source,
+            } => Some(Self::Note {
+                id,
+                participants,
+                text,
+                source: source.as_ref(),
+            }),
+            Step::Alt { .. } | Step::Opt { .. } => None,
+        }
+    }
+
+    fn from_simple(step: &'a SimpleStep) -> Self {
+        match step {
+            SimpleStep::Message {
+                id,
+                from,
+                to,
+                label,
+                source,
+            } => Self::Message {
+                id,
+                from,
+                to,
+                label,
+                source: source.as_ref(),
+            },
+            SimpleStep::Return {
+                id,
+                from,
+                to,
+                label,
+                in_reply_to,
+                source,
+            } => Self::Return {
+                id,
+                from,
+                to,
+                label,
+                in_reply_to,
+                source: source.as_ref(),
+            },
+            SimpleStep::SelfCall {
+                id,
+                participant,
+                label,
+                source,
+            } => Self::SelfCall {
+                id,
+                participant,
+                label,
+                source: source.as_ref(),
+            },
+            SimpleStep::Note {
+                id,
+                participants,
+                text,
+                source,
+            } => Self::Note {
+                id,
+                participants,
+                text,
+                source: source.as_ref(),
+            },
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_top_steps(
     steps: &[Step],
@@ -81,100 +224,21 @@ fn validate_top_steps(
 ) -> Result<(), ContractError> {
     for (index, step) in steps.iter().enumerate() {
         let item = format!("{pointer}/{index}");
+        if let Some(common) = CommonStep::from_top(step) {
+            validate_common_step(
+                common,
+                participants,
+                step_ids,
+                messages,
+                context,
+                repository,
+                control,
+                &item,
+            )?;
+            continue;
+        }
+
         match step {
-            Step::Message {
-                id,
-                from,
-                to,
-                label,
-                source,
-                ..
-            } => {
-                validate_message(
-                    id,
-                    from,
-                    to,
-                    label,
-                    source.as_ref(),
-                    participants,
-                    step_ids,
-                    messages,
-                    context,
-                    repository,
-                    control,
-                    &item,
-                )?;
-            }
-            Step::Return {
-                id,
-                from,
-                to,
-                label,
-                in_reply_to,
-                source,
-                ..
-            } => {
-                validate_return(
-                    id,
-                    from,
-                    to,
-                    label,
-                    in_reply_to,
-                    source.as_ref(),
-                    participants,
-                    step_ids,
-                    messages,
-                    context,
-                    repository,
-                    control,
-                    &item,
-                )?;
-            }
-            Step::SelfCall {
-                id,
-                participant,
-                label,
-                source,
-                ..
-            } => {
-                insert_step_id(id, step_ids, &format!("{item}/id"))?;
-                require_text(label, &format!("{item}/label"))?;
-                if !participants.contains(participant.as_str()) {
-                    return Err(invalid(
-                        "PARTICIPANT_REFERENCE_INVALID",
-                        "Self-call must reference a declared participant",
-                        &format!("{item}/participant"),
-                    ));
-                }
-                validate_code_source(
-                    source.as_ref(),
-                    context,
-                    repository,
-                    control,
-                    &format!("{item}/source"),
-                )?;
-                messages.insert(id.clone(), (participant.clone(), participant.clone()));
-            }
-            Step::Note {
-                id,
-                participants: note_participants,
-                text,
-                source,
-                ..
-            } => {
-                validate_note(
-                    id,
-                    note_participants,
-                    text,
-                    source.as_ref(),
-                    participants,
-                    step_ids,
-                    context,
-                    repository,
-                    control,
-                    &item,
-                )?;
-            }
             Step::Alt {
                 id,
                 label,
@@ -251,6 +315,10 @@ fn validate_top_steps(
                     &format!("{item}/steps"),
                 )?;
             }
+            Step::Message { .. }
+            | Step::Return { .. }
+            | Step::SelfCall { .. }
+            | Step::Note { .. } => unreachable!("common steps handled above"),
         }
     }
     Ok(())
@@ -269,103 +337,120 @@ fn validate_simple_steps(
 ) -> Result<(), ContractError> {
     for (index, step) in steps.iter().enumerate() {
         let item = format!("{pointer}/{index}");
-        match step {
-            SimpleStep::Message {
-                id,
-                from,
-                to,
-                label,
-                source,
-                ..
-            } => {
-                validate_message(
-                    id,
-                    from,
-                    to,
-                    label,
-                    source.as_ref(),
-                    participants,
-                    step_ids,
-                    messages,
-                    context,
-                    repository,
-                    control,
-                    &item,
-                )?;
-            }
-            SimpleStep::Return {
-                id,
-                from,
-                to,
-                label,
-                in_reply_to,
-                source,
-                ..
-            } => {
-                validate_return(
-                    id,
-                    from,
-                    to,
-                    label,
-                    in_reply_to,
-                    source.as_ref(),
-                    participants,
-                    step_ids,
-                    messages,
-                    context,
-                    repository,
-                    control,
-                    &item,
-                )?;
-            }
-            SimpleStep::SelfCall {
-                id,
-                participant,
-                label,
-                source,
-                ..
-            } => {
-                insert_step_id(id, step_ids, &format!("{item}/id"))?;
-                require_text(label, &format!("{item}/label"))?;
-                if !participants.contains(participant.as_str()) {
-                    return Err(invalid(
-                        "PARTICIPANT_REFERENCE_INVALID",
-                        "Self-call must reference a declared participant",
-                        &format!("{item}/participant"),
-                    ));
-                }
-                validate_code_source(
-                    source.as_ref(),
-                    context,
-                    repository,
-                    control,
-                    &format!("{item}/source"),
-                )?;
-                messages.insert(id.clone(), (participant.clone(), participant.clone()));
-            }
-            SimpleStep::Note {
-                id,
-                participants: note_participants,
-                text,
-                source,
-                ..
-            } => {
-                validate_note(
-                    id,
-                    note_participants,
-                    text,
-                    source.as_ref(),
-                    participants,
-                    step_ids,
-                    context,
-                    repository,
-                    control,
-                    &item,
-                )?;
-            }
-        }
+        validate_common_step(
+            CommonStep::from_simple(step),
+            participants,
+            step_ids,
+            messages,
+            context,
+            repository,
+            control,
+            &item,
+        )?;
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_common_step(
+    step: CommonStep<'_>,
+    participants: &HashSet<&str>,
+    step_ids: &mut HashSet<String>,
+    messages: &mut HashMap<String, MessageEndpoints>,
+    context: &ReviewContext,
+    repository: &Path,
+    control: &OperationControl,
+    item: &str,
+) -> Result<(), ContractError> {
+    match step {
+        CommonStep::Message {
+            id,
+            from,
+            to,
+            label,
+            source,
+        } => validate_message(
+            id,
+            from,
+            to,
+            label,
+            source,
+            participants,
+            step_ids,
+            messages,
+            context,
+            repository,
+            control,
+            item,
+        ),
+        CommonStep::Return {
+            id,
+            from,
+            to,
+            label,
+            in_reply_to,
+            source,
+        } => validate_return(
+            id,
+            from,
+            to,
+            label,
+            in_reply_to,
+            source,
+            participants,
+            step_ids,
+            messages,
+            context,
+            repository,
+            control,
+            item,
+        ),
+        CommonStep::SelfCall {
+            id,
+            participant,
+            label,
+            source,
+        } => {
+            insert_step_id(id, step_ids, &format!("{item}/id"))?;
+            require_text(label, &format!("{item}/label"))?;
+            if !participants.contains(participant) {
+                return Err(invalid(
+                    "PARTICIPANT_REFERENCE_INVALID",
+                    "Self-call must reference a declared participant",
+                    &format!("{item}/participant"),
+                ));
+            }
+            validate_code_source(
+                source,
+                context,
+                repository,
+                control,
+                &format!("{item}/source"),
+            )?;
+            messages.insert(
+                id.to_owned(),
+                (participant.to_owned(), participant.to_owned()),
+            );
+            Ok(())
+        }
+        CommonStep::Note {
+            id,
+            participants: note_participants,
+            text,
+            source,
+        } => validate_note(
+            id,
+            note_participants,
+            text,
+            source,
+            participants,
+            step_ids,
+            context,
+            repository,
+            control,
+            item,
+        ),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
