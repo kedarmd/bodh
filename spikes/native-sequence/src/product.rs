@@ -1,6 +1,7 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
 use bodh::{
-    CodeReplacementSnapshot, DraftSnapshot, DraftStore, GhReviewPublisher, OperationControl,
+    CodeReplacementSnapshot, DiscussionPlan, DiscussionPublicationStore, DiscussionSelection,
+    DraftSnapshot, DraftStore, GhDiscussionPublisher, GhReviewPublisher, OperationControl,
     PinnedDiff, PreparationManifest, PreparationStore, PreparedBinding, ReviewEvent, ReviewIntent,
     ReviewOperation, ReviewPublicationStore, Revision, SelectedDraft, SourceRef,
     StageReviewRequest, inspect_remote_review_with_gh, read_diff,
@@ -159,6 +160,7 @@ pub struct Product {
     review_intent: Option<ReviewIntent>,
     review_summary: String,
     review_plan: Option<ReviewOperation>,
+    discussion_plan: Option<DiscussionPlan>,
     review_loading: bool,
     review_summary_focus: FocusHandle,
     freshness_observation: Option<bodh::FreshnessObservation>,
@@ -240,6 +242,7 @@ impl Product {
             review_intent: None,
             review_summary: String::new(),
             review_plan: None,
+            discussion_plan: None,
             review_loading: false,
             review_summary_focus: cx.focus_handle(),
             freshness_observation: None,
@@ -1518,10 +1521,12 @@ impl Product {
             store.recover_interrupted(&binding.preparation_id)?;
             let intent = store.intent(&binding.preparation_id)?;
             let pending = store.pending_operation(&binding.preparation_id)?;
-            Ok::<_, bodh::ContractError>((intent, pending))
+            let discussion = DiscussionPublicationStore::open(&self.preparation_db)?.pending_plan(&binding.preparation_id)?;
+            Ok::<_, bodh::ContractError>((intent, pending, discussion))
         }) {
-            Ok((mut intent, pending)) => {
+            Ok((mut intent, pending, discussion)) => {
                 self.review_plan = pending.clone();
+                self.discussion_plan = discussion.clone();
                 self.review_summary = intent.summary.clone().unwrap_or_default();
                 let mut stale_selection = false;
                 if pending.is_none()
@@ -1540,6 +1545,22 @@ impl Product {
                             stale_selection = true;
                             false
                         }
+                    });
+                }
+                if pending.is_none() && discussion.is_none()
+                    && let Some(snapshot) = self.draft_snapshot.as_ref()
+                {
+                    intent.selected_replies.retain_mut(|selected| {
+                        if let Some(draft)=snapshot.reply_drafts.iter().find(|draft|draft.id==selected.id) {
+                            if selected.revision!=draft.revision { selected.revision=draft.revision; stale_selection=true; }
+                            true
+                        } else { stale_selection=true; false }
+                    });
+                    intent.selected_thread_actions.retain_mut(|selected| {
+                        if let Some(draft)=snapshot.thread_actions.iter().find(|draft|draft.id==selected.id) {
+                            if selected.revision!=draft.revision { selected.revision=draft.revision; stale_selection=true; }
+                            true
+                        } else { stale_selection=true; false }
                     });
                 }
                 if pending.is_none()
@@ -1594,6 +1615,8 @@ impl Product {
             expected_intent_revision: intent.revision,
             selected: intent.selected.clone(),
             selected_replacements: intent.selected_replacements.clone(),
+            selected_replies: intent.selected_replies.clone(),
+            selected_thread_actions: intent.selected_thread_actions.clone(),
             summary: if self.review_summary.trim().is_empty() {
                 None
             } else {
@@ -1669,6 +1692,22 @@ impl Product {
         cx.notify();
     }
 
+    fn toggle_review_reply(&mut self, id: &str, cx: &mut Context<Self>) {
+        let locked=self.review_plan.as_ref().is_some_and(|p|matches!(p.state.as_str(),"planned"|"sending"|"unknown")) || self.discussion_plan.as_ref().is_some_and(|p|matches!(p.state.as_str(),"planned"|"sending"|"unknown"));
+        if locked { self.status=Some("This publication is already planned or uncertain. Reconcile it before changing selected drafts.".into()); cx.notify(); return; }
+        let Some(intent)=self.review_intent.as_mut() else{return;};
+        if let Some(i)=intent.selected_replies.iter().position(|s|s.id==id){intent.selected_replies.remove(i);}else if let Some(draft)=self.draft_snapshot.as_ref().and_then(|s|s.reply_drafts.iter().find(|d|d.id==id)){intent.selected_replies.push(SelectedDraft{id:draft.id.clone(),revision:draft.revision});}
+        self.save_review_intent(); cx.notify();
+    }
+
+    fn toggle_review_thread_action(&mut self, id: &str, cx: &mut Context<Self>) {
+        let locked=self.review_plan.as_ref().is_some_and(|p|matches!(p.state.as_str(),"planned"|"sending"|"unknown")) || self.discussion_plan.as_ref().is_some_and(|p|matches!(p.state.as_str(),"planned"|"sending"|"unknown"));
+        if locked { self.status=Some("This publication is already planned or uncertain. Reconcile it before changing selected drafts.".into()); cx.notify(); return; }
+        let Some(intent)=self.review_intent.as_mut() else{return;};
+        if let Some(i)=intent.selected_thread_actions.iter().position(|s|s.id==id){intent.selected_thread_actions.remove(i);}else if let Some(draft)=self.draft_snapshot.as_ref().and_then(|s|s.thread_actions.iter().find(|d|d.id==id)){intent.selected_thread_actions.push(SelectedDraft{id:draft.id.clone(),revision:draft.revision});}
+        self.save_review_intent(); cx.notify();
+    }
+
     fn choose_review_event(&mut self, event: ReviewEvent, cx: &mut Context<Self>) {
         if self
             .review_plan
@@ -1723,17 +1762,42 @@ impl Product {
         };
         self.review_loading = true;
         self.error = None;
-        self.status = Some("Checking the current PR and validating every selected anchor…".into());
+        self.status = Some("Preparing the exact review and discussion operations…".into());
         let token = self.operation_epoch.load(Ordering::Relaxed);
         let state = self.preparation_db.clone();
         let control = OperationControl::with_timeout(Duration::from_secs(30));
         self.active_control = Some(control.clone());
         cx.spawn(async move |weak,cx| {
             let result=cx.background_executor().spawn(async move {
-                let remote=inspect_remote_review_with_gh(&binding,Path::new("gh"),&control)?;
-                ReviewPublicationStore::open(&state)?.confirm(&binding.preparation_id,&state,intent.revision,&remote,&control)
+                let has_review=!intent.selected.is_empty()||!intent.selected_replacements.is_empty()||intent.summary.as_deref().is_some_and(|s|!s.trim().is_empty());
+                if has_review && intent.event.is_none(){return Err(bodh::ContractError::new("REVIEW_EVENT_REQUIRED","Choose an event for selected inline comments, replacements or summary","/event"));}
+                let review=if has_review {
+                    let remote=inspect_remote_review_with_gh(&binding,Path::new("gh"),&control)?;
+                    Some(ReviewPublicationStore::open(&state)?.confirm(&binding.preparation_id,&state,intent.revision,&remote,&control)?)
+                } else { None };
+                if intent.selected_replies.is_empty()&&intent.selected_thread_actions.is_empty()&&review.is_none(){return Err(bodh::ContractError::new("PUBLICATION_SELECTION_EMPTY","Select at least one review operation, reply or thread action",""));}
+                let discussion=if intent.selected_replies.is_empty()&&intent.selected_thread_actions.is_empty(){None}else{
+                    Some(DiscussionPublicationStore::open(&state)?.confirm(&binding.preparation_id,review.as_ref().map(|p|p.id.as_str()),&intent.selected_replies.iter().map(|s|DiscussionSelection{id:s.id.clone(),revision:s.revision}).collect::<Vec<_>>(),&intent.selected_thread_actions.iter().map(|s|DiscussionSelection{id:s.id.clone(),revision:s.revision}).collect::<Vec<_>>())?)
+                };
+                Ok::<_,bodh::ContractError>((review,discussion))
             }).await;
-            let _=weak.update(cx,|this,cx| { if this.operation_epoch.load(Ordering::Relaxed)!=token{return;} this.review_loading=false; this.active_control=None; match result { Ok(plan)=>{this.review_plan=Some(plan);this.status=Some("Review plan saved. Inspect the exact event, summary and comments below before publishing.".into());this.error=None;}, Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;} } cx.notify(); });
+            let _=weak.update(cx,|this,cx| { if this.operation_epoch.load(Ordering::Relaxed)!=token{return;} this.review_loading=false; this.active_control=None; match result { Ok((review,discussion))=>{if let Some(plan)=review{this.review_plan=Some(plan);} if let Some(plan)=discussion{this.discussion_plan=Some(plan);} this.status=Some("Exact operation plan saved. Inspect each operation before publishing.".into());this.error=None;}, Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;} } cx.notify(); });
+        }).detach();
+    }
+
+    fn publish_discussion_plan(&mut self,cx:&mut Context<Self>){
+        let (Some(binding),Some(plan))=(self.selected_review.clone(),self.discussion_plan.clone()) else{return;};
+        self.review_loading=true;self.error=None;self.status=Some("Rechecking thread permissions and state before publishing…".into());
+        let token=self.operation_epoch.load(Ordering::Relaxed);let state=self.preparation_db.clone();let control=OperationControl::with_timeout(Duration::from_secs(60));self.active_control=Some(control.clone());
+        cx.spawn(async move|weak,cx|{
+            let result=cx.background_executor().spawn(async move{
+                let publisher=GhDiscussionPublisher{executable:PathBuf::from("gh"),state:state.clone()};
+                let mut store=DiscussionPublicationStore::open(&state)?;
+                let plan=store.publish(&plan.id,&publisher,&control)?;
+                let snapshot=DraftStore::open(&state)?.list(&binding.preparation_id)?;
+                Ok::<_,bodh::ContractError>((plan,snapshot))
+            }).await;
+            let _=weak.update(cx,|this,cx|{if this.operation_epoch.load(Ordering::Relaxed)!=token{return;}this.review_loading=false;this.active_control=None;match result{Ok((plan,snapshot))=>{this.discussion_plan=Some(plan.clone());this.update_draft_counts(snapshot.counts.clone());this.draft_snapshot=Some(snapshot);this.status=Some(format!("Discussion publication finished with state {}. Confirmed steps are removed from the unpublished drafts.",plan.state));this.error=None;},Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;}}cx.notify();});
         }).detach();
     }
 
@@ -2706,6 +2770,28 @@ impl Product {
                 );
             }
         }
+        let selected_replies=intent.as_ref().map(|i|i.selected_replies.iter().map(|s|s.id.as_str()).collect::<std::collections::HashSet<_>>()).unwrap_or_default();
+        let selected_actions=intent.as_ref().map(|i|i.selected_thread_actions.iter().map(|s|s.id.as_str()).collect::<std::collections::HashSet<_>>()).unwrap_or_default();
+        let replies=self.draft_snapshot.as_ref().map(|s|s.reply_drafts.clone()).unwrap_or_default();
+        page=page.child(section_title("Replies · publish after the grouped review",p));
+        if replies.is_empty(){page=page.child(empty_card("No reply drafts saved","Replies are attached to the exact top-level review comment selected in Discussions.",p));}
+        for draft in replies {
+            let id=draft.id.clone();let toggle_id=id.clone();
+            let label=if selected_replies.contains(id.as_str()){"✓ Selected"}else{"＋ Add reply"};
+            page=page.child(div().flex().items_start().gap_3().p_3().border_1().border_color(rgb(p.border)).bg(rgb(p.panel))
+                .child(button(&format!("review-reply-select-{id}"),label,p,move|this,_,_,cx|this.toggle_review_reply(&toggle_id,cx),cx))
+                .child(div().flex_1().flex().flex_col().gap_1().child(div().font_family("DejaVu Sans Mono").text_size(px(11.)).text_color(rgb(p.muted)).child(format!("Thread {} · top-level comment {}",draft.thread_id,draft.root_comment_id))).child(div().child(draft.body))));
+        }
+        let actions=self.draft_snapshot.as_ref().map(|s|s.thread_actions.clone()).unwrap_or_default();
+        page=page.child(section_title("Thread actions · resolve or reopen",p));
+        if actions.is_empty(){page=page.child(empty_card("No thread actions staged","Resolve and reopen requests remain local until the current permission and thread state are checked.",p));}
+        for draft in actions {
+            let id=draft.id.clone();let toggle_id=id.clone();let verb=match draft.action{bodh::ThreadAction::Resolve=>"Resolve",bodh::ThreadAction::Reopen=>"Reopen"};
+            let label=if selected_actions.contains(id.as_str()){format!("✓ {verb} selected")}else{format!("＋ {verb} thread")};
+            page=page.child(div().flex().items_start().gap_3().p_3().border_1().border_color(rgb(p.border)).bg(rgb(p.panel))
+                .child(button(&format!("review-thread-action-{id}"),&label,p,move|this,_,_,cx|this.toggle_review_thread_action(&toggle_id,cx),cx))
+                .child(div().flex_1().child(format!("Thread {} · observed {}",draft.thread_id,if draft.observed_resolved{"resolved"}else{"open"}))));
+        }
         page = page.child(section_title("Review event · choose explicitly", p));
         let event = intent.as_ref().and_then(|i| i.event);
         let events = [
@@ -2757,6 +2843,17 @@ impl Product {
                 ),
         );
         page=page.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child("Summary text input: type to append · Backspace removes · Enter starts a new line · Escape clears."));
+        if let Some(plan)=self.discussion_plan.clone(){
+            page=page.child(section_title("Exact replies and thread actions",p));
+            page=page.child(empty_card(&format!("{} operation(s) · {}",plan.steps.len(),plan.state),&format!("Plan {} · grouped review {}",plan.id,plan.review_operation_id.as_deref().unwrap_or("not selected")),p));
+            for step in &plan.steps {
+                let description=if step.kind=="reply" {format!("Reply to top-level comment {}",step.root_comment_id.as_deref().unwrap_or("(missing)"))} else {format!("{} thread",step.action.map(|a|format!("{a:?}")).unwrap_or_else(||"Unknown".into()))};
+                page=page.child(div().p_3().border_1().border_color(rgb(p.border)).bg(rgb(p.raised)).child(div().font_weight(FontWeight::BOLD).child(format!("{} · {}",description,step.state))).child(div().font_family("DejaVu Sans Mono").text_size(px(10.)).text_color(rgb(p.muted)).child(format!("Thread {} · draft {} revision {}",step.thread_id,step.draft_id,step.draft_revision))).child(step.body.clone().or_else(||step.failure.clone()).unwrap_or_default()));
+            }
+            if plan.state=="planned" && self.review_plan.as_ref().is_none_or(|review|review.state=="confirmed") && !self.review_loading {
+                page=page.child(button("publish-confirmed-discussions","Publish replies and thread actions",p,|this,_,_,cx|this.publish_discussion_plan(cx),cx));
+            } else if plan.state=="unknown" {page=page.child(empty_card("Discussion outcome uncertain","Do not resend. Inspect the remote thread before continuing.",p));}
+        }
         if let Some(plan) = self.review_plan.clone() {
             page = page.child(section_title("Exact confirmed plan", p));
             page = page.child(empty_card(
@@ -2840,10 +2937,9 @@ impl Product {
             }
         } else {
             let can_confirm = intent.as_ref().is_some_and(|i| {
-                i.event.is_some()
-                    && (!i.selected.is_empty()
-                        || !i.selected_replacements.is_empty()
-                        || !self.review_summary.trim().is_empty())
+                let has_review=!i.selected.is_empty()||!i.selected_replacements.is_empty()||!self.review_summary.trim().is_empty();
+                let has_discussion=!i.selected_replies.is_empty()||!i.selected_thread_actions.is_empty();
+                (has_review||has_discussion)&&(!has_review||i.event.is_some())
             }) && !self.review_loading;
             if can_confirm {
                 page = page.child(button(
@@ -2855,8 +2951,8 @@ impl Product {
                 ));
             } else {
                 page = page.child(empty_card(
-                    "Choose an event",
-                    "Select Comment, Approve or Request Changes explicitly before confirmation.",
+                    "Select operations to publish",
+                    "A grouped review needs an explicit event. Replies and thread actions can be confirmed on their own.",
                     p,
                 ));
             }

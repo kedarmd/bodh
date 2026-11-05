@@ -153,6 +153,9 @@ fn review_intent_revision_is_part_of_the_load_latest_protection_fingerprint() {
             expected_workspace_revision: before.workspace_revision,
             expected_intent_revision: 0,
             selected: vec![],
+            selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("Explicit review summary".into()),
             event: Some(bodh::ReviewEvent::Comment),
         })
@@ -192,6 +195,9 @@ fn load_latest_approval_expires_on_any_new_review_intent_revision() {
             expected_workspace_revision: protected.workspace_revision,
             expected_intent_revision: 0,
             selected: vec![],
+            selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("Edited after preview".into()),
             event: None,
         })
