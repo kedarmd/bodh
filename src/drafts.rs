@@ -1,7 +1,7 @@
 //! Durable local manual text-comment drafts with optimistic workspace revisions.
 use crate::{
     ContractError, DraftCounts, OperationControl, PreparationStore, PreparedBinding, Revision,
-    SourceRef, diff_index, read_source,
+    SourceRef, diff_index, load_latest_discussions, read_source,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,8 @@ pub struct DraftSnapshot {
     pub workspace_revision: u64,
     pub counts: DraftCounts,
     pub drafts: Vec<ManualTextDraft>,
+    pub reply_drafts: Vec<ReplyDraft>,
+    pub thread_actions: Vec<ThreadActionDraft>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -49,6 +51,47 @@ pub struct DraftSaveResult {
     pub workspace_revision: u64,
     pub counts: DraftCounts,
     pub draft: ManualTextDraft,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadAction {
+    Resolve,
+    Reopen,
+}
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplyDraft {
+    pub id: String,
+    pub thread_id: String,
+    pub root_comment_id: String,
+    pub body: String,
+    pub revision: u64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadActionDraft {
+    pub id: String,
+    pub thread_id: String,
+    pub action: ThreadAction,
+    pub observed_resolved: bool,
+    pub revision: u64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ReplySaveResult {
+    pub workspace_revision: u64,
+    pub counts: DraftCounts,
+    pub reply: ReplyDraft,
+}
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ThreadActionSaveResult {
+    pub workspace_revision: u64,
+    pub counts: DraftCounts,
+    pub action: ThreadActionDraft,
 }
 
 /// A local code replacement proposal. It is deliberately stored separately from
@@ -82,6 +125,7 @@ pub struct CodeReplacementSaveResult {
 
 pub struct DraftStore {
     db: Connection,
+    path: std::path::PathBuf,
 }
 
 impl DraftStore {
@@ -135,45 +179,12 @@ impl DraftStore {
                      );
                      CREATE INDEX manual_text_drafts_context
                          ON manual_text_drafts(host, owner, repository, number, context_id, updated_at);
-                     CREATE TABLE code_replacement_drafts (
-                         draft_id TEXT PRIMARY KEY NOT NULL,
-                         context_id TEXT NOT NULL REFERENCES contexts(context_id),
-                         host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL,
-                         number INTEGER NOT NULL, source_json TEXT NOT NULL,
-                         original_text TEXT NOT NULL, replacement TEXT NOT NULL,
-                         provenance_json TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision > 0),
-                         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-                         FOREIGN KEY(host, owner, repository, number)
-                             REFERENCES workspaces(host, owner, repository, number)
-                     );
-                     CREATE INDEX code_replacement_drafts_context
-                         ON code_replacement_drafts(host,owner,repository,number,context_id,updated_at);
-                     INSERT INTO draft_schema_migrations(version) VALUES(2);
+                     INSERT INTO draft_schema_migrations(version) VALUES(1);
                      COMMIT;",
                 )
                 .map_err(db_error)?;
             }
-            1 => {
-                db.execute_batch(
-                    "BEGIN IMMEDIATE;
-                     CREATE TABLE code_replacement_drafts (
-                         draft_id TEXT PRIMARY KEY NOT NULL,
-                         context_id TEXT NOT NULL REFERENCES contexts(context_id),
-                         host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL,
-                         number INTEGER NOT NULL, source_json TEXT NOT NULL,
-                         original_text TEXT NOT NULL, replacement TEXT NOT NULL,
-                         provenance_json TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision > 0),
-                         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-                         FOREIGN KEY(host, owner, repository, number)
-                             REFERENCES workspaces(host, owner, repository, number)
-                     );
-                     CREATE INDEX code_replacement_drafts_context
-                         ON code_replacement_drafts(host,owner,repository,number,context_id,updated_at);
-                     INSERT INTO draft_schema_migrations(version) VALUES(2);
-                     COMMIT;",
-                ).map_err(db_error)?;
-            }
-            2 => {}
+            1 | 2 => {}
             _ => {
                 return Err(ContractError::new(
                     "DRAFT_SCHEMA_UNSUPPORTED",
@@ -182,7 +193,277 @@ impl DraftStore {
                 ));
             }
         }
-        Ok(Self { db })
+        db.execute_batch("BEGIN IMMEDIATE;
+            CREATE TABLE IF NOT EXISTS code_replacement_drafts (draft_id TEXT PRIMARY KEY NOT NULL, context_id TEXT NOT NULL REFERENCES contexts(context_id), host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, source_json TEXT NOT NULL, original_text TEXT NOT NULL, replacement TEXT NOT NULL, provenance_json TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(host,owner,repository,number) REFERENCES workspaces(host,owner,repository,number));
+            CREATE INDEX IF NOT EXISTS code_replacement_drafts_context ON code_replacement_drafts(host,owner,repository,number,context_id,updated_at);
+            CREATE TABLE IF NOT EXISTS reply_drafts (draft_id TEXT PRIMARY KEY NOT NULL, context_id TEXT NOT NULL REFERENCES contexts(context_id), host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, thread_id TEXT NOT NULL, root_comment_id TEXT NOT NULL, body TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(host,owner,repository,number) REFERENCES workspaces(host,owner,repository,number));
+            CREATE INDEX IF NOT EXISTS reply_drafts_workspace ON reply_drafts(host,owner,repository,number,context_id,updated_at);
+            CREATE TABLE IF NOT EXISTS thread_action_drafts (draft_id TEXT PRIMARY KEY NOT NULL, context_id TEXT NOT NULL REFERENCES contexts(context_id), host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, thread_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('resolve','reopen')), observed_resolved INTEGER NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(host,owner,repository,number) REFERENCES workspaces(host,owner,repository,number));
+            CREATE INDEX IF NOT EXISTS thread_actions_workspace ON thread_action_drafts(host,owner,repository,number,context_id,updated_at);
+            INSERT OR IGNORE INTO draft_schema_migrations(version) VALUES(2); COMMIT;").map_err(db_error)?;
+        Ok(Self {
+            db,
+            path: path.to_path_buf(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_reply(
+        &mut self,
+        preparation_id: &str,
+        draft_id: Option<&str>,
+        thread_id: &str,
+        root_comment_id: &str,
+        body: &str,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+    ) -> Result<ReplySaveResult, ContractError> {
+        validate_body(body)?;
+        let _prepared = load_binding(&self.db, preparation_id)?;
+        let discussions = load_latest_discussions(&self.path, preparation_id)?;
+        let thread = find_thread(&discussions, thread_id)?;
+        if thread["viewerCanReply"] != true || !root_comment_exists(&thread, root_comment_id) {
+            return Err(ContractError::new(
+                "REPLY_NOT_ALLOWED",
+                "Reply target is unavailable or reply permission was not observed",
+                "/thread_id",
+            ));
+        }
+        self.save_discussion_draft(
+            preparation_id,
+            draft_id,
+            thread_id,
+            Some(root_comment_id),
+            body,
+            None,
+            expected_workspace_revision,
+            expected_draft_revision,
+        )
+    }
+
+    pub fn stage_thread_action(
+        &mut self,
+        preparation_id: &str,
+        draft_id: Option<&str>,
+        thread_id: &str,
+        action: ThreadAction,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+    ) -> Result<ThreadActionSaveResult, ContractError> {
+        let prepared = load_binding(&self.db, preparation_id)?;
+        let discussions = load_latest_discussions(&self.path, preparation_id)?;
+        let thread = find_thread(&discussions, thread_id)?;
+        let allowed = match action {
+            ThreadAction::Resolve => {
+                thread["viewerCanResolve"] == true && thread["isResolved"] == false
+            }
+            ThreadAction::Reopen => {
+                thread["viewerCanUnresolve"] == true && thread["isResolved"] == true
+            }
+        };
+        if !allowed {
+            return Err(ContractError::new(
+                "THREAD_ACTION_NOT_ALLOWED",
+                "Thread action is unavailable or permission was not observed",
+                "/action",
+            ));
+        }
+        let observed_resolved = thread["isResolved"].as_bool().unwrap_or(false);
+        let (workspace_revision, counts, row, _) = self.save_discussion_draft_inner(
+            &prepared,
+            draft_id,
+            thread_id,
+            None,
+            "",
+            Some((action, observed_resolved)),
+            expected_workspace_revision,
+            expected_draft_revision,
+        )?;
+        Ok(ThreadActionSaveResult {
+            workspace_revision,
+            counts,
+            action: row.expect("thread action saved"),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn save_discussion_draft(
+        &mut self,
+        preparation_id: &str,
+        draft_id: Option<&str>,
+        thread_id: &str,
+        root_comment_id: Option<&str>,
+        body: &str,
+        action: Option<(ThreadAction, bool)>,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+    ) -> Result<ReplySaveResult, ContractError> {
+        let prepared = load_binding(&self.db, preparation_id)?;
+        let (workspace_revision, counts, _, id) = self.save_discussion_draft_inner(
+            &prepared,
+            draft_id,
+            thread_id,
+            root_comment_id,
+            body,
+            action,
+            expected_workspace_revision,
+            expected_draft_revision,
+        )?;
+        let reply = self
+            .list(preparation_id)?
+            .reply_drafts
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(draft_not_found)?;
+        Ok(ReplySaveResult {
+            workspace_revision,
+            counts,
+            reply,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn save_discussion_draft_inner(
+        &mut self,
+        prepared: &PreparedBinding,
+        draft_id: Option<&str>,
+        thread_id: &str,
+        root_comment_id: Option<&str>,
+        body: &str,
+        action: Option<(ThreadAction, bool)>,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+    ) -> Result<(u64, DraftCounts, Option<ThreadActionDraft>, String), ContractError> {
+        let pr = &prepared.context.pr;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let current = workspace_revision(&tx, pr)?;
+        require_revision(
+            current,
+            expected_workspace_revision,
+            "WORKSPACE_REVISION_STALE",
+            "Workspace content changed; reload before saving this draft",
+        )?;
+        let now = unix_millis();
+        let id = draft_id.map(str::to_owned).unwrap_or_else(new_id);
+        if let Some((action, observed)) = action {
+            let action_text = match action {
+                ThreadAction::Resolve => "resolve",
+                ThreadAction::Reopen => "reopen",
+            };
+            let old:Option<(String,String,i64,i64)>=tx.query_row("SELECT context_id,thread_id,revision,created_at FROM thread_action_drafts WHERE draft_id=?1",[&id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(db_error)?;
+            if draft_id.is_some() && old.is_none() {
+                return Err(draft_not_found());
+            }
+            let (revision, created) = if let Some((context, old_thread, rev, created)) = old {
+                if context != prepared.context.context_id {
+                    return Err(draft_not_found());
+                }
+                if old_thread != thread_id {
+                    return Err(ContractError::new(
+                        "DRAFT_CONTEXT_MISMATCH",
+                        "Thread intent belongs to a different thread",
+                        "/thread_id",
+                    ));
+                }
+                require_revision(
+                    rev as u64,
+                    expected_draft_revision,
+                    "DRAFT_REVISION_STALE",
+                    "Draft changed elsewhere; reload it before saving",
+                )?;
+                let n = rev + 1;
+                tx.execute("UPDATE thread_action_drafts SET action=?1,observed_resolved=?2,revision=?3,updated_at=?4 WHERE draft_id=?5",params![action_text,observed as i64,n,now,id]).map_err(db_error)?;
+                (n, created)
+            } else {
+                if expected_draft_revision != 0 {
+                    return Err(ContractError::new(
+                        "DRAFT_REVISION_STALE",
+                        "New drafts must start at revision zero",
+                        "/expected_draft_revision",
+                    ));
+                }
+                tx.execute("INSERT INTO thread_action_drafts(draft_id,context_id,host,owner,repository,number,thread_id,action,observed_resolved,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,1,?10,?10)",params![id,prepared.context.context_id,pr.host,pr.owner,pr.repository,pr.number as i64,thread_id,action_text,observed as i64,now]).map_err(db_error)?;
+                (1, now)
+            };
+            let next = advance_workspace(&tx, pr, current)?;
+            let counts = count_all(&tx, pr, &prepared.context.context_id)?;
+            tx.commit().map_err(db_error)?;
+            Ok((
+                next,
+                counts,
+                Some(ThreadActionDraft {
+                    id: id.clone(),
+                    thread_id: thread_id.into(),
+                    action,
+                    observed_resolved: observed,
+                    revision: revision as u64,
+                    created_at: created,
+                    updated_at: now,
+                }),
+                id,
+            ))
+        } else {
+            let root = root_comment_id.unwrap_or_default();
+            let old: Option<(String, String, String, i64, i64)> = if let Some(id) = draft_id {
+                tx.query_row("SELECT context_id,thread_id,root_comment_id,revision,created_at FROM reply_drafts WHERE draft_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(db_error)?
+            } else {
+                None
+            };
+            if draft_id.is_some() && old.is_none() {
+                return Err(draft_not_found());
+            }
+            let (id, revision, created) = if let Some((
+                context,
+                old_thread,
+                old_root,
+                rev,
+                created,
+            )) = old
+            {
+                if context != prepared.context.context_id {
+                    return Err(draft_not_found());
+                }
+                if old_thread != thread_id || old_root != root {
+                    return Err(ContractError::new(
+                        "REPLY_TARGET_MISMATCH",
+                        "Reply draft is bound to a different thread root",
+                        "/root_comment_id",
+                    ));
+                }
+                require_revision(
+                    rev as u64,
+                    expected_draft_revision,
+                    "DRAFT_REVISION_STALE",
+                    "Draft changed elsewhere; reload it before saving",
+                )?;
+                let n = rev + 1;
+                tx.execute(
+                    "UPDATE reply_drafts SET body=?1,revision=?2,updated_at=?3 WHERE draft_id=?4",
+                    params![body, n, now, draft_id],
+                )
+                .map_err(db_error)?;
+                (draft_id.unwrap().into(), n, created)
+            } else {
+                if expected_draft_revision != 0 {
+                    return Err(ContractError::new(
+                        "DRAFT_REVISION_STALE",
+                        "New drafts must start at revision zero",
+                        "/expected_draft_revision",
+                    ));
+                }
+                let id = new_id();
+                tx.execute("INSERT INTO reply_drafts(draft_id,context_id,host,owner,repository,number,thread_id,root_comment_id,body,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,1,?10,?10)",params![id,prepared.context.context_id,pr.host,pr.owner,pr.repository,pr.number as i64,thread_id,root,body,now]).map_err(db_error)?;
+                (id, 1, now)
+            };
+            let next = advance_workspace(&tx, pr, current)?;
+            let counts = count_all(&tx, pr, &prepared.context.context_id)?;
+            tx.commit().map_err(db_error)?;
+            let _ = (revision, created);
+            Ok((next, counts, None, id))
+        }
     }
 
     /// Returns the current content revision and drafts for the immutable prepared context.
@@ -235,11 +516,75 @@ impl DraftStore {
                 updated_at,
             });
         }
-        let counts = draft_counts(drafts.len());
+        let mut reply_statement = self.db.prepare("SELECT draft_id,thread_id,root_comment_id,body,revision,created_at,updated_at FROM reply_drafts WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5 ORDER BY created_at,draft_id").map_err(db_error)?;
+        let reply_rows = reply_statement
+            .query_map(
+                params![
+                    pr.host,
+                    pr.owner,
+                    pr.repository,
+                    i64::try_from(pr.number).map_err(|_| state_error())?,
+                    prepared.context.context_id
+                ],
+                |r| {
+                    Ok(ReplyDraft {
+                        id: r.get(0)?,
+                        thread_id: r.get(1)?,
+                        root_comment_id: r.get(2)?,
+                        body: r.get(3)?,
+                        revision: u64::try_from(r.get::<_, i64>(4)?).unwrap_or(0),
+                        created_at: r.get(5)?,
+                        updated_at: r.get(6)?,
+                    })
+                },
+            )
+            .map_err(db_error)?;
+        let reply_drafts = reply_rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)?;
+        let mut action_statement=self.db.prepare("SELECT draft_id,thread_id,action,observed_resolved,revision,created_at,updated_at FROM thread_action_drafts WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5 ORDER BY created_at,draft_id").map_err(db_error)?;
+        let action_rows = action_statement
+            .query_map(
+                params![
+                    pr.host,
+                    pr.owner,
+                    pr.repository,
+                    i64::try_from(pr.number).map_err(|_| state_error())?,
+                    prepared.context.context_id
+                ],
+                |r| {
+                    let action: String = r.get(2)?;
+                    Ok(ThreadActionDraft {
+                        id: r.get(0)?,
+                        thread_id: r.get(1)?,
+                        action: if action == "resolve" {
+                            ThreadAction::Resolve
+                        } else {
+                            ThreadAction::Reopen
+                        },
+                        observed_resolved: r.get::<_, i64>(3)? != 0,
+                        revision: u64::try_from(r.get::<_, i64>(4)?).unwrap_or(0),
+                        created_at: r.get(5)?,
+                        updated_at: r.get(6)?,
+                    })
+                },
+            )
+            .map_err(db_error)?;
+        let thread_actions = action_rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)?;
+        let counts = DraftCounts {
+            inline_comments: drafts.len() as u64,
+            replies: reply_drafts.len() as u64,
+            thread_intents: thread_actions.len() as u64,
+            review_comments: 0,
+        };
         Ok(DraftSnapshot {
             workspace_revision,
             counts,
             drafts,
+            reply_drafts,
+            thread_actions,
         })
     }
 
@@ -464,6 +809,90 @@ impl DraftStore {
         self.list_replacements(preparation_id)
     }
 
+    pub fn discard_reply(
+        &mut self,
+        preparation_id: &str,
+        draft_id: &str,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+    ) -> Result<DraftSnapshot, ContractError> {
+        self.discard_discussion_draft(
+            preparation_id,
+            draft_id,
+            "reply_drafts",
+            expected_workspace_revision,
+            expected_draft_revision,
+        )
+    }
+    pub fn discard_thread_action(
+        &mut self,
+        preparation_id: &str,
+        draft_id: &str,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+    ) -> Result<DraftSnapshot, ContractError> {
+        self.discard_discussion_draft(
+            preparation_id,
+            draft_id,
+            "thread_action_drafts",
+            expected_workspace_revision,
+            expected_draft_revision,
+        )
+    }
+    fn discard_discussion_draft(
+        &mut self,
+        preparation_id: &str,
+        draft_id: &str,
+        table: &str,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+    ) -> Result<DraftSnapshot, ContractError> {
+        let prepared = load_binding(&self.db, preparation_id)?;
+        let pr = &prepared.context.pr;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let current = workspace_revision(&tx, pr)?;
+        require_revision(
+            current,
+            expected_workspace_revision,
+            "WORKSPACE_REVISION_STALE",
+            "Workspace content changed; reload before discarding this draft",
+        )?;
+        let query = format!(
+            "SELECT context_id,revision FROM {table} WHERE draft_id=?1 AND host=?2 AND owner=?3 AND repository=?4 AND number=?5"
+        );
+        let row: Option<(String, i64)> = tx
+            .query_row(
+                &query,
+                params![draft_id, pr.host, pr.owner, pr.repository, pr.number as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let Some((context, revision)) = row else {
+            return Err(draft_not_found());
+        };
+        if context != prepared.context.context_id {
+            return Err(draft_not_found());
+        };
+        require_revision(
+            revision as u64,
+            expected_draft_revision,
+            "DRAFT_REVISION_STALE",
+            "Draft changed elsewhere; reload it before discarding",
+        )?;
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE draft_id=?1"),
+            [draft_id],
+        )
+        .map_err(db_error)?;
+        advance_workspace(&tx, pr, current)?;
+        tx.commit().map_err(db_error)?;
+        self.list(preparation_id)
+    }
+
     /// Validates the exact pinned diff anchor before a short optimistic write transaction.
     #[allow(clippy::too_many_arguments)]
     pub fn save(
@@ -575,11 +1004,11 @@ impl DraftStore {
             (id, 1, now)
         };
         let workspace_revision = advance_workspace(&tx, pr, current_workspace)?;
-        let drafts = count_drafts(&tx, pr, &prepared.context.context_id)?;
+        let counts = count_all(&tx, pr, &prepared.context.context_id)?;
         tx.commit().map_err(db_error)?;
         Ok(DraftSaveResult {
             workspace_revision,
-            counts: draft_counts(drafts),
+            counts,
             draft: ManualTextDraft {
                 id,
                 body: body.to_owned(),
@@ -646,7 +1075,7 @@ impl DraftStore {
         )
         .map_err(db_error)?;
         let _workspace_revision = advance_workspace(&tx, pr, current_workspace)?;
-        let _drafts = count_drafts(&tx, pr, &prepared.context.context_id)?;
+        let _drafts = count_all(&tx, pr, &prepared.context.context_id)?;
         tx.commit().map_err(db_error)?;
         self.list(preparation_id)
     }
@@ -736,34 +1165,46 @@ fn advance_workspace(
     Ok(next)
 }
 
-fn count_drafts(
+fn count_all(
     tx: &Transaction<'_>,
     pr: &crate::PrIdentity,
     context_id: &str,
-) -> Result<usize, ContractError> {
-    tx.query_row(
-        "SELECT count(*) FROM manual_text_drafts
-         WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5",
-        params![
-            pr.host,
-            pr.owner,
-            pr.repository,
-            i64::try_from(pr.number).map_err(|_| state_error())?,
-            context_id
-        ],
-        |r| r.get::<_, i64>(0),
-    )
-    .map_err(db_error)
-    .and_then(|count| usize::try_from(count).map_err(|_| state_error()))
+) -> Result<DraftCounts, ContractError> {
+    let count = |table: &str| -> Result<u64, ContractError> {
+        tx.query_row(&format!("SELECT count(*) FROM {table} WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5"),params![pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_|state_error())?,context_id],|r|r.get::<_,i64>(0)).map_err(db_error).and_then(|value|u64::try_from(value).map_err(|_|state_error()))
+    };
+    Ok(DraftCounts {
+        inline_comments: count("manual_text_drafts")?,
+        replies: count("reply_drafts")?,
+        thread_intents: count("thread_action_drafts")?,
+        review_comments: 0,
+    })
 }
 
-fn draft_counts(inline_comments: usize) -> DraftCounts {
-    DraftCounts {
-        inline_comments: u64::try_from(inline_comments).unwrap_or(u64::MAX),
-        replies: 0,
-        thread_intents: 0,
-        review_comments: 0,
-    }
+fn find_thread(
+    discussions: &serde_json::Value,
+    id: &str,
+) -> Result<serde_json::Value, ContractError> {
+    discussions["threads"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|thread| thread["id"].as_str() == Some(id))
+        .cloned()
+        .ok_or_else(|| {
+            ContractError::new(
+                "DISCUSSION_THREAD_NOT_FOUND",
+                "Thread is not present in the latest discussion observation",
+                "/thread_id",
+            )
+        })
+}
+fn root_comment_exists(thread: &serde_json::Value, root_id: &str) -> bool {
+    thread["comments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|comment| comment["id"].as_str() == Some(root_id) && comment["replyTo"].is_null())
 }
 
 fn validate_body(body: &str) -> Result<(), ContractError> {

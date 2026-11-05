@@ -248,6 +248,32 @@ struct DraftDiscardInput {
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReplySaveInput {
+    draft_id: Option<String>,
+    thread_id: String,
+    root_comment_id: String,
+    body: String,
+    expected_workspace_revision: u64,
+    expected_draft_revision: u64,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ThreadActionInput {
+    draft_id: Option<String>,
+    thread_id: String,
+    action: bodh::ThreadAction,
+    expected_workspace_revision: u64,
+    expected_draft_revision: u64,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DiscussionDraftDiscardInput {
+    draft_id: String,
+    expected_workspace_revision: u64,
+    expected_draft_revision: u64,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ReplacementSaveInput {
     draft_id: Option<String>,
     source: bodh::SourceRef,
@@ -399,6 +425,95 @@ fn draft_command(args: &[String]) -> Result<Value, ContractError> {
                 ContractError::new(
                     "SERIALIZATION_ERROR",
                     "Cannot encode discarded draft state",
+                    "",
+                )
+            })
+        }
+        Some("reply-save") | Some("thread-action-stage") => {
+            let operation = args[0].as_str();
+            let o = options(&args[1..], &["--prepared", "--state", "--input"])?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let input = o.get("--input").ok_or_else(arguments)?;
+            let mut store = bodh::DraftStore::open(std::path::Path::new(state))?;
+            let value = if operation == "reply-save" {
+                let req: ReplySaveInput =
+                    serde_json::from_slice(&read_input(input)?).map_err(|_| {
+                        ContractError::new(
+                            "DRAFT_INPUT_INVALID",
+                            "Expected a valid reply draft request",
+                            "",
+                        )
+                    })?;
+                serde_json::to_value(store.save_reply(
+                    prepared,
+                    req.draft_id.as_deref(),
+                    &req.thread_id,
+                    &req.root_comment_id,
+                    &req.body,
+                    req.expected_workspace_revision,
+                    req.expected_draft_revision,
+                )?)
+            } else {
+                let req: ThreadActionInput =
+                    serde_json::from_slice(&read_input(input)?).map_err(|_| {
+                        ContractError::new(
+                            "DRAFT_INPUT_INVALID",
+                            "Expected a valid thread action request",
+                            "",
+                        )
+                    })?;
+                serde_json::to_value(store.stage_thread_action(
+                    prepared,
+                    req.draft_id.as_deref(),
+                    &req.thread_id,
+                    req.action,
+                    req.expected_workspace_revision,
+                    req.expected_draft_revision,
+                )?)
+            };
+            value.map_err(|_| {
+                ContractError::new(
+                    "SERIALIZATION_ERROR",
+                    "Cannot encode discussion draft state",
+                    "",
+                )
+            })
+        }
+        Some("reply-discard") | Some("thread-action-discard") => {
+            let operation = args[0].as_str();
+            let o = options(&args[1..], &["--prepared", "--state", "--input"])?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let input = o.get("--input").ok_or_else(arguments)?;
+            let req: DiscussionDraftDiscardInput = serde_json::from_slice(&read_input(input)?)
+                .map_err(|_| {
+                    ContractError::new(
+                        "DRAFT_INPUT_INVALID",
+                        "Expected a valid discussion draft discard request",
+                        "",
+                    )
+                })?;
+            let mut store = bodh::DraftStore::open(std::path::Path::new(state))?;
+            let snapshot = if operation == "reply-discard" {
+                store.discard_reply(
+                    prepared,
+                    &req.draft_id,
+                    req.expected_workspace_revision,
+                    req.expected_draft_revision,
+                )?
+            } else {
+                store.discard_thread_action(
+                    prepared,
+                    &req.draft_id,
+                    req.expected_workspace_revision,
+                    req.expected_draft_revision,
+                )?
+            };
+            serde_json::to_value(snapshot).map_err(|_| {
+                ContractError::new(
+                    "SERIALIZATION_ERROR",
+                    "Cannot encode discussion draft state",
                     "",
                 )
             })

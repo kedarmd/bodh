@@ -41,6 +41,12 @@ Exit categories reserved across CLI operations:
 | 0 | Success |
 | 2 | Input/contract/arguments |
 | 3 | Stale context/generation/draft state |
+
+## Local discussion drafts
+
+`draft reply-save` and `draft thread-action-stage` accept JSON through `--input -` or a file. Reply input contains the remote `thread_id`, its root `root_comment_id`, body, and expected workspace/draft revisions. Thread intent input contains `thread_id`, `action` (`resolve` or `reopen`) and expected revisions. The shared store checks the latest locally acquired discussion observation and its viewer permission fields before staging. These commands only update the local SQLite workspace. `draft reply-discard` and `draft thread-action-discard` remove one local item with the same revision checks. `draft list` reports reply and action items alongside inline drafts and includes each in the pending counts. Nothing here publishes a reply or changes remote thread state.
+
+The native Discussions tab reads the same persisted observation and shared draft store. Refresh uses the read-only GH discussion acquisition. Reply, resolve, reopen, resume and discard controls write local state only. See [issue 20 evidence](v1/EVIDENCE-20.md).
 | 4 | Authentication/access |
 | 5 | Network/uncertain outcome |
 | 10 | Internal failure |
