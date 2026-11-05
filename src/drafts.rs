@@ -1,7 +1,7 @@
 //! Durable local manual text-comment drafts with optimistic workspace revisions.
 use crate::{
-    ContractError, DraftCounts, OperationControl, PreparationStore, PreparedBinding, SourceRef,
-    diff_index, load_latest_discussions,
+    ContractError, DraftCounts, OperationControl, PreparationStore, PreparedBinding, Revision,
+    SourceRef, diff_index, load_latest_discussions, read_source,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,6 @@ pub enum ThreadAction {
     Resolve,
     Reopen,
 }
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyDraft {
@@ -71,7 +70,6 @@ pub struct ReplyDraft {
     pub created_at: i64,
     pub updated_at: i64,
 }
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ThreadActionDraft {
@@ -83,19 +81,46 @@ pub struct ThreadActionDraft {
     pub created_at: i64,
     pub updated_at: i64,
 }
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ReplySaveResult {
     pub workspace_revision: u64,
     pub counts: DraftCounts,
     pub reply: ReplyDraft,
 }
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ThreadActionSaveResult {
     pub workspace_revision: u64,
     pub counts: DraftCounts,
     pub action: ThreadActionDraft,
+}
+
+/// A local code replacement proposal. It is deliberately stored separately from
+/// model-authored suggestions and never applied to the checkout.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodeReplacementDraft {
+    pub id: String,
+    pub source: SourceRef,
+    pub original_text: String,
+    pub replacement: String,
+    pub revision: u64,
+    pub provenance: DraftProvenance,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodeReplacementSnapshot {
+    pub workspace_revision: u64,
+    pub drafts: Vec<CodeReplacementDraft>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodeReplacementSaveResult {
+    pub workspace_revision: u64,
+    pub draft: CodeReplacementDraft,
 }
 
 pub struct DraftStore {
@@ -563,6 +588,227 @@ impl DraftStore {
         })
     }
 
+    /// Lists human-authored replacement proposals for this pinned context.
+    pub fn list_replacements(
+        &self,
+        preparation_id: &str,
+    ) -> Result<CodeReplacementSnapshot, ContractError> {
+        let prepared = load_binding(&self.db, preparation_id)?;
+        let pr = &prepared.context.pr;
+        let mut statement = self.db.prepare(
+            "SELECT draft_id,source_json,original_text,replacement,provenance_json,revision,created_at,updated_at
+             FROM code_replacement_drafts WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5
+             ORDER BY created_at,draft_id"
+        ).map_err(db_error)?;
+        let rows = statement
+            .query_map(
+                params![
+                    pr.host,
+                    pr.owner,
+                    pr.repository,
+                    i64::try_from(pr.number).map_err(|_| state_error())?,
+                    prepared.context.context_id
+                ],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, i64>(6)?,
+                        r.get::<_, i64>(7)?,
+                    ))
+                },
+            )
+            .map_err(db_error)?;
+        let mut drafts = Vec::new();
+        for row in rows {
+            let (
+                id,
+                source,
+                original_text,
+                replacement,
+                provenance,
+                revision,
+                created_at,
+                updated_at,
+            ) = row.map_err(db_error)?;
+            drafts.push(CodeReplacementDraft {
+                id,
+                source: serde_json::from_str(&source).map_err(json_error)?,
+                original_text,
+                replacement,
+                revision: u64::try_from(revision).map_err(|_| state_error())?,
+                provenance: serde_json::from_str(&provenance).map_err(json_error)?,
+                created_at,
+                updated_at,
+            });
+        }
+        Ok(CodeReplacementSnapshot {
+            workspace_revision: workspace_revision(&self.db, pr)?,
+            drafts,
+        })
+    }
+
+    /// Saves an editable replacement after checking it still names exact pinned head source.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_replacement(
+        &mut self,
+        preparation_id: &str,
+        draft_id: Option<&str>,
+        source: &SourceRef,
+        original_text: &str,
+        replacement: &str,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+        control: &OperationControl,
+    ) -> Result<CodeReplacementSaveResult, ContractError> {
+        if source.revision != Revision::Head {
+            return Err(ContractError::new(
+                "REPLACEMENT_HEAD_ONLY",
+                "Code replacements can target only the pinned head side",
+                "/source/revision",
+            ));
+        }
+        validate_replacement_text(replacement)?;
+        if original_text.is_empty() || original_text.chars().count() > MAX_DRAFT_CHARS {
+            return Err(ContractError::new(
+                "REPLACEMENT_SOURCE_INVALID",
+                "Original source must be nonempty and no longer than 65,536 characters",
+                "/original_text",
+            ));
+        }
+        let prepared = load_binding(&self.db, preparation_id)?;
+        let index = diff_index(Path::new(&prepared.checkout), &prepared.context, control)?;
+        index.validate_anchor(source)?;
+        let exact = read_source(
+            Path::new(&prepared.checkout),
+            &prepared.context,
+            source,
+            control,
+        )?;
+        if exact != original_text {
+            return Err(ContractError::new(
+                "REPLACEMENT_SOURCE_CHANGED",
+                "The selected text differs from the exact pinned head source; reload the source before saving",
+                "/original_text",
+            ));
+        }
+        control.check()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let pr = &prepared.context.pr;
+        let current = workspace_revision(&tx, pr)?;
+        require_revision(
+            current,
+            expected_workspace_revision,
+            "WORKSPACE_REVISION_STALE",
+            "Workspace content changed; reload before saving this replacement",
+        )?;
+        let provenance = DraftProvenance {
+            preparation_id: preparation_id.into(),
+            context_id: prepared.context.context_id.clone(),
+            base_sha: prepared.context.base_sha.clone(),
+            head_sha: prepared.context.head_sha.clone(),
+            merge_base_sha: prepared.context.merge_base_sha.clone(),
+        };
+        let source_json = serde_json::to_string(source).map_err(json_error)?;
+        let provenance_json = serde_json::to_string(&provenance).map_err(json_error)?;
+        let now = unix_millis();
+        let (id, revision, created_at) = if let Some(id) = draft_id {
+            let row: Option<(String,i64,i64)> = tx.query_row("SELECT context_id,revision,created_at FROM code_replacement_drafts WHERE draft_id=?1 AND host=?2 AND owner=?3 AND repository=?4 AND number=?5", params![id,pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_| state_error())?], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(db_error)?;
+            let Some((context, old_revision, created)) = row else {
+                return Err(draft_not_found());
+            };
+            if context != prepared.context.context_id {
+                return Err(draft_not_found());
+            }
+            require_revision(
+                u64::try_from(old_revision).map_err(|_| state_error())?,
+                expected_draft_revision,
+                "DRAFT_REVISION_STALE",
+                "Replacement changed elsewhere; reload it before saving",
+            )?;
+            let next = old_revision.checked_add(1).ok_or_else(state_error)?;
+            tx.execute("UPDATE code_replacement_drafts SET source_json=?1,original_text=?2,replacement=?3,provenance_json=?4,revision=?5,updated_at=?6 WHERE draft_id=?7", params![source_json,original_text,replacement,provenance_json,next,now,id]).map_err(db_error)?;
+            (id.to_owned(), next, created)
+        } else {
+            if expected_draft_revision != 0 {
+                return Err(ContractError::new(
+                    "DRAFT_REVISION_STALE",
+                    "New drafts must start at revision zero",
+                    "/expected_draft_revision",
+                ));
+            }
+            let id = new_id();
+            tx.execute("INSERT INTO code_replacement_drafts(draft_id,context_id,host,owner,repository,number,source_json,original_text,replacement,provenance_json,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,1,?11,?11)", params![id,prepared.context.context_id,pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_| state_error())?,source_json,original_text,replacement,provenance_json,now]).map_err(db_error)?;
+            (id, 1, now)
+        };
+        let workspace_revision = advance_workspace(&tx, pr, current)?;
+        tx.commit().map_err(db_error)?;
+        Ok(CodeReplacementSaveResult {
+            workspace_revision,
+            draft: CodeReplacementDraft {
+                id,
+                source: source.clone(),
+                original_text: original_text.into(),
+                replacement: replacement.into(),
+                revision: u64::try_from(revision).map_err(|_| state_error())?,
+                provenance,
+                created_at,
+                updated_at: now,
+            },
+        })
+    }
+
+    /// Explicitly removes one replacement draft using optimistic revisions.
+    pub fn discard_replacement(
+        &mut self,
+        preparation_id: &str,
+        draft_id: &str,
+        expected_workspace_revision: u64,
+        expected_draft_revision: u64,
+    ) -> Result<CodeReplacementSnapshot, ContractError> {
+        let prepared = load_binding(&self.db, preparation_id)?;
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let pr = &prepared.context.pr;
+        let current = workspace_revision(&tx, pr)?;
+        require_revision(
+            current,
+            expected_workspace_revision,
+            "WORKSPACE_REVISION_STALE",
+            "Workspace content changed; reload before discarding this replacement",
+        )?;
+        let row: Option<(String,i64)> = tx.query_row("SELECT context_id,revision FROM code_replacement_drafts WHERE draft_id=?1 AND host=?2 AND owner=?3 AND repository=?4 AND number=?5", params![draft_id,pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_| state_error())?], |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(db_error)?;
+        let Some((context, revision)) = row else {
+            return Err(draft_not_found());
+        };
+        if context != prepared.context.context_id {
+            return Err(draft_not_found());
+        }
+        require_revision(
+            u64::try_from(revision).map_err(|_| state_error())?,
+            expected_draft_revision,
+            "DRAFT_REVISION_STALE",
+            "Replacement changed elsewhere; reload it before discarding",
+        )?;
+        tx.execute(
+            "DELETE FROM code_replacement_drafts WHERE draft_id=?1",
+            [draft_id],
+        )
+        .map_err(db_error)?;
+        advance_workspace(&tx, pr, current)?;
+        tx.commit().map_err(db_error)?;
+        self.list_replacements(preparation_id)
+    }
+
     pub fn discard_reply(
         &mut self,
         preparation_id: &str,
@@ -925,7 +1171,7 @@ fn count_all(
     context_id: &str,
 ) -> Result<DraftCounts, ContractError> {
     let count = |table: &str| -> Result<u64, ContractError> {
-        tx.query_row(&format!("SELECT count(*) FROM {table} WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5"),params![pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_|state_error())?,context_id],|r|r.get::<_,i64>(0)).map_err(db_error).and_then(|n|u64::try_from(n).map_err(|_|state_error()))
+        tx.query_row(&format!("SELECT count(*) FROM {table} WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5"),params![pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_|state_error())?,context_id],|r|r.get::<_,i64>(0)).map_err(db_error).and_then(|value|u64::try_from(value).map_err(|_|state_error()))
     };
     Ok(DraftCounts {
         inline_comments: count("manual_text_drafts")?,
@@ -967,6 +1213,17 @@ fn validate_body(body: &str) -> Result<(), ContractError> {
             "DRAFT_BODY_INVALID",
             "Draft text must be nonempty and no longer than 65,536 characters",
             "/body",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_replacement_text(text: &str) -> Result<(), ContractError> {
+    if text.chars().count() > MAX_DRAFT_CHARS {
+        return Err(ContractError::new(
+            "REPLACEMENT_TEXT_INVALID",
+            "Replacement text must be no longer than 65,536 characters",
+            "/replacement",
         ));
     }
     Ok(())
