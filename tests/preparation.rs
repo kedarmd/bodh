@@ -1,5 +1,6 @@
 use bodh::{
-    OperationControl, PrIdentity, PreparationStore, ReviewContext, prepare_local_pr_with_gh,
+    DraftStore, OperationControl, PrIdentity, PreparationStore, ReviewContext,
+    prepare_local_pr_with_gh,
 };
 use std::{
     process::Command,
@@ -260,6 +261,157 @@ fn prepares_ordinary_pr_from_pinned_local_commits_without_touching_checkout() {
     assert_eq!(timed.code, "OPERATION_TIMEOUT");
     assert_eq!(snapshot(), before);
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn concurrent_first_open_serializes_the_initial_schema_migration() {
+    let root = std::env::temp_dir().join(format!(
+        "bodh-migration-race-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let state = root.join("state.sqlite");
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let state = state.clone();
+            let gate = gate.clone();
+            std::thread::spawn(move || {
+                gate.wait();
+                PreparationStore::open(&state)
+            })
+        })
+        .collect();
+    gate.wait();
+    let outcomes: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
+    assert!(
+        outcomes.iter().all(Result::is_ok),
+        "migration failures: {:?}",
+        outcomes
+            .iter()
+            .filter_map(|outcome| outcome.as_ref().err())
+            .collect::<Vec<_>>()
+    );
+    let version: i64 = rusqlite::Connection::open(state)
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 1);
+}
+
+#[test]
+fn concurrent_workspace_store_open_serializes_feature_migrations() {
+    let root = std::env::temp_dir().join(format!(
+        "bodh-feature-migration-race-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let state = root.join("state.sqlite");
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let state = state.clone();
+            let gate = gate.clone();
+            std::thread::spawn(move || {
+                gate.wait();
+                DraftStore::open(&state)
+            })
+        })
+        .collect();
+    gate.wait();
+    let outcomes: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
+    assert!(
+        outcomes.iter().all(Result::is_ok),
+        "migration failures: {:?}",
+        outcomes
+            .iter()
+            .filter_map(|outcome| outcome.as_ref().err())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn migration_lock_contention_waits_without_losing_a_saved_preparation() {
+    let root = std::env::temp_dir().join(format!(
+        "bodh-migration-lock-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let state = root.join("state.sqlite");
+    let binding = PreparationStore::open(&state)
+        .unwrap()
+        .save(
+            &context(),
+            "/checkout",
+            "retained title",
+            Some("draft context"),
+            &[],
+        )
+        .unwrap();
+    let locker = rusqlite::Connection::open(&state).unwrap();
+    locker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    let unlocker = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        locker.execute_batch("COMMIT;").unwrap();
+    });
+
+    let reopened = PreparationStore::open(&state).unwrap();
+    unlocker.join().unwrap();
+    let loaded = reopened.load(&binding.preparation_id).unwrap();
+    assert_eq!(loaded.title, "retained title");
+    assert_eq!(loaded.description.as_deref(), Some("draft context"));
+}
+
+#[test]
+fn failed_legacy_migration_keeps_existing_workspace_data_intact() {
+    let root = std::env::temp_dir().join(format!(
+        "bodh-migration-rollback-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let state = root.join("state.sqlite");
+    let binding = PreparationStore::open(&state)
+        .unwrap()
+        .save(&context(), "/checkout", "retained title", None, &[])
+        .unwrap();
+
+    // Simulate an interrupted upgrade whose schema transaction did not advance
+    // the version marker. Reapplying the initial migration fails at its first
+    // conflicting table; the transaction must leave every existing row intact.
+    let db = rusqlite::Connection::open(&state).unwrap();
+    db.execute_batch("PRAGMA user_version=0;").unwrap();
+    drop(db);
+    let failed = match PreparationStore::open(&state) {
+        Ok(_) => panic!("inconsistent legacy fixture unexpectedly migrated"),
+        Err(error) => error,
+    };
+    assert_eq!(failed.code, "STATE_UNAVAILABLE");
+    let db = rusqlite::Connection::open(&state).unwrap();
+    let retained: i64 = db
+        .query_row(
+            "SELECT count(*) FROM preparations WHERE preparation_id=?1",
+            [&binding.preparation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(retained, 1);
+    db.execute_batch("PRAGMA user_version=1;").unwrap();
+    drop(db);
+    let loaded = PreparationStore::open(&state)
+        .unwrap()
+        .load(&binding.preparation_id)
+        .unwrap();
+    assert_eq!(loaded.title, "retained title");
 }
 
 #[test]

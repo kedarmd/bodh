@@ -10,7 +10,7 @@ use std::{
     fs::File,
     io::Read,
     path::Path,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const APPROVAL_TTL_MS: i64 = 5 * 60 * 1000;
@@ -907,9 +907,7 @@ fn sql_value(value: rusqlite::types::ValueRef<'_>) -> Value {
 
 fn open_connection(path: &Path) -> Result<Connection, ContractError> {
     let db = Connection::open(path).map_err(db_error)?;
-    db.busy_timeout(Duration::from_secs(5)).map_err(db_error)?;
-    db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
-        .map_err(db_error)?;
+    crate::sqlite::configure(&db).map_err(db_error)?;
     ensure_schema(&db)?;
     Ok(db)
 }

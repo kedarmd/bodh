@@ -99,14 +99,16 @@ pub struct PreparationStore {
 impl PreparationStore {
     pub fn open(path: &Path) -> Result<Self, ContractError> {
         let db = Connection::open(path).map_err(db_error)?;
-        db.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(db_error)?;
-        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
-            .map_err(db_error)?;
+        crate::sqlite::configure(&db).map_err(db_error)?;
+        // Serialize the version read with the migration. Reading user_version
+        // before taking the write lock lets two first-open processes both
+        // decide that the schema is empty and race to create the same tables.
+        db.execute_batch("BEGIN IMMEDIATE;").map_err(db_error)?;
         let version: i64 = db
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(db_error)?;
         if version > 1 {
+            let _ = db.execute_batch("ROLLBACK;");
             return Err(ContractError::new(
                 "STATE_VERSION_UNSUPPORTED",
                 "State database version is newer than this application",
@@ -114,8 +116,9 @@ impl PreparationStore {
             ));
         }
         if version == 0 {
-            db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE workspaces (host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, generation INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(host,owner,repository,number)); CREATE TABLE contexts (context_id TEXT PRIMARY KEY, context_json TEXT NOT NULL, changed_files_json TEXT NOT NULL); CREATE TABLE preparations (preparation_id TEXT PRIMARY KEY, context_id TEXT NOT NULL REFERENCES contexts(context_id), host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, expected_generation INTEGER NOT NULL, created_at INTEGER NOT NULL, title TEXT NOT NULL, description TEXT, checkout TEXT NOT NULL, FOREIGN KEY(host,owner,repository,number) REFERENCES workspaces(host,owner,repository,number)); PRAGMA user_version=1; COMMIT;").map_err(db_error)?;
+            db.execute_batch("CREATE TABLE workspaces (host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, generation INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(host,owner,repository,number)); CREATE TABLE contexts (context_id TEXT PRIMARY KEY, context_json TEXT NOT NULL, changed_files_json TEXT NOT NULL); CREATE TABLE preparations (preparation_id TEXT PRIMARY KEY, context_id TEXT NOT NULL REFERENCES contexts(context_id), host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, expected_generation INTEGER NOT NULL, created_at INTEGER NOT NULL, title TEXT NOT NULL, description TEXT, checkout TEXT NOT NULL, FOREIGN KEY(host,owner,repository,number) REFERENCES workspaces(host,owner,repository,number)); PRAGMA user_version=1;").map_err(db_error)?;
         }
+        db.execute_batch("COMMIT;").map_err(db_error)?;
         Ok(Self { db })
     }
 

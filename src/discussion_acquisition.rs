@@ -613,9 +613,7 @@ impl DiscussionStore {
         // Establish the prepared-state schema first; this component owns only its additive tables.
         crate::PreparationStore::open(path)?;
         let db = Connection::open(path).map_err(db_error)?;
-        db.busy_timeout(Duration::from_secs(5)).map_err(db_error)?;
-        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
-            .map_err(db_error)?;
+        crate::sqlite::configure(&db).map_err(db_error)?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS discussion_schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);")
             .map_err(db_error)?;
         db.execute_batch("BEGIN IMMEDIATE;").map_err(db_error)?;
@@ -663,6 +661,19 @@ impl DiscussionStore {
         }
         let id = new_run_id();
         let tx = self.db.unchecked_transaction().map_err(db_error)?;
+        // A killed process can leave a run unfinished before finish_run gets
+        // its pruning turn. Discard stale partial cache rows at the next start,
+        // keeping only the latest complete fallback before adding this attempt.
+        tx.execute(
+            "DELETE FROM discussion_observations
+             WHERE preparation_id=?1 AND run_id<>COALESCE((
+                 SELECT run_id FROM discussion_observations
+                 WHERE preparation_id=?1 AND complete=1
+                 ORDER BY created_at DESC,run_id DESC LIMIT 1
+             ),'')",
+            [preparation_id],
+        )
+        .map_err(db_error)?;
         tx.execute("INSERT INTO discussion_observations(run_id,preparation_id,created_at) VALUES(?1,?2,?3)",params![id,preparation_id,now_ms()]).map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         Ok(id)
@@ -711,8 +722,30 @@ impl DiscussionStore {
         Ok(())
     }
     fn finish_run(&self, run_id: &str, status: &RunStatus<'_>) -> Result<(), ContractError> {
-        self.db.execute("UPDATE discussion_observations SET expected_threads=?2,fetched_threads=?3,threads_complete=?4,complete=?5,incomplete_connection=?6,incomplete_cause=?7 WHERE run_id=?1",params![run_id,status.expected.map(|n|n as i64),status.fetched as i64,status.threads_complete as i64,status.complete as i64,status.failure_connection,status.failure_cause]).map_err(db_error)?;
-        Ok(())
+        // Keep the latest partial attempt and the most recent complete cache.
+        // The new result is fully acquired before this short local transaction;
+        // pruning never holds a database write lock across network work.
+        let tx = self.db.unchecked_transaction().map_err(db_error)?;
+        let preparation_id: String = tx
+            .query_row(
+                "SELECT preparation_id FROM discussion_observations WHERE run_id=?1",
+                [run_id],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        tx.execute("UPDATE discussion_observations SET expected_threads=?2,fetched_threads=?3,threads_complete=?4,complete=?5,incomplete_connection=?6,incomplete_cause=?7 WHERE run_id=?1",params![run_id,status.expected.map(|n|n as i64),status.fetched as i64,status.threads_complete as i64,status.complete as i64,status.failure_connection,status.failure_cause]).map_err(db_error)?;
+        tx.execute(
+            "DELETE FROM discussion_observations
+             WHERE preparation_id=?1 AND run_id<>?2
+               AND (complete=0 OR run_id<>(
+                   SELECT run_id FROM discussion_observations
+                   WHERE preparation_id=?1 AND complete=1
+                   ORDER BY created_at DESC,run_id DESC LIMIT 1
+               ))",
+            params![preparation_id, run_id],
+        )
+        .map_err(db_error)?;
+        tx.commit().map_err(db_error)
     }
     fn load_latest(&self, preparation_id: &str) -> Result<Value, ContractError> {
         let run:Option<String>=self.db.query_row("SELECT run_id FROM discussion_observations WHERE preparation_id=?1 ORDER BY created_at DESC,run_id DESC LIMIT 1",[preparation_id],|r|r.get(0)).optional().map_err(db_error)?;

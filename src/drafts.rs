@@ -356,16 +356,14 @@ impl DraftStore {
     pub fn open(path: &Path) -> Result<Self, ContractError> {
         drop(PreparationStore::open(path)?);
         let db = Connection::open(path).map_err(db_error)?;
-        db.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(db_error)?;
-        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
-            .map_err(db_error)?;
+        crate::sqlite::configure(&db).map_err(db_error)?;
         db.execute_batch(
             "CREATE TABLE IF NOT EXISTS draft_schema_migrations (
                  version INTEGER PRIMARY KEY NOT NULL
              );",
         )
         .map_err(db_error)?;
+        db.execute_batch("BEGIN IMMEDIATE;").map_err(db_error)?;
         let version: Option<i64> = db
             .query_row(
                 "SELECT max(version) FROM draft_schema_migrations",
@@ -378,8 +376,7 @@ impl DraftStore {
         match version.unwrap_or(0) {
             0 => {
                 db.execute_batch(
-                    "BEGIN IMMEDIATE;
-                     CREATE TABLE IF NOT EXISTS draft_schema_migrations (
+                    "CREATE TABLE IF NOT EXISTS draft_schema_migrations (
                          version INTEGER PRIMARY KEY NOT NULL
                      );
                      CREATE TABLE manual_text_drafts (
@@ -400,13 +397,13 @@ impl DraftStore {
                      );
                      CREATE INDEX manual_text_drafts_context
                          ON manual_text_drafts(host, owner, repository, number, context_id, updated_at);
-                     INSERT INTO draft_schema_migrations(version) VALUES(1);
-                     COMMIT;",
+                     INSERT INTO draft_schema_migrations(version) VALUES(1);",
                 )
                 .map_err(db_error)?;
             }
             1 | 2 => {}
             _ => {
+                let _ = db.execute_batch("ROLLBACK;");
                 return Err(ContractError::new(
                     "DRAFT_SCHEMA_UNSUPPORTED",
                     "Draft database schema is newer than this application",
@@ -414,6 +411,7 @@ impl DraftStore {
                 ));
             }
         }
+        db.execute_batch("COMMIT;").map_err(db_error)?;
         db.execute_batch("BEGIN IMMEDIATE;
             CREATE TABLE IF NOT EXISTS code_replacement_drafts (draft_id TEXT PRIMARY KEY NOT NULL, context_id TEXT NOT NULL REFERENCES contexts(context_id), host TEXT NOT NULL, owner TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL, source_json TEXT NOT NULL, original_text TEXT NOT NULL, replacement TEXT NOT NULL, provenance_json TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY(host,owner,repository,number) REFERENCES workspaces(host,owner,repository,number));
             CREATE INDEX IF NOT EXISTS code_replacement_drafts_context ON code_replacement_drafts(host,owner,repository,number,context_id,updated_at);

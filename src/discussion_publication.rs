@@ -8,7 +8,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,9 +311,8 @@ pub struct DiscussionPublicationStore {
 impl DiscussionPublicationStore {
     pub fn open(path: &Path) -> Result<Self, ContractError> {
         let db = Connection::open(path).map_err(db_error)?;
-        db.busy_timeout(Duration::from_secs(5)).map_err(db_error)?;
-        db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS discussion_publication_plans(
+        crate::sqlite::configure(&db).map_err(db_error)?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS discussion_publication_plans(
                 plan_id TEXT PRIMARY KEY NOT NULL, preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id),
                 context_id TEXT NOT NULL, intent_revision INTEGER NOT NULL, fingerprint TEXT NOT NULL,
                 review_operation_id TEXT, state TEXT NOT NULL CHECK(state IN ('planned','sending','partial','confirmed','failed','unknown')),

@@ -24,6 +24,7 @@ mod model;
 mod preparation;
 mod publication;
 mod replacement_authorization;
+mod sqlite;
 pub use evidence::*;
 pub use freshness::*;
 pub use model::*;

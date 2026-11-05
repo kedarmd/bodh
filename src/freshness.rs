@@ -728,11 +728,9 @@ fn store_observation(
 fn open_db(path: &Path) -> Result<Connection, ContractError> {
     drop(crate::PreparationStore::open(path)?);
     let db = Connection::open(path).map_err(db_error)?;
-    db.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(db_error)?;
+    crate::sqlite::configure(&db).map_err(db_error)?;
     db.execute_batch(
-        "PRAGMA foreign_keys=ON;
-         CREATE TABLE IF NOT EXISTS freshness_baselines(
+        "CREATE TABLE IF NOT EXISTS freshness_baselines(
              preparation_id TEXT PRIMARY KEY NOT NULL REFERENCES preparations(preparation_id),
              base_ref TEXT NOT NULL,
              head_ref TEXT NOT NULL,
