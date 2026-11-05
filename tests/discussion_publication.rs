@@ -1,7 +1,8 @@
 use bodh::{
     DiscussionPublicationStore, DiscussionPublisher, DiscussionSelection, DiscussionSendOutcome,
-    DraftStore, OperationControl, PrIdentity, PreparationStore, ReviewContext, ThreadAction,
-    ThreadState, acquire_discussions_with_gh,
+    DraftStore, OperationControl, PrIdentity, PreparationStore, ReviewContext,
+    ReviewPublicationStore, SelectedDraft, StageReviewRequest, ThreadAction, ThreadState,
+    acquire_discussions_with_gh,
 };
 use rusqlite::{Connection, params};
 use std::{
@@ -152,14 +153,49 @@ fn seed_work(state: &Path, prep: &str) -> (u64, String, String) {
     (action.workspace_revision, reply.reply.id, action.action.id)
 }
 
+fn stage_intent(state: &Path, prep: &str, reply_ids: &[&str], action_ids: &[&str]) -> u64 {
+    let snapshot = DraftStore::open(state).unwrap().list(prep).unwrap();
+    let mut store = ReviewPublicationStore::open(state).unwrap();
+    let expected_intent_revision = store.intent(prep).unwrap().revision;
+    store
+        .stage(StageReviewRequest {
+            state: state.to_path_buf(),
+            preparation_id: prep.to_owned(),
+            expected_workspace_revision: snapshot.workspace_revision,
+            expected_intent_revision,
+            selected: vec![],
+            selected_replacements: vec![],
+            selected_replies: reply_ids
+                .iter()
+                .map(|id| SelectedDraft {
+                    id: (*id).into(),
+                    revision: 1,
+                })
+                .collect(),
+            selected_thread_actions: action_ids
+                .iter()
+                .map(|id| SelectedDraft {
+                    id: (*id).into(),
+                    revision: 1,
+                })
+                .collect(),
+            summary: None,
+            event: None,
+        })
+        .unwrap()
+        .revision
+}
+
 #[test]
 fn independent_outcomes_confirm_only_accepted_steps_and_keep_reply_payload_exact() {
     let (root, state, prep) = fixture();
     let (_, reply_id, action_id) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[&action_id]);
     let mut store = DiscussionPublicationStore::open(&state).unwrap();
     let plan = store
         .confirm(
             &prep,
+            intent_revision,
             None,
             &[DiscussionSelection {
                 id: reply_id.clone(),
@@ -222,10 +258,12 @@ fn independent_outcomes_confirm_only_accepted_steps_and_keep_reply_payload_exact
 fn permission_loss_and_already_achieved_action_send_nothing_and_never_claim_publication() {
     let (root, state, prep) = fixture();
     let (_, reply_id, action_id) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[&action_id]);
     let mut store = DiscussionPublicationStore::open(&state).unwrap();
     let plan = store
         .confirm(
             &prep,
+            intent_revision,
             None,
             &[DiscussionSelection {
                 id: reply_id.clone(),
@@ -261,10 +299,12 @@ fn permission_loss_and_already_achieved_action_send_nothing_and_never_claim_publ
 fn changed_draft_revision_is_detected_after_confirmation_before_any_write() {
     let (root, state, prep) = fixture();
     let (_, reply_id, _) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[]);
     let mut store = DiscussionPublicationStore::open(&state).unwrap();
     let plan = store
         .confirm(
             &prep,
+            intent_revision,
             None,
             &[DiscussionSelection {
                 id: reply_id.clone(),
@@ -292,10 +332,12 @@ fn changed_draft_revision_is_detected_after_confirmation_before_any_write() {
 fn interrupted_sending_step_becomes_unknown_and_cannot_be_retried() {
     let (root, state, prep) = fixture();
     let (_, reply_id, _) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[]);
     let mut store = DiscussionPublicationStore::open(&state).unwrap();
     let plan = store
         .confirm(
             &prep,
+            intent_revision,
             None,
             &[DiscussionSelection {
                 id: reply_id,
