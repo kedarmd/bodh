@@ -1,6 +1,6 @@
 use bodh::{
-    Alignment, ChangedFile, CommittedGeneratedReview, ContractError, ReviewContext, Revision,
-    SourceRef,
+    Alignment, ChangedFile, CommittedGeneratedReview, ContractError, Finding, FollowUp,
+    FollowUpStatus, PriorConcern, ReviewContext, Revision, SourceRef,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -17,6 +17,84 @@ pub struct CommittedOverviewView {
     pub committed: Option<CommittedGeneratedReview>,
     pub status: CommittedOverviewStatus,
     pub error_code: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FollowUpProminence {
+    Unassessed,
+    Unresolved,
+    Regressed,
+    Uncertain,
+    Resolved,
+}
+
+impl FollowUpProminence {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unassessed => "Not assessed",
+            Self::Unresolved => "Unresolved",
+            Self::Regressed => "Regressed",
+            Self::Uncertain => "Uncertain",
+            Self::Resolved => "Resolved",
+        }
+    }
+
+    pub fn is_prominent(self) -> bool {
+        !matches!(self, Self::Resolved)
+    }
+}
+
+pub struct FollowUpConcernRow<'a> {
+    pub concern: &'a PriorConcern,
+    pub assessment: Option<&'a FollowUp>,
+    pub current_finding: Option<&'a Finding>,
+    pub prominence: FollowUpProminence,
+}
+
+pub fn follow_up_concerns(
+    committed: &CommittedGeneratedReview,
+) -> Option<Vec<FollowUpConcernRow<'_>>> {
+    let prior = committed.context.prior_concerns.as_ref()?;
+    let mut rows = prior
+        .iter()
+        .map(|concern| {
+            let assessment = committed
+                .result
+                .follow_up
+                .iter()
+                .find(|item| item.prior_concern_id == concern.id);
+            let current_finding = assessment
+                .and_then(|item| item.finding_id.as_deref())
+                .and_then(|id| {
+                    committed
+                        .result
+                        .findings
+                        .iter()
+                        .find(|finding| finding.id == id)
+                });
+            let prominence = match assessment.map(|item| &item.status) {
+                Some(FollowUpStatus::Unresolved) => FollowUpProminence::Unresolved,
+                Some(FollowUpStatus::Regressed) => FollowUpProminence::Regressed,
+                Some(FollowUpStatus::Uncertain) => FollowUpProminence::Uncertain,
+                Some(FollowUpStatus::Resolved) => FollowUpProminence::Resolved,
+                None => FollowUpProminence::Unassessed,
+            };
+            FollowUpConcernRow {
+                concern,
+                assessment,
+                current_finding,
+                prominence,
+            }
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|row| match row.prominence {
+        FollowUpProminence::Unassessed
+        | FollowUpProminence::Unresolved
+        | FollowUpProminence::Regressed => 0,
+        FollowUpProminence::Uncertain => 1,
+        FollowUpProminence::Resolved => 2,
+    });
+    Some(rows)
 }
 
 impl CommittedOverviewView {
@@ -81,8 +159,9 @@ pub fn evidence_file_index(changed_files: &[ChangedFile], source: &SourceRef) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        CommittedOverviewStatus, CommittedOverviewView, apply_committed_overview_load,
-        evidence_file_index, is_significant_assessment,
+        CommittedOverviewStatus, CommittedOverviewView, FollowUpProminence,
+        apply_committed_overview_load, evidence_file_index, follow_up_concerns,
+        is_significant_assessment,
     };
     use bodh::{
         Alignment, ChangedFile, CommittedGeneratedReview, PreparedEvidenceContext, ReviewContext,
@@ -181,5 +260,56 @@ mod tests {
             ..head_source
         };
         assert_eq!(evidence_file_index(&files, &wrong_side), None);
+    }
+
+    #[test]
+    fn follow_up_rows_order_actionable_uncertain_and_resolved_and_resolve_current_findings() {
+        let mut review = committed(context("current"));
+        review.context.prior_concerns = Some(
+            [
+                "resolved",
+                "unresolved",
+                "regressed",
+                "uncertain",
+                "unassessed",
+            ]
+            .into_iter()
+            .map(|id| bodh::PriorConcern {
+                id: id.into(),
+                title: format!("Prior {id}"),
+                summary: format!("Summary {id}"),
+                evidence: Vec::new(),
+            })
+            .collect(),
+        );
+        review.result.findings = serde_json::from_value(serde_json::json!([
+            {"id":"F-unresolved","title":"Unresolved","severity":"high","confidence":"high","summary":"s","reason":"r","impact":"i","evidence":[],"locations":[],"suggestions":[],"related_thread_ids":[]},
+            {"id":"F-regressed","title":"Regressed","severity":"high","confidence":"high","summary":"s","reason":"r","impact":"i","evidence":[],"locations":[],"suggestions":[],"related_thread_ids":[]}
+        ]))
+        .unwrap();
+        review.result.follow_up = serde_json::from_value(serde_json::json!([
+            {"prior_concern_id":"resolved","status":"resolved","explanation":"Fixed","evidence":[],"finding_id":null},
+            {"prior_concern_id":"unresolved","status":"unresolved","explanation":"Open","evidence":[],"finding_id":"F-unresolved"},
+            {"prior_concern_id":"regressed","status":"regressed","explanation":"Back again","evidence":[],"finding_id":"F-regressed"},
+            {"prior_concern_id":"uncertain","status":"uncertain","explanation":"Cannot confirm","evidence":[],"finding_id":null}
+        ]))
+        .unwrap();
+
+        let rows = follow_up_concerns(&review).unwrap();
+        assert_eq!(
+            rows.iter().map(|row| row.prominence).collect::<Vec<_>>(),
+            [
+                FollowUpProminence::Unresolved,
+                FollowUpProminence::Regressed,
+                FollowUpProminence::Unassessed,
+                FollowUpProminence::Uncertain,
+                FollowUpProminence::Resolved,
+            ]
+        );
+        assert_eq!(rows[0].current_finding.unwrap().id, "F-unresolved");
+        assert_eq!(rows[1].current_finding.unwrap().id, "F-regressed");
+        assert!(rows[3].current_finding.is_none());
+        assert!(!rows[4].prominence.is_prominent());
+        assert!(follow_up_concerns(&committed(context("without-prior"))).is_none());
     }
 }

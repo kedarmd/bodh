@@ -1,6 +1,6 @@
 use bodh::{
     OperationControl, PreparedEvidenceContext, ReviewResult, Revision, SourceRef, read_source,
-    validate_evidence,
+    read_source_at_commit, validate_evidence,
 };
 use serde_json::json;
 use std::{
@@ -12,6 +12,47 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 struct Fixture {
     repo: PathBuf,
     prepared: PreparedEvidenceContext,
+}
+
+#[test]
+fn historical_source_reads_exact_commit_and_reports_missing_objects() {
+    let f = Fixture::new();
+    let source = SourceRef {
+        path: "source.txt".into(),
+        revision: Revision::Head,
+        start_line: 2,
+        end_line: 2,
+    };
+    assert_eq!(
+        read_source_at_commit(
+            &f.repo,
+            &f.prepared.context.head_sha,
+            &source,
+            &OperationControl::default(),
+        )
+        .unwrap(),
+        "head\r\n"
+    );
+    let mut base_source = source.clone();
+    base_source.revision = Revision::Base;
+    assert_eq!(
+        read_source_at_commit(
+            &f.repo,
+            &f.prepared.context.merge_base_sha,
+            &base_source,
+            &OperationControl::default(),
+        )
+        .unwrap(),
+        "base\r\n"
+    );
+    let missing = read_source_at_commit(
+        &f.repo,
+        &"a".repeat(40),
+        &source,
+        &OperationControl::default(),
+    )
+    .unwrap_err();
+    assert_eq!(missing.code, "GIT_OBJECT_UNAVAILABLE");
 }
 fn git(repo: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

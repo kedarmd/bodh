@@ -386,6 +386,7 @@ fn cli_complete_fixture_reports_full_semantic_validation_and_rejects_bad_steps()
                 id: format!("prior-{status}"),
                 title: format!("Prior {status} concern"),
                 summary: format!("Prior {status} explanation"),
+                evidence: Vec::new(),
             })
             .collect(),
     );

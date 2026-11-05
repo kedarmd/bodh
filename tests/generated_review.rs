@@ -238,6 +238,78 @@ fn finding_triage_is_bound_to_a_committed_finding_and_survives_reopen() {
 }
 
 #[test]
+fn replacement_keeps_only_compact_prior_concern_text_and_exact_source_metadata() {
+    let fixture = Fixture::new();
+    let store = GeneratedReviewStore::open(&fixture.state).unwrap();
+    let mut first: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    first["findings"] = json!([{
+        "id":"F1","title":"Handle empty response","severity":"high","confidence":"medium",
+        "summary":"The response is not checked.","reason":"A consumer can receive an empty value.",
+        "impact":"The caller may fail later with less context.",
+        "evidence":[
+            {"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"explanation":"The changed line returns the unchecked value."},
+            {"source":{"path":"src.rs","revision":"base","start_line":1,"end_line":1},"explanation":"Original implementation at merge base."}
+        ],
+        "locations":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"primary":true}],
+        "suggestions":[],"related_thread_ids":[]
+    }]);
+    store
+        .commit(
+            &fixture.preparation_id,
+            0,
+            &serde_json::to_vec(&first).unwrap(),
+            &OperationControl::default(),
+        )
+        .unwrap();
+
+    let mut next: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    next["follow_up"] = json!([{
+        "prior_concern_id":"F1","status":"resolved","explanation":"The unchecked response path was removed.",
+        "evidence":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"explanation":"Current source returns the checked value."}],
+        "finding_id":null
+    }]);
+    let committed = store
+        .commit(
+            &fixture.preparation_id,
+            1,
+            &serde_json::to_vec(&next).unwrap(),
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let prior = store
+        .current(&fixture.preparation_id)
+        .unwrap()
+        .unwrap()
+        .context
+        .prior_concerns
+        .unwrap();
+    assert_eq!(committed.generation, 2);
+    assert_eq!(prior.len(), 1);
+    assert_eq!(prior[0].id, "F1");
+    assert_eq!(prior[0].summary, "The response is not checked.");
+    assert_eq!(prior[0].evidence.len(), 2);
+    assert_eq!(
+        prior[0].evidence[0].commit_sha,
+        first["context"]["head_sha"]
+    );
+    assert_eq!(prior[0].evidence[0].source.path, "src.rs");
+    assert_eq!(
+        prior[0].evidence[1].commit_sha,
+        first["context"]["merge_base_sha"]
+    );
+    let db = rusqlite::Connection::open(&fixture.state).unwrap();
+    let (count, current_result): (u32, String) = db
+        .query_row(
+            "SELECT COUNT(*), MAX(result_json) FROM generated_reviews",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+    assert!(!current_result.contains("Handle empty response"));
+}
+
+#[test]
 fn independent_manual_finding_feedback_is_persisted_without_publication() {
     let fixture = Fixture::new();
     let mut result: Value = serde_json::from_slice(&fixture.result()).unwrap();

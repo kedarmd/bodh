@@ -198,6 +198,18 @@ impl GeneratedReviewStore {
                 id: finding.id.clone(),
                 title: finding.title.clone(),
                 summary: finding.summary.clone(),
+                evidence: finding
+                    .evidence
+                    .iter()
+                    .map(|evidence| crate::PriorConcernEvidence {
+                        source: evidence.source.clone(),
+                        commit_sha: match evidence.source.revision {
+                            crate::Revision::Head => validated.context.head_sha.clone(),
+                            crate::Revision::Base => validated.context.merge_base_sha.clone(),
+                        },
+                        explanation: evidence.explanation.clone(),
+                    })
+                    .collect(),
             })
             .collect::<Vec<_>>();
         let prior_concerns_json = serde_json::to_string(&prior_concerns).map_err(json_error)?;

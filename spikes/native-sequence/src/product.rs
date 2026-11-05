@@ -12,7 +12,7 @@ use bodh::{
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::overview::{
     CommittedOverviewStatus, CommittedOverviewView, apply_committed_overview_load,
-    committed_matches_context, evidence_file_index, is_significant_assessment,
+    committed_matches_context, evidence_file_index, follow_up_concerns, is_significant_assessment,
 };
 use bodh_sequence_spike::preferences::{
     NavigationPreferences as Preferences, RecentReview, WorkspaceTab,
@@ -68,6 +68,14 @@ struct PullRequest {
 #[derive(Clone, Debug, Deserialize)]
 struct Author {
     login: String,
+}
+
+#[derive(Clone, Debug)]
+struct PriorSourcePreview {
+    key: String,
+    loading: bool,
+    text: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -210,6 +218,9 @@ pub struct Product {
     diagram_diff_control: Option<OperationControl>,
     diagram_source_control: Option<OperationControl>,
     selected_finding_id: Option<String>,
+    prior_source_preview: Option<PriorSourcePreview>,
+    prior_source_epoch: Arc<AtomicU64>,
+    expanded_follow_up: std::collections::HashSet<String>,
 }
 
 impl Product {
@@ -327,6 +338,9 @@ impl Product {
             diagram_diff_control: None,
             diagram_source_control: None,
             selected_finding_id: None,
+            prior_source_preview: None,
+            prior_source_epoch: Arc::new(AtomicU64::new(0)),
+            expanded_follow_up: std::collections::HashSet::new(),
         };
         app.refresh_gh_cli(cx);
         app
@@ -4996,6 +5010,76 @@ impl Product {
         )
     }
 
+    fn load_prior_source(&mut self, source: bodh::PriorConcernEvidence, cx: &mut Context<Self>) {
+        let key = format!(
+            "{}:{}:{}-{}",
+            source.commit_sha, source.source.path, source.source.start_line, source.source.end_line
+        );
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if self
+            .prior_source_preview
+            .as_ref()
+            .is_some_and(|preview| preview.key == key && preview.text.is_some())
+        {
+            self.prior_source_preview = None;
+            cx.notify();
+            return;
+        }
+        let token = self.prior_source_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.prior_source_epoch.clone();
+        let repository = binding.checkout.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let expected_context = binding.context.clone();
+        self.prior_source_preview = Some(PriorSourcePreview {
+            key: key.clone(),
+            loading: true,
+            text: None,
+            error: None,
+        });
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    bodh::read_source_at_commit(
+                        Path::new(&repository),
+                        &source.commit_sha,
+                        &source.source,
+                        &bodh::OperationControl::default(),
+                    )
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token
+                    || this.selected_review.as_ref().is_none_or(|current| {
+                        current.preparation_id != preparation_id
+                            || current.context != expected_context
+                    })
+                {
+                    return;
+                }
+                this.prior_source_preview = Some(match result {
+                    Ok(text) => PriorSourcePreview {
+                        key,
+                        loading: false,
+                        text: Some(text),
+                        error: None,
+                    },
+                    Err(error) => PriorSourcePreview {
+                        key,
+                        loading: false,
+                        text: None,
+                        error: Some(format!("{}: {}", error.code, error.message)),
+                    },
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn render_findings(
         &self,
         binding: &PreparedBinding,
@@ -5024,6 +5108,178 @@ impl Product {
             ));
         }
         if let Some(review) = current {
+            if let Some(concerns) = follow_up_concerns(review)
+                && !concerns.is_empty()
+            {
+                body = body.child(section_title("Follow-up concerns", p));
+                body = body.child(empty_card(
+                        "Assessment meaning",
+                        "Follow-up statuses are evidence-backed analysis. Local dismissal and GitHub thread resolution do not prove that the code concern was fixed.",
+                        p,
+                    ));
+                for (concern_index, row) in concerns.into_iter().enumerate() {
+                    let concern = row.concern;
+                    let assessment = row.assessment;
+                    let status = row.prominence.label();
+                    let prominent = row.prominence.is_prominent();
+                    let expanded = prominent || self.expanded_follow_up.contains(&concern.id);
+                    let mut card = div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(if prominent { p.accent } else { p.border }))
+                        .bg(rgb(if prominent { p.raised } else { p.panel }))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().font_weight(FontWeight::BOLD).child(status))
+                                .child(concern.title.clone()),
+                        )
+                        .child(concern.summary.clone());
+                    if !prominent {
+                        let concern_id = concern.id.clone();
+                        let expanded_label = if expanded {
+                            "Hide evidence"
+                        } else {
+                            "Show evidence"
+                        };
+                        card = card.child(button(
+                            &format!("follow-up-toggle-{concern_index}"),
+                            expanded_label,
+                            p,
+                            move |this, _, _, cx| {
+                                if !this.expanded_follow_up.remove(&concern_id) {
+                                    this.expanded_follow_up.insert(concern_id.clone());
+                                }
+                                cx.notify();
+                            },
+                            cx,
+                        ));
+                    }
+                    if let Some(assessment) = assessment {
+                        card = card.child(assessment.explanation.clone());
+                        if let Some(finding_id) = &assessment.finding_id
+                            && let Some(finding) = row.current_finding
+                        {
+                            card = card.child(format!(
+                                "Current finding · {} · {}",
+                                finding.title, finding_id
+                            ));
+                            if let Some(location) = finding.locations.first() {
+                                let source = location.source.clone();
+                                card = card.child(button(
+                                    &format!("follow-up-current-source-{concern_index}"),
+                                    "Open current evidence in Changes",
+                                    p,
+                                    move |this, _, _, cx| {
+                                        this.open_overview_evidence(source.clone(), cx)
+                                    },
+                                    cx,
+                                ));
+                            }
+                        }
+                        for (evidence_index, evidence) in
+                            assessment.evidence.iter().enumerate().filter(|_| expanded)
+                        {
+                            card = card.child(div().text_color(rgb(p.muted)).child(format!(
+                                "Current evidence · {} · {}:{}–{} · {}",
+                                match evidence.source.revision {
+                                    Revision::Base => "Base",
+                                    Revision::Head => "Head",
+                                },
+                                evidence.source.path,
+                                evidence.source.start_line,
+                                evidence.source.end_line,
+                                evidence.explanation
+                            )));
+                            let source = evidence.source.clone();
+                            card = card.child(button(
+                                &format!("follow-up-evidence-{concern_index}-{evidence_index}"),
+                                "Open current source in Changes",
+                                p,
+                                move |this, _, _, cx| {
+                                    this.open_overview_evidence(source.clone(), cx)
+                                },
+                                cx,
+                            ));
+                        }
+                    } else {
+                        card = card
+                            .child("This prior concern was not assessed in the current result.");
+                    }
+                    if expanded && concern.evidence.is_empty() {
+                        card = card.child(div().text_color(rgb(p.muted)).child(
+                            "Historical source references were not retained for this prior result.",
+                        ));
+                    }
+                    for (evidence_index, evidence) in
+                        concern.evidence.iter().enumerate().filter(|_| expanded)
+                    {
+                        let key = format!(
+                            "{}:{}:{}-{}",
+                            evidence.commit_sha,
+                            evidence.source.path,
+                            evidence.source.start_line,
+                            evidence.source.end_line
+                        );
+                        let preview = self
+                            .prior_source_preview
+                            .as_ref()
+                            .filter(|preview| preview.key == key);
+                        card = card.child(div().text_color(rgb(p.muted)).child(format!(
+                            "Prior evidence · {}:{}–{} · {} · {}",
+                            evidence.source.path,
+                            evidence.source.start_line,
+                            evidence.source.end_line,
+                            short_sha(&evidence.commit_sha),
+                            evidence.explanation
+                        )));
+                        let source = evidence.clone();
+                        card = card.child(button(
+                            &format!("follow-up-prior-source-{concern_index}-{evidence_index}"),
+                            if preview.is_some_and(|view| view.loading) {
+                                "Loading exact prior source…"
+                            } else if preview.is_some_and(|view| view.text.is_some()) {
+                                "Close prior source"
+                            } else {
+                                "Open exact prior source"
+                            },
+                            p,
+                            move |this, _, _, cx| this.load_prior_source(source.clone(), cx),
+                            cx,
+                        ));
+                        if let Some(preview) = preview {
+                            if let Some(error) = &preview.error {
+                                card = card.child(empty_card(
+                                        "Historical source unavailable",
+                                        &format!(
+                                            "Could not read the exact prior commit {}. Current evidence remains shown above; no current worktree source was substituted. {error}",
+                                            evidence.commit_sha
+                                        ),
+                                        p,
+                                    ));
+                            }
+                            if let Some(text) = &preview.text {
+                                let mut source_rows =
+                                    div().flex().flex_col().p_2().bg(rgb(p.canvas));
+                                for (offset, line) in text.lines().enumerate() {
+                                    source_rows = source_rows.child(format!(
+                                        "{}  {}",
+                                        evidence.source.start_line + offset as u32,
+                                        line
+                                    ));
+                                }
+                                card = card.child(source_rows);
+                            }
+                        }
+                    }
+                    body = body.child(card);
+                }
+            }
             body = body.child(section_title("Committed findings", p));
             if review.result.findings.is_empty() {
                 body = body.child(empty_card(
@@ -5034,6 +5290,11 @@ impl Product {
             }
             for finding_index in bodh::prioritized_finding_indices(&review.result.findings) {
                 let finding = &review.result.findings[finding_index];
+                let is_new_concern = review
+                    .context
+                    .prior_concerns
+                    .as_ref()
+                    .is_some_and(|prior| !prior.iter().any(|concern| concern.id == finding.id));
                 let selected_finding =
                     self.selected_finding_id.as_deref() == Some(finding.id.as_str());
                 let mut card = div()
@@ -5060,6 +5321,14 @@ impl Product {
                     .child(finding.summary.clone())
                     .child(finding.reason.clone())
                     .child(finding.impact.clone());
+                if is_new_concern {
+                    card = card.child(
+                        div()
+                            .text_color(rgb(p.accent))
+                            .font_weight(FontWeight::BOLD)
+                            .child("New concern"),
+                    );
+                }
                 let triage_entry = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
                     snapshot
                         .entries
