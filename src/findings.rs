@@ -2,6 +2,19 @@
 use crate::{ContractError, OperationControl, PreparedEvidenceContext, ReviewResult, read_source};
 use std::{collections::HashSet, path::Path};
 
+/// Returns indexes in triage order while preserving the generated order for
+/// findings with the same severity.
+pub fn prioritized_finding_indices(findings: &[crate::Finding]) -> Vec<usize> {
+    let mut indices = (0..findings.len()).collect::<Vec<_>>();
+    indices.sort_by_key(|&index| match findings[index].severity {
+        crate::Severity::Critical => 0,
+        crate::Severity::High => 1,
+        crate::Severity::Medium => 2,
+        crate::Severity::Low => 3,
+    });
+    indices
+}
+
 pub fn validate_findings(
     input: &[u8],
     prepared: &PreparedEvidenceContext,

@@ -15,6 +15,8 @@ pub use discussions::*;
 pub use drafts::*;
 mod findings;
 pub use findings::*;
+mod finding_triage;
+pub use finding_triage::*;
 mod follow_up;
 mod generated_review;
 pub use generated_review::*;

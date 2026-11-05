@@ -182,6 +182,13 @@ pub struct Product {
     committed_overview: CommittedOverviewView,
     overview_loading: bool,
     overview_epoch: Arc<AtomicU64>,
+    finding_triage_snapshot: Option<bodh::FindingTriageSnapshot>,
+    finding_triage_loading: bool,
+    finding_action_saving: bool,
+    finding_feedback_target: Option<String>,
+    finding_feedback_body: String,
+    finding_feedback_focus: FocusHandle,
+    focused_discussion_thread: Option<String>,
     pending_overview_source: Option<(usize, SourceRef)>,
 }
 
@@ -274,6 +281,13 @@ impl Product {
             committed_overview: CommittedOverviewView::default(),
             overview_loading: false,
             overview_epoch: Arc::new(AtomicU64::new(0)),
+            finding_triage_snapshot: None,
+            finding_triage_loading: false,
+            finding_action_saving: false,
+            finding_feedback_target: None,
+            finding_feedback_body: String::new(),
+            finding_feedback_focus: cx.focus_handle(),
+            focused_discussion_thread: None,
             pending_overview_source: None,
         };
         app.refresh_gh_cli(cx);
@@ -568,8 +582,11 @@ impl Product {
         let Some(binding) = self.selected_review.clone() else {
             self.committed_overview = CommittedOverviewView::default();
             self.overview_loading = false;
+            self.finding_triage_snapshot = None;
+            self.finding_triage_loading = false;
             return;
         };
+        self.refresh_finding_triage(cx);
         if self
             .committed_overview
             .committed
@@ -613,6 +630,52 @@ impl Product {
         cx.notify();
     }
 
+    fn refresh_finding_triage(&mut self, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            self.finding_triage_snapshot = None;
+            self.finding_triage_loading = false;
+            return;
+        };
+        if self.finding_triage_loading
+            || self
+                .finding_triage_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.context_id == binding.context.context_id)
+        {
+            return;
+        }
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let context_id = binding.context.context_id.clone();
+        let epoch = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_triage_loading = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    bodh::FindingTriageStore::open(Path::new(&state))?.list(&preparation_id)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != epoch
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|current| current.context.context_id != context_id)
+                {
+                    return;
+                }
+                this.finding_triage_loading = false;
+                match result {
+                    Ok(snapshot) => this.finding_triage_snapshot = Some(snapshot),
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn select_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
         self.active_tab = tab;
         self.prefs.active_tab = Some(tab);
@@ -636,6 +699,99 @@ impl Product {
         self.prefs.active_tab = Some(WorkspaceTab::Changes);
         self.pending_overview_source = Some((index, source));
         self.select_file(index, cx);
+    }
+
+    fn open_related_discussion(&mut self, thread_id: String, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let context = binding.context.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let lookup_thread_id = thread_id.clone();
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let observation =
+                        bodh::load_latest_discussions(Path::new(&state), &preparation_id)?;
+                    let thread = observation["threads"]
+                        .as_array()
+                        .and_then(|threads| {
+                            threads
+                                .iter()
+                                .find(|thread| thread["id"] == lookup_thread_id)
+                        })
+                        .cloned()
+                        .ok_or_else(|| {
+                            bodh::ContractError::new(
+                                "THREAD_NOT_FOUND",
+                                "Related discussion is not in the prepared observation",
+                                "/thread_id",
+                            )
+                        })?;
+                    let path = thread["path"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            bodh::ContractError::new(
+                                "THREAD_LOCATION_UNAVAILABLE",
+                                "Related discussion has no source path",
+                                "/thread_id",
+                            )
+                        })?
+                        .to_owned();
+                    let outdated = thread["isOutdated"] == true;
+                    let line = if outdated {
+                        thread["originalLine"].as_u64()
+                    } else {
+                        thread["line"]
+                            .as_u64()
+                            .or_else(|| thread["originalLine"].as_u64())
+                    }
+                    .ok_or_else(|| {
+                        bodh::ContractError::new(
+                            "THREAD_LOCATION_UNAVAILABLE",
+                            "Related discussion has no readable line",
+                            "/thread_id",
+                        )
+                    })?;
+                    let revision = if thread["diffSide"].as_str() == Some("LEFT") || outdated {
+                        Revision::Base
+                    } else {
+                        Revision::Head
+                    };
+                    Ok::<_, bodh::ContractError>(SourceRef {
+                        path,
+                        revision,
+                        start_line: line as u32,
+                        end_line: line as u32,
+                    })
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|current| current.context != context)
+                {
+                    return;
+                }
+                match result {
+                    Ok(source) => {
+                        this.discussion_expanded = true;
+                        this.discussion_loaded_for = None;
+                        this.discussion_state = serde_json::json!({"available":false,"threads":[]});
+                        this.focused_discussion_thread = Some(thread_id.clone());
+                        this.open_overview_evidence(source, cx);
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn resume(&mut self, id: String, cx: &mut Context<Self>) {
@@ -4177,7 +4333,8 @@ impl Product {
                     p,
                 ));
             }
-            for (finding_index, finding) in review.result.findings.iter().enumerate() {
+            for finding_index in bodh::prioritized_finding_indices(&review.result.findings) {
+                let finding = &review.result.findings[finding_index];
                 let mut card = div()
                     .flex()
                     .flex_col()
@@ -4196,11 +4353,54 @@ impl Product {
                                     .font_weight(FontWeight::BOLD)
                                     .child(finding.title.clone()),
                             )
-                            .child(format!("{:?} · {:?}", finding.severity, finding.confidence)),
+                            .child(format!("{:?} severity", finding.severity)),
                     )
+                    .child(format!("Confidence: {:?}", finding.confidence))
                     .child(finding.summary.clone())
                     .child(finding.reason.clone())
                     .child(finding.impact.clone());
+                let triage_entry = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
+                    snapshot
+                        .entries
+                        .iter()
+                        .find(|entry| entry.finding_id == finding.id)
+                });
+                let selected_suggestion =
+                    triage_entry.and_then(|entry| entry.selected_suggestion_id.as_deref());
+                let disposition = triage_entry
+                    .map(|entry| format!("{:?}", entry.disposition))
+                    .unwrap_or_else(|| "Unreviewed".into());
+                card = card.child(
+                    div()
+                        .text_color(rgb(p.muted))
+                        .child(match selected_suggestion {
+                            Some(suggestion_id) => {
+                                format!("{disposition} · alternative {suggestion_id}")
+                            }
+                            None if triage_entry
+                                .and_then(|entry| entry.manual_feedback.as_ref())
+                                .is_some() =>
+                            {
+                                format!("{disposition} · independent feedback saved locally")
+                            }
+                            None => disposition,
+                        }),
+                );
+                if !finding.related_thread_ids.is_empty() {
+                    card = card.child(div().text_color(rgb(p.muted)).child("Related discussions"));
+                    for (thread_index, thread_id) in finding.related_thread_ids.iter().enumerate() {
+                        let related_id = thread_id.clone();
+                        card = card.child(button(
+                            &format!("finding-related-thread-{finding_index}-{thread_index}"),
+                            &format!("Open thread {thread_id}"),
+                            p,
+                            move |this, _, _, cx| {
+                                this.open_related_discussion(related_id.clone(), cx)
+                            },
+                            cx,
+                        ));
+                    }
+                }
                 for (evidence_index, evidence) in finding.evidence.iter().enumerate() {
                     let source = evidence.source.clone();
                     card = card.child(
@@ -4213,6 +4413,101 @@ impl Product {
                         &format!("Open {}", source_title(&source)),
                         p,
                         move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
+                        cx,
+                    ));
+                }
+                for (suggestion_index, suggestion) in finding.suggestions.iter().enumerate() {
+                    let (suggestion_id, generated_body, source) = match suggestion {
+                        bodh::Suggestion::TextComment { id, body, source } => {
+                            (id.clone(), body.clone(), source.clone())
+                        }
+                        bodh::Suggestion::CodeReplacement {
+                            id,
+                            body,
+                            source,
+                            replacement,
+                            ..
+                        } => (
+                            id.clone(),
+                            format!("{body}\n\nProposed replacement:\n{replacement}"),
+                            source.clone(),
+                        ),
+                    };
+                    let saved_edit = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
+                        snapshot.alternative_edits.iter().find(|edit| {
+                            edit.finding_id == finding.id && edit.suggestion_id == suggestion_id
+                        })
+                    });
+                    let label = match (suggestion, saved_edit) {
+                        (bodh::Suggestion::TextComment { .. }, Some(edit)) => edit.body.clone(),
+                        (bodh::Suggestion::CodeReplacement { .. }, Some(edit)) => format!(
+                            "{}\n\nProposed replacement:\n{}",
+                            edit.body,
+                            edit.replacement.as_deref().unwrap_or_default()
+                        ),
+                        (_, None) => generated_body,
+                    };
+                    let alt_title = if saved_edit.is_some() {
+                        format!(
+                            "Alternative {} · edited locally · {}",
+                            suggestion_index + 1,
+                            source_title(&source)
+                        )
+                    } else {
+                        format!(
+                            "Alternative {} · {}",
+                            suggestion_index + 1,
+                            source_title(&source)
+                        )
+                    };
+                    card = card.child(
+                        div()
+                            .p_2()
+                            .bg(rgb(p.raised))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .child(alt_title),
+                            )
+                            .child(label),
+                    );
+                    let source_to_open = source.clone();
+                    card = card.child(button(
+                        &format!("finding-alternative-source-{finding_index}-{suggestion_index}"),
+                        "Open source in Changes",
+                        p,
+                        move |this, _, _, cx| {
+                            this.open_overview_evidence(source_to_open.clone(), cx)
+                        },
+                        cx,
+                    ));
+                    let is_selected = selected_suggestion == Some(suggestion_id.as_str());
+                    let action_finding = finding.id.clone();
+                    let action_suggestion = suggestion_id.clone();
+                    card = card.child(button(
+                        &format!("finding-alternative-stage-{finding_index}-{suggestion_index}"),
+                        if is_selected {
+                            "Unstage alternative"
+                        } else {
+                            "Stage alternative"
+                        },
+                        p,
+                        move |this, _, _, cx| {
+                            if is_selected {
+                                this.set_finding_disposition(
+                                    action_finding.clone(),
+                                    bodh::FindingDisposition::Unreviewed,
+                                    cx,
+                                );
+                            } else {
+                                this.stage_finding_alternative(
+                                    action_finding.clone(),
+                                    action_suggestion.clone(),
+                                    cx,
+                                );
+                            }
+                        },
                         cx,
                     ));
                 }
@@ -4231,6 +4526,110 @@ impl Product {
                         ),
                         p,
                         move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
+                        cx,
+                    ));
+                }
+                let feedback_finding_id = finding.id.clone();
+                let current_feedback = triage_entry
+                    .and_then(|entry| entry.manual_feedback.as_deref())
+                    .unwrap_or("")
+                    .to_owned();
+                let editor_open =
+                    self.finding_feedback_target.as_deref() == Some(finding.id.as_str());
+                if editor_open {
+                    let feedback_display = if self.finding_feedback_body.is_empty() {
+                        "|Type independent feedback. Enter inserts a line.".to_owned()
+                    } else {
+                        format!("{}|", self.finding_feedback_body)
+                    };
+                    card = card.child(
+                        div()
+                            .id("finding-independent-feedback-editor")
+                            .track_focus(&self.finding_feedback_focus)
+                            .min_h(px(72.))
+                            .p_2()
+                            .border_1()
+                            .border_color(rgb(p.border))
+                            .bg(rgb(p.raised))
+                            .child(feedback_display)
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, _| {
+                                    window.focus(&this.finding_feedback_focus)
+                                }),
+                            )
+                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                window.focus(&this.finding_feedback_focus);
+                                let key = event.keystroke.key.as_str();
+                                let command = event.keystroke.modifiers.control
+                                    || event.keystroke.modifiers.platform;
+                                match key {
+                                    "backspace" => {
+                                        this.finding_feedback_body.pop();
+                                    }
+                                    "enter" => this.finding_feedback_body.push('\n'),
+                                    "a" if command => this.finding_feedback_body.clear(),
+                                    text if text.chars().count() == 1 && !command => {
+                                        this.finding_feedback_body.push_str(text)
+                                    }
+                                    _ => return,
+                                }
+                                cx.notify();
+                            })),
+                    );
+                    let save_finding = feedback_finding_id.clone();
+                    card = card.child(button(
+                        &format!("save-finding-feedback-{finding_index}"),
+                        if self.finding_action_saving {
+                            "Saving…"
+                        } else {
+                            "Save feedback locally"
+                        },
+                        p,
+                        move |this, _, _, cx| this.save_finding_feedback(save_finding.clone(), cx),
+                        cx,
+                    ));
+                } else {
+                    let open_finding = feedback_finding_id.clone();
+                    card = card.child(button(
+                        &format!("edit-finding-feedback-{finding_index}"),
+                        if current_feedback.is_empty() {
+                            "Add independent feedback"
+                        } else {
+                            "Edit independent feedback"
+                        },
+                        p,
+                        move |this, _, window, cx| {
+                            this.finding_feedback_target = Some(open_finding.clone());
+                            this.finding_feedback_body = this
+                                .finding_triage_snapshot
+                                .as_ref()
+                                .and_then(|snapshot| {
+                                    snapshot
+                                        .entries
+                                        .iter()
+                                        .find(|entry| entry.finding_id == open_finding)
+                                })
+                                .and_then(|entry| entry.manual_feedback.clone())
+                                .unwrap_or_default();
+                            window.focus(&this.finding_feedback_focus);
+                            cx.notify();
+                        },
+                        cx,
+                    ));
+                }
+                for (action, label) in [
+                    (bodh::FindingDisposition::Dismissed, "Dismiss finding"),
+                    (bodh::FindingDisposition::Deferred, "Defer finding"),
+                ] {
+                    let action_finding = finding.id.clone();
+                    card = card.child(button(
+                        &format!("finding-disposition-{finding_index}-{label}"),
+                        label,
+                        p,
+                        move |this, _, _, cx| {
+                            this.set_finding_disposition(action_finding.clone(), action, cx)
+                        },
                         cx,
                     ));
                 }
@@ -4265,6 +4664,210 @@ impl Product {
             ));
         }
         body
+    }
+
+    fn stage_finding_alternative(
+        &mut self,
+        finding_id: String,
+        suggestion_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let locked = self.finding_action_saving
+            || self.review_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            });
+        if locked {
+            self.status = Some(
+                "Resolve the current or uncertain publication before changing finding drafts."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let expected_triage_revision = self
+            .finding_triage_snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.finding_id == finding_id)
+            })
+            .map(|entry| entry.revision)
+            .unwrap_or(0);
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_action_saving = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx.background_executor().spawn(async move {
+                let mut triage = bodh::FindingTriageStore::open(Path::new(&state))?;
+                let (intent, entry) = triage.stage_alternative(
+                    &preparation_id, &finding_id, &suggestion_id, expected_triage_revision,
+                )?;
+                let triage_snapshot = triage.list(&preparation_id)?;
+                let drafts = DraftStore::open(Path::new(&state))?.list(&preparation_id)?;
+                let replacements = DraftStore::open(Path::new(&state))?.list_replacements(&preparation_id)?;
+                Ok::<_, bodh::ContractError>((intent, entry, triage_snapshot, drafts, replacements))
+            }).await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token { return; }
+                this.finding_action_saving = false;
+                match result {
+                    Ok((intent, entry, triage, drafts, replacements)) => {
+                        this.review_intent = Some(intent);
+                        this.finding_triage_snapshot = Some(triage);
+                        this.draft_snapshot = Some(drafts.clone());
+                        this.replacement_snapshot = Some(replacements);
+                        this.update_draft_counts(drafts.counts);
+                        this.status = Some(format!("Alternative staged for finding {} at revision {}. It remains local until you confirm Finish Review.", entry.finding_id, entry.revision));
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        }).detach();
+    }
+
+    fn set_finding_disposition(
+        &mut self,
+        finding_id: String,
+        disposition: bodh::FindingDisposition,
+        cx: &mut Context<Self>,
+    ) {
+        if self.finding_action_saving
+            || self.review_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
+        {
+            self.status = Some(
+                "Resolve the current or uncertain publication before changing finding drafts."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let expected_revision = self
+            .finding_triage_snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.finding_id == finding_id)
+            })
+            .map(|entry| entry.revision)
+            .unwrap_or(0);
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_action_saving = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut triage = bodh::FindingTriageStore::open(Path::new(&state))?;
+                    let entry = triage.set_disposition(
+                        &preparation_id,
+                        &finding_id,
+                        disposition,
+                        None,
+                        None,
+                        expected_revision,
+                    )?;
+                    let snapshot = triage.list(&preparation_id)?;
+                    let intent =
+                        ReviewPublicationStore::open(Path::new(&state))?.intent(&preparation_id)?;
+                    Ok::<_, bodh::ContractError>((entry, snapshot, intent))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.finding_action_saving = false;
+                match result {
+                    Ok((entry, snapshot, intent)) => {
+                        this.finding_triage_snapshot = Some(snapshot);
+                        this.review_intent = Some(intent);
+                        this.status = Some(format!(
+                            "Finding {} marked {:?}; saved alternative edits were retained.",
+                            entry.finding_id, entry.disposition
+                        ));
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn save_finding_feedback(&mut self, finding_id: String, cx: &mut Context<Self>) {
+        if self.finding_action_saving
+            || self.review_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
+        {
+            self.status = Some(
+                "Resolve the current or uncertain publication before changing finding feedback."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        let body = self.finding_feedback_body.clone();
+        if body.trim().is_empty() {
+            self.error = Some("Write independent feedback before saving it.".into());
+            cx.notify();
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let expected_revision = self
+            .finding_triage_snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.finding_id == finding_id)
+            })
+            .map(|entry| entry.revision)
+            .unwrap_or(0);
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_action_saving = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx.background_executor().spawn(async move {
+                let mut store = bodh::FindingTriageStore::open(Path::new(&state))?;
+                let entry = store.set_disposition(&preparation_id, &finding_id, bodh::FindingDisposition::Staged, None, Some(&body), expected_revision)?;
+                let snapshot = store.list(&preparation_id)?;
+                Ok::<_, bodh::ContractError>((entry,snapshot))
+            }).await;
+            let _ = weak.update(cx, |this,cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token { return; }
+                this.finding_action_saving = false;
+                match result {
+                    Ok((entry,snapshot)) => {
+                        this.finding_triage_snapshot = Some(snapshot);
+                        this.finding_feedback_target = None;
+                        this.finding_feedback_body.clear();
+                        this.status = Some(format!("Independent feedback saved locally for finding {}. It is not published.",entry.finding_id));
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}",error.code,error.message)),
+                }
+                cx.notify();
+            });
+        }).detach();
     }
 
     fn selected_discussion_path(&self) -> Option<String> {
@@ -4459,7 +5062,13 @@ impl Product {
                 .gap_2()
                 .p_4()
                 .border_1()
-                .border_color(rgb(p.border))
+                .border_color(rgb(
+                    if self.focused_discussion_thread.as_deref() == Some(id.as_str()) {
+                        p.accent
+                    } else {
+                        p.border
+                    },
+                ))
                 .bg(rgb(p.panel));
             card=card.child(div().flex().justify_between().child(section_title(path,p)).child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(format!("{status} · current line {current} · original line {original} · side {}",thread["diffSide"].as_str().unwrap_or("unknown")))));
             if let Some(comments) = thread["comments"].as_array() {
