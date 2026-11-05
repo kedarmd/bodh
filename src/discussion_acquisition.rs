@@ -439,16 +439,16 @@ fn comments_query() -> String {
     )
 }
 
-struct GraphQlScope<'a> {
-    host: &'a str,
-    owner: &'a str,
-    repository: &'a str,
-    number: u64,
-    thread_id: Option<&'a str>,
-    after: Option<&'a str>,
+pub(crate) struct GraphQlScope<'a> {
+    pub(crate) host: &'a str,
+    pub(crate) owner: &'a str,
+    pub(crate) repository: &'a str,
+    pub(crate) number: u64,
+    pub(crate) thread_id: Option<&'a str>,
+    pub(crate) after: Option<&'a str>,
 }
 
-fn gh_graphql(
+pub(crate) fn gh_graphql(
     gh: &Path,
     query: &str,
     scope: GraphQlScope<'_>,
@@ -487,7 +487,7 @@ fn gh_graphql(
     })
 }
 
-fn run_process(
+pub(crate) fn run_process(
     program: &Path,
     args: &[String],
     control: &OperationControl,
