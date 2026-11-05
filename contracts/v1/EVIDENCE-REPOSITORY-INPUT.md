@@ -26,3 +26,9 @@ The home screen accepts an existing Git checkout. This change preserves the user
 ## Native trial
 
 The GUI runner is building the release app for an interactive trial. Native interaction acceptance is pending user feedback; process startup alone will not be recorded as input acceptance.
+
+## Native trial progress
+
+- `./scripts/validate gui` completed successfully and launched PID `2213936` from revision `0249b21` with the committed local source change `61c0419` in the release build.
+- `hyprctl clients -j` reported the target window at `[-1912, 1183]`, size `947×505`; a separate older app window remains open at PID `2036563`.
+- The new process is alive. No keyboard or pointer input has been sent by the assistant. User interaction feedback is still pending.
