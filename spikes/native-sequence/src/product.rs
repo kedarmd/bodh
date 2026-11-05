@@ -8667,7 +8667,7 @@ pub fn open_product(cx: &mut App, repo: Option<String>, pr: Option<u64>) {
     let initial_pr = pr;
     cx.open_window(
         WindowOptions {
-            app_id: Some("bodh-review-workspace".into()),
+            app_id: Some("bodh".into()),
             focus: true,
             show: true,
             titlebar: Some(TitlebarOptions {
