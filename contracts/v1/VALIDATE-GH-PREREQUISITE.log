@@ -1,0 +1,250 @@
+Validation mode: desktop
+Revision: fdac9795db8828079710203c3254cde4e8ece20d
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh-worktrees/gh-prerequisite/target
+Spike Cargo target: /home/kedarmd/dev/bodh-worktrees/gh-prerequisite/spikes/native-sequence/target
+test_core_runs_from_another_directory_with_quoted_manifest (test_validate.ValidationRunnerTests.test_core_runs_from_another_directory_with_quoted_manifest) ... ok
+test_desktop_includes_native_checks_without_launching_gui (test_validate.ValidationRunnerTests.test_desktop_includes_native_checks_without_launching_gui) ... ok
+test_failed_lint_stops_before_tests (test_validate.ValidationRunnerTests.test_failed_lint_stops_before_tests) ... ok
+test_gui_and_profile_use_locked_release_cargo_run_even_on_failure (test_validate.ValidationRunnerTests.test_gui_and_profile_use_locked_release_cargo_run_even_on_failure) ... ok
+test_invalid_mode_runs_no_tools (test_validate.ValidationRunnerTests.test_invalid_mode_runs_no_tools) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 1.200s
+
+OK
+test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes (test_harness.AcquisitionTests.test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes) ... ok
+test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility (test_harness.AnchorTests.test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility) ... ok
+test_pages_threads_and_each_threads_replies_independently (test_harness.DiscussionTests.test_pages_threads_and_each_threads_replies_independently) ... ok
+test_reports_partial_data_and_cursor_failure_without_claiming_complete (test_harness.DiscussionTests.test_reports_partial_data_and_cursor_failure_without_claiming_complete) ... ok
+test_timeout_retains_preceding_page_and_identifies_incomplete_connection (test_harness.DiscussionTests.test_timeout_retains_preceding_page_and_identifies_incomplete_connection) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.372s
+
+OK
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/bodh-a16c0c225b334b2a)
+
+running 1 test
+test acquisition::tests::cancelled_fetch_preserves_checkout_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running unittests src/main.rs (target/debug/deps/bodh-b4b8c7ab5e1b331c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-5eab248536501307)
+
+running 3 tests
+test non_unicode_arguments_produce_the_protocol_error_instead_of_panicking ... ok
+test malformed_input_includes_location_without_echoing_untrusted_text ... ok
+test cli_discovers_schema_and_rejects_bad_input_without_a_gui ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/complete.rs (target/debug/deps/complete-aa83cfda8dd62830)
+
+running 4 tests
+test complete_validator_accepts_empty_results_and_all_supported_diagram_steps ... ok
+test follow_up_requires_real_prior_concerns_and_current_actionable_findings ... ok
+test cli_complete_fixture_reports_full_semantic_validation_and_rejects_bad_steps ... ok
+test diagrams_reject_broken_ids_participants_returns_branches_and_code_links ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+
+     Running tests/contract.rs (target/debug/deps/contract-f651f1a48f6f62e3)
+
+running 7 tests
+test unsupported_versions_have_a_stable_error_and_pointer ... ok
+test committed_canonical_schema_cannot_drift_from_rust ... ok
+test discover_and_validate_an_empty_structural_result_without_a_workspace ... ok
+test schema_and_strict_rust_reject_oversized_strings_and_collections ... ok
+test exact_limits_accept_without_truncation_and_oversized_documents_fail ... ok
+test negative_contract_corpus_agrees_across_all_public_interfaces ... ok
+test complete_fixture_corpus_agrees_with_schema_rust_service_and_cli ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.09s
+
+     Running tests/discussions.rs (target/debug/deps/discussions-79e0c76529ed9509)
+
+running 7 tests
+test inspection_cli_returns_persisted_observation_and_manifest_summary ... ok
+test graphql_partial_permission_error_is_reported_without_discarding_pages ... ok
+test later_page_permission_failure_preserves_acquired_outer_and_reply_pages ... ok
+test nested_reply_cursor_repetition_is_tracked_per_thread_connection ... ok
+test repeated_cursors_duplicates_null_nodes_and_count_changes_are_incomplete ... ok
+test fetches_outer_threads_and_each_nested_reply_connection_and_survives_restart ... ok
+test nested_page_timeout_keeps_the_prior_page_durable ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/evidence.rs (target/debug/deps/evidence-9b2417654facfe32)
+
+running 10 tests
+test cancellation_timeout_and_blob_limits_fail_without_checkout_mutation ... ok
+test cli_timeout_covers_descendants_retaining_output_pipes ... ok
+test pinned_reads_ignore_replace_refs_and_legacy_grafts_and_reject_shallow_history ... ok
+test evidence_requires_an_exact_valid_preparation_and_real_commit_graph ... ok
+test cli_evidence_validation_uses_shared_rules_and_ignores_ambient_git_redirection ... ok
+test oversized_committed_blobs_have_an_explicit_bound ... ok
+test review_evidence_reads_pinned_merge_base_and_head_without_touching_dirty_checkout ... ok
+test key_changes_and_coverage_require_explained_nonempty_content ... ok
+test unsafe_or_unsupported_source_locators_fail_without_using_worktree_content ... ok
+test intent_quotes_are_exact_contiguous_original_claim_occurrences ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+     Running tests/findings.rs (target/debug/deps/findings-075f7cb621c407b4)
+
+running 10 tests
+test non_utf8_git_paths_are_reported_as_unsupported_without_becoming_anchors ... ok
+test file_to_directory_changes_are_distinct_path_entries_with_correct_anchor_sides ... ok
+test repository_diff_presentation_settings_cannot_change_canonical_hunk_mapping ... ok
+test cli_reports_shared_finding_errors_without_claiming_complete_semantic_validation ... ok
+test findings_need_explained_source_and_one_primary_without_mutating_checkout ... ok
+test inline_comments_use_exact_old_new_hunks_while_unchanged_source_remains_readable ... ok
+test related_threads_must_be_observed_and_incomplete_absence_is_explicit ... ok
+test scoped_finding_and_suggestion_ids_and_overview_relationships_resolve_before_use ... ok
+test replacements_require_head_hunk_spans_and_byte_exact_original_lines ... ok
+test additions_deletions_edited_renames_and_exact_crlf_ranges_have_literal_anchors ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.58s
+
+     Running tests/pinned_diff.rs (target/debug/deps/pinned_diff-7bb62701fa5e85e5)
+
+running 3 tests
+test pinned_diff_rejects_paths_outside_the_prepared_change ... ok
+test pinned_diff_truncates_at_a_complete_utf8_line_boundary ... ok
+test pinned_diff_is_path_scoped_literal_and_leaves_checkout_unchanged ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/preparation.rs (target/debug/deps/preparation-98dd68de3af0d7d9)
+
+running 3 tests
+test repeated_preparations_keep_distinct_ids_and_generation_bindings_after_reopen ... ok
+test acquires_missing_fork_head_from_the_explicit_fork_ref_without_touching_checkout_state ... ok
+test prepares_ordinary_pr_from_pinned_local_commits_without_touching_checkout ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+   Doc-tests bodh
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `dev` profile [unoptimized] target(s) in 0.12s
+    Finished `dev` profile [unoptimized] target(s) in 0.12s
+    Finished `test` profile [unoptimized] target(s) in 0.13s
+     Running unittests src/lib.rs (spikes/native-sequence/target/debug/deps/bodh_sequence_spike-b4ef93c19aa1708f)
+
+running 8 tests
+test gh_prerequisite::tests::invalid_checkout_path_has_its_own_error_code ... ok
+test gh_prerequisite::tests::expands_tilde_checkout_paths_before_they_become_process_working_directories ... ok
+test gh_prerequisite::tests::resolver_expands_a_tilde_path_and_returns_an_absolute_checkout ... ok
+test gh_prerequisite::tests::preflight_reports_a_missing_executable_separately ... ok
+test preferences::tests::old_navigation_preferences_load_with_default_review_positions ... ok
+test product_search_tests::browser_search_matches_title_number_author_and_lifecycle ... ok
+test preferences::tests::navigation_preferences_persist_without_review_content ... ok
+test gh_prerequisite::tests::preflight_reports_the_installed_cli_version ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/manual_review.rs (spikes/native-sequence/target/debug/deps/manual_review-562476d74e0e555d)
+
+running 4 tests
+test split_diff_pairs_replacements_and_keeps_side_specific_context_numbers ... ok
+test unified_diff_rows_track_both_side_lines_and_distinguish_changes ... ok
+test syntax_highlights_common_code_tokens_and_leaves_unknown_languages_plain ... ok
+test full_markdown_becomes_safe_readable_blocks_with_inert_html_and_links ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (spikes/native-sequence/target/debug/deps/navigation-0bd766d6aa83cf20)
+
+running 5 tests
+test alternatives_share_one_conditional_frame ... ok
+test clicking_an_interaction_resolves_its_exact_immutable_source ... ok
+test self_call_on_the_last_participant_stays_inside_the_scrollable_scene ... ok
+test viewport_culling_keeps_partial_rows_and_original_source_identity ... ok
+test every_visible_hit_resolves_in_order_across_conditionals_and_stress_layouts ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests bodh_sequence_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/gh-prerequisite/spikes/native-sequence)
+    Finished `dev` profile [unoptimized] target(s) in 0.41s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+    Checking bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/gh-prerequisite/spikes/native-sequence)
+    Finished `dev` profile [unoptimized] target(s) in 0.75s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/gh-prerequisite/spikes/native-sequence)
+    Finished `test` profile [unoptimized] target(s) in 1.85s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (spikes/native-sequence/target/debug/deps/bodh_sequence_spike-d471da35e6c16331)
+
+running 8 tests
+test gh_prerequisite::tests::expands_tilde_checkout_paths_before_they_become_process_working_directories ... ok
+test gh_prerequisite::tests::invalid_checkout_path_has_its_own_error_code ... ok
+test gh_prerequisite::tests::resolver_expands_a_tilde_path_and_returns_an_absolute_checkout ... ok
+test product_search_tests::browser_search_matches_title_number_author_and_lifecycle ... ok
+test preferences::tests::old_navigation_preferences_load_with_default_review_positions ... ok
+test gh_prerequisite::tests::preflight_reports_a_missing_executable_separately ... ok
+test preferences::tests::navigation_preferences_persist_without_review_content ... ok
+test gh_prerequisite::tests::preflight_reports_the_installed_cli_version ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (spikes/native-sequence/target/debug/deps/bodh_sequence_spike-4eb7b962dc2f5a4f)
+
+running 1 test
+test product::gh_prerequisite_tests::tilde_repository_is_expanded_before_the_pr_list_child_is_spawned ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/manual_review.rs (spikes/native-sequence/target/debug/deps/manual_review-335826496fe15dc8)
+
+running 4 tests
+test split_diff_pairs_replacements_and_keeps_side_specific_context_numbers ... ok
+test syntax_highlights_common_code_tokens_and_leaves_unknown_languages_plain ... ok
+test unified_diff_rows_track_both_side_lines_and_distinguish_changes ... ok
+test full_markdown_becomes_safe_readable_blocks_with_inert_html_and_links ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (spikes/native-sequence/target/debug/deps/navigation-9a50e3a1705b734c)
+
+running 5 tests
+test alternatives_share_one_conditional_frame ... ok
+test clicking_an_interaction_resolves_its_exact_immutable_source ... ok
+test self_call_on_the_last_participant_stays_inside_the_scrollable_scene ... ok
+test viewport_culling_keeps_partial_rows_and_original_source_identity ... ok
+test every_visible_hit_resolves_in_order_across_conditionals_and_stress_layouts ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests bodh_sequence_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Validation passed: desktop

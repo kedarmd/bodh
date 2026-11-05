@@ -1,4 +1,5 @@
 //! Disposable native rendering experiment, not the Bodh contract.
+pub mod gh_prerequisite;
 pub mod manual_review;
 pub mod preferences;
 
