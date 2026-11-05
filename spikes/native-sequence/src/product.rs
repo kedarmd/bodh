@@ -141,6 +141,15 @@ pub struct Product {
     draft_saving: bool,
     draft_epoch: Arc<AtomicU64>,
     draft_focus: FocusHandle,
+    discussion_state: serde_json::Value,
+    discussion_loading: bool,
+    reply_thread: Option<String>,
+    reply_root: Option<String>,
+    reply_draft_id: Option<String>,
+    reply_draft_revision: u64,
+    reply_body: String,
+    reply_focus: FocusHandle,
+    reply_saving: bool,
     dragging_pane: bool,
 }
 
@@ -202,6 +211,15 @@ impl Product {
             draft_saving: false,
             draft_epoch: Arc::new(AtomicU64::new(0)),
             draft_focus: cx.focus_handle(),
+            discussion_state: serde_json::json!({"available":false,"threads":[]}),
+            discussion_loading: false,
+            reply_thread: None,
+            reply_root: None,
+            reply_draft_id: None,
+            reply_draft_revision: 0,
+            reply_body: String::new(),
+            reply_focus: cx.focus_handle(),
+            reply_saving: false,
             dragging_pane: false,
         };
         app.refresh_gh_cli(cx);
@@ -226,6 +244,7 @@ impl Product {
                 .draft_editor
                 .as_ref()
                 .is_some_and(TextDraftEditor::is_dirty)
+            || (!self.reply_body.is_empty() && !self.reply_saving)
         {
             self.error = Some(
                 "Save or explicitly discard the current draft before switching repositories."
@@ -359,6 +378,7 @@ impl Product {
                 .draft_editor
                 .as_ref()
                 .is_some_and(TextDraftEditor::is_dirty)
+            || (!self.reply_body.is_empty() && !self.reply_saving)
         {
             self.error = Some(
                 "Save or explicitly discard the current draft before opening another review."
@@ -390,7 +410,9 @@ impl Product {
                     manifest.draft_counts = drafts.counts.clone();
                     let markdown = binding.description.as_deref().unwrap_or_default();
                     let blocks = safe_markdown_blocks(markdown);
-                    Ok::<_, bodh::ContractError>((manifest, binding, blocks, drafts))
+                    let discussions =
+                        bodh::load_latest_discussions(&state, &manifest.preparation_id)?;
+                    Ok::<_, bodh::ContractError>((manifest, binding, blocks, drafts, discussions))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -400,13 +422,20 @@ impl Product {
                 this.loading = false;
                 this.active_control = None;
                 match result {
-                    Ok((manifest, binding, blocks, drafts)) => {
+                    Ok((manifest, binding, blocks, drafts, discussions)) => {
                         this.remember(&manifest, &binding, cx);
                         this.selected_review = Some(binding);
                         this.description_blocks = blocks;
                         this.draft_snapshot = Some(drafts);
                         this.draft_editor = None;
                         this.draft_saving = false;
+                        this.discussion_state = discussions;
+                        this.reply_thread = None;
+                        this.reply_root = None;
+                        this.reply_draft_id = None;
+                        this.reply_draft_revision = 0;
+                        this.reply_body.clear();
+                        this.reply_saving = false;
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
                         this.screen = Screen::Workspace;
                         this.selected_file = None;
@@ -492,7 +521,8 @@ impl Product {
                     let drafts = DraftStore::open(&state)?.list(&id)?;
                     let blocks =
                         safe_markdown_blocks(binding.description.as_deref().unwrap_or_default());
-                    Ok::<_, bodh::ContractError>((binding, blocks, drafts))
+                    let discussions = bodh::load_latest_discussions(&state, &id)?;
+                    Ok::<_, bodh::ContractError>((binding, blocks, drafts, discussions))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -501,13 +531,20 @@ impl Product {
                 }
                 this.loading = false;
                 match result {
-                    Ok((binding, blocks, drafts)) => {
+                    Ok((binding, blocks, drafts, discussions)) => {
                         this.active_repository = Some(binding.checkout.clone());
                         this.screen = Screen::Workspace;
                         this.description_blocks = blocks;
                         this.draft_snapshot = Some(drafts.clone());
                         this.draft_editor = None;
                         this.draft_saving = false;
+                        this.discussion_state = discussions;
+                        this.reply_thread = None;
+                        this.reply_root = None;
+                        this.reply_draft_id = None;
+                        this.reply_draft_revision = 0;
+                        this.reply_body.clear();
+                        this.reply_saving = false;
                         this.selected_review = Some(binding.clone());
                         this.update_draft_counts(drafts.counts);
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
@@ -1682,6 +1719,7 @@ impl Product {
         for tab in [
             WorkspaceTab::Overview,
             WorkspaceTab::Changes,
+            WorkspaceTab::Discussions,
             WorkspaceTab::Findings,
         ] {
             let active = self.active_tab == tab;
@@ -1709,6 +1747,7 @@ impl Product {
             WorkspaceTab::Changes => self
                 .render_changes(&binding, p, cx, viewport_width, viewport_height)
                 .into_any_element(),
+            WorkspaceTab::Discussions => self.render_discussions(p,cx).into_any_element(),
             WorkspaceTab::Findings => div().id("findings-empty").flex_1().min_h(px(360.)).p_6().border_1().border_color(rgb(p.border)).bg(rgb(p.panel))
                 .child(div().text_size(px(18.)).font_weight(FontWeight::MEDIUM).child("No findings to show"))
                 .child(div().mt_2().text_color(rgb(p.muted)).child("No generated review result is attached. Findings never start an agent; review the pinned changes manually.")).into_any_element(),
@@ -1787,6 +1826,463 @@ impl Product {
                     short_sha(&binding.context.context_id)
                 )),
         )
+    }
+
+    fn render_discussions(&mut self, p: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut view = div()
+            .id("discussion-list")
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .overflow_scroll();
+        let summary = format!(
+            "{} of {} threads loaded · {}",
+            self.discussion_state["fetched_thread_count"]
+                .as_u64()
+                .unwrap_or(0),
+            self.discussion_state["expected_thread_count"]
+                .as_u64()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "unknown".into()),
+            if self.discussion_state["complete"] == true {
+                "complete observation"
+            } else {
+                "partial or not refreshed"
+            }
+        );
+        view = view.child(section_title("Discussions", p)).child(
+            div()
+                .text_size(px(12.))
+                .text_color(rgb(p.muted))
+                .child(summary),
+        );
+        view = view.child(button(
+            "refresh-discussions",
+            if self.discussion_loading {
+                "Loading discussions…"
+            } else {
+                "Refresh read-only GitHub observation"
+            },
+            p,
+            |this, _, _, cx| this.refresh_discussions(cx),
+            cx,
+        ));
+        if self.discussion_state["available"] != true {
+            view=view.child(empty_card("No discussion observation","This review has no saved GitHub thread observation yet. Discussion loading is available in the shared acquisition service.",p));
+            return view;
+        }
+        let threads = self.discussion_state["threads"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if threads.is_empty() {
+            return view.child(empty_card(
+                "No discussion threads",
+                "No review threads were present in the saved observation.",
+                p,
+            ));
+        }
+        for (thread_index, thread) in threads.into_iter().enumerate() {
+            let id = thread["id"].as_str().unwrap_or_default().to_owned();
+            let path = thread["path"].as_str().unwrap_or("location unavailable");
+            let current = if thread["isOutdated"] == true {
+                "unavailable (outdated)".into()
+            } else {
+                thread["line"]
+                    .as_u64()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "unavailable".into())
+            };
+            let original = thread["originalLine"]
+                .as_u64()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "unavailable".into());
+            let status = if thread["isOutdated"] == true {
+                "Outdated"
+            } else if thread["isResolved"] == true {
+                "Resolved"
+            } else {
+                "Unresolved"
+            };
+            let mut card = div()
+                .id(("discussion-thread", thread_index))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_4()
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.panel));
+            card=card.child(div().flex().justify_between().child(section_title(path,p)).child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(format!("{status} · current line {current} · original line {original} · side {}",thread["diffSide"].as_str().unwrap_or("unknown")))));
+            if let Some(comments) = thread["comments"].as_array() {
+                for comment in comments {
+                    let author = comment["author"]["login"]
+                        .as_str()
+                        .or(comment["author"]["name"].as_str())
+                        .unwrap_or("Unknown author");
+                    let body = comment["body"].as_str().unwrap_or("(empty comment)");
+                    card = card.child(
+                        div()
+                            .p_2()
+                            .bg(rgb(p.raised))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .child(author.to_owned()),
+                            )
+                            .child(div().mt_1().text_size(px(12.)).child(body.to_owned())),
+                    );
+                }
+            }
+            let mut actions = div().flex().items_center().gap_2();
+            if thread["viewerCanReply"] == true
+                && let Some(root) = thread["comments"]
+                    .as_array()
+                    .and_then(|items| items.iter().find(|comment| comment["replyTo"].is_null()))
+                    .and_then(|comment| comment["id"].as_str())
+                    .map(str::to_owned)
+            {
+                let reply_thread_id = id.clone();
+                actions = actions.child(button(
+                    &format!("draft-reply-{id}"),
+                    "Draft reply",
+                    p,
+                    move |this, _, window, cx| {
+                        this.reply_thread = Some(reply_thread_id.clone());
+                        this.reply_root = Some(root.clone());
+                        this.reply_draft_id = None;
+                        this.reply_draft_revision = 0;
+                        this.reply_body.clear();
+                        window.focus(&this.reply_focus);
+                        cx.notify();
+                    },
+                    cx,
+                ));
+            }
+            if thread["isResolved"] == false && thread["viewerCanResolve"] == true {
+                let action_id = id.clone();
+                actions = actions.child(button(
+                    &format!("stage-resolve-{id}"),
+                    if self.has_thread_action(&id, bodh::ThreadAction::Resolve) {
+                        "Resolve pending"
+                    } else {
+                        "Stage resolve"
+                    },
+                    p,
+                    move |this, _, _, cx| {
+                        this.stage_thread_action(action_id.clone(), bodh::ThreadAction::Resolve, cx)
+                    },
+                    cx,
+                ));
+            } else if thread["isResolved"] == true && thread["viewerCanUnresolve"] == true {
+                let action_id = id.clone();
+                actions = actions.child(button(
+                    &format!("stage-reopen-{id}"),
+                    if self.has_thread_action(&id, bodh::ThreadAction::Reopen) {
+                        "Reopen pending"
+                    } else {
+                        "Stage reopen"
+                    },
+                    p,
+                    move |this, _, _, cx| {
+                        this.stage_thread_action(action_id.clone(), bodh::ThreadAction::Reopen, cx)
+                    },
+                    cx,
+                ));
+            }
+            card = card.child(actions);
+            if self.reply_thread.as_deref() == Some(id.as_str()) {
+                let body = if self.reply_body.is_empty() {
+                    "|Type a reply draft. Enter inserts a line.".to_owned()
+                } else {
+                    format!("{}|", self.reply_body)
+                };
+                card = card.child(
+                    div()
+                        .id("reply-draft-editor")
+                        .track_focus(&self.reply_focus)
+                        .min_h(px(72.))
+                        .p_2()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.raised))
+                        .text_size(px(12.))
+                        .child(body)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, _| window.focus(&this.reply_focus)),
+                        )
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                            window.focus(&this.reply_focus);
+                            let key = event.keystroke.key.as_str();
+                            let command = event.keystroke.modifiers.control
+                                || event.keystroke.modifiers.platform;
+                            match key {
+                                "backspace" => {
+                                    this.reply_body.pop();
+                                }
+                                "enter" => this.reply_body.push('\n'),
+                                "tab" => this.reply_body.push_str("    "),
+                                "a" if command => {}
+                                text if text.chars().count() == 1 && !command => {
+                                    this.reply_body.push_str(text)
+                                }
+                                _ => return,
+                            }
+                            cx.notify();
+                        })),
+                );
+                card = card.child(button(
+                    &format!("save-reply-{id}"),
+                    if self.reply_saving {
+                        "Saving…"
+                    } else {
+                        "Save reply draft locally"
+                    },
+                    p,
+                    |this, _, _, cx| this.save_reply_draft(cx),
+                    cx,
+                ));
+            }
+            if let Some(snapshot) = &self.draft_snapshot {
+                for draft in snapshot
+                    .reply_drafts
+                    .iter()
+                    .filter(|draft| draft.thread_id == id)
+                {
+                    let resume_saved = draft.clone();
+                    let discard_saved = draft.clone();
+                    card = card.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(button(
+                                &format!("resume-reply-{}", draft.id),
+                                &format!(
+                                    "Resume local reply draft · revision {} · not sent",
+                                    draft.revision
+                                ),
+                                p,
+                                move |this, _, window, cx| {
+                                    this.reply_thread = Some(resume_saved.thread_id.clone());
+                                    this.reply_root = Some(resume_saved.root_comment_id.clone());
+                                    this.reply_draft_id = Some(resume_saved.id.clone());
+                                    this.reply_draft_revision = resume_saved.revision;
+                                    this.reply_body = resume_saved.body.clone();
+                                    window.focus(&this.reply_focus);
+                                    cx.notify();
+                                },
+                                cx,
+                            ))
+                            .child(button(
+                                &format!("discard-reply-{}", draft.id),
+                                "Discard reply draft",
+                                p,
+                                move |this, _, _, cx| {
+                                    this.discard_reply_draft(
+                                        discard_saved.id.clone(),
+                                        discard_saved.revision,
+                                        cx,
+                                    )
+                                },
+                                cx,
+                            )),
+                    );
+                }
+                for action in snapshot
+                    .thread_actions
+                    .iter()
+                    .filter(|action| action.thread_id == id)
+                {
+                    let action_id = action.id.clone();
+                    let action_rev = action.revision;
+                    card=card.child(div().flex().items_center().gap_2().child(div().text_size(px(11.)).text_color(rgb(p.accent)).child(format!("Pending local intent: {:?} · observed remote state {} · not applied",action.action,if action.observed_resolved{"resolved"}else{"unresolved"}))).child(button(&format!("unstage-thread-{}",action.id),"Unstage",p,move|this,_,_,cx|this.discard_thread_action(action_id.clone(),action_rev,cx),cx)));
+                }
+            }
+            view = view.child(card);
+        }
+        view
+    }
+
+    fn has_thread_action(&self, thread_id: &str, action: bodh::ThreadAction) -> bool {
+        self.draft_snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot
+                .thread_actions
+                .iter()
+                .any(|pending| pending.thread_id == thread_id && pending.action == action)
+        })
+    }
+
+    fn refresh_discussions(&mut self, cx: &mut Context<Self>) {
+        if self.discussion_loading {
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(90));
+        let epoch = self.operation_epoch.load(Ordering::Relaxed);
+        self.discussion_loading = true;
+        cx.spawn(async move|weak,cx|{let result=cx.background_executor().spawn(async move{bodh::acquire_discussions(&binding,&state,&control)?;bodh::load_latest_discussions(&state,&binding.preparation_id)}).await;let _=weak.update(cx,|this,cx|{if this.operation_epoch.load(Ordering::Relaxed)!=epoch{return}this.discussion_loading=false;match result{Ok(discussions)=>{this.discussion_state=discussions;this.status=Some("Read-only discussion observation refreshed. No remote changes were made.".into());},Err(error)=>this.error=Some(format!("{}: {}",error.code,error.message))}cx.notify();});}).detach();
+    }
+
+    fn save_reply_draft(&mut self, cx: &mut Context<Self>) {
+        if self.reply_saving || self.reply_body.trim().is_empty() {
+            return;
+        }
+        let (Some(binding), Some(thread), Some(root), Some(snapshot)) = (
+            self.selected_review.clone(),
+            self.reply_thread.clone(),
+            self.reply_root.clone(),
+            self.draft_snapshot.clone(),
+        ) else {
+            return;
+        };
+        self.reply_saving = true;
+        let state = self.preparation_db.clone();
+        let body = self.reply_body.clone();
+        let epoch = self.operation_epoch.load(Ordering::Relaxed);
+        let draft_id = self.reply_draft_id.clone();
+        let draft_revision = self.reply_draft_revision;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut store = DraftStore::open(Path::new(&state))?;
+                    let result = store.save_reply(
+                        &binding.preparation_id,
+                        draft_id.as_deref(),
+                        &thread,
+                        &root,
+                        &body,
+                        snapshot.workspace_revision,
+                        draft_revision,
+                    )?;
+                    let updated = store.list(&binding.preparation_id)?;
+                    Ok::<_, bodh::ContractError>((result, updated))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != epoch {
+                    return;
+                }
+                this.reply_saving = false;
+                match result {
+                    Ok((saved, snapshot)) => {
+                        this.draft_snapshot = Some(snapshot.clone());
+                        this.update_draft_counts(snapshot.counts);
+                        this.reply_thread = None;
+                        this.reply_root = None;
+                        this.reply_draft_id = None;
+                        this.reply_draft_revision = 0;
+                        this.reply_body.clear();
+                        this.status = Some(format!(
+                            "Reply draft saved at workspace revision {}. It has not been sent.",
+                            saved.workspace_revision
+                        ));
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn discard_reply_draft(&mut self, id: String, revision: u64, cx: &mut Context<Self>) {
+        self.discard_discussion_work(id, revision, true, cx)
+    }
+    fn discard_thread_action(&mut self, id: String, revision: u64, cx: &mut Context<Self>) {
+        self.discard_discussion_work(id, revision, false, cx)
+    }
+    fn discard_discussion_work(
+        &mut self,
+        id: String,
+        revision: u64,
+        is_reply: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(binding), Some(snapshot)) =
+            (self.selected_review.clone(), self.draft_snapshot.clone())
+        else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let epoch = self.operation_epoch.load(Ordering::Relaxed);
+        let ui_id = id.clone();
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut store = DraftStore::open(Path::new(&state))?;
+                    let updated = if is_reply {
+                        store.discard_reply(
+                            &binding.preparation_id,
+                            &id,
+                            snapshot.workspace_revision,
+                            revision,
+                        )?
+                    } else {
+                        store.discard_thread_action(
+                            &binding.preparation_id,
+                            &id,
+                            snapshot.workspace_revision,
+                            revision,
+                        )?
+                    };
+                    Ok::<_, bodh::ContractError>(updated)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != epoch {
+                    return;
+                }
+                match result {
+                    Ok(snapshot) => {
+                        this.draft_snapshot = Some(snapshot.clone());
+                        this.update_draft_counts(snapshot.counts);
+                        if this.reply_draft_id.as_deref() == Some(ui_id.as_str()) {
+                            this.reply_thread = None;
+                            this.reply_root = None;
+                            this.reply_draft_id = None;
+                            this.reply_draft_revision = 0;
+                            this.reply_body.clear();
+                        }
+                        this.status = Some(
+                            "Local discussion draft discarded. No remote change was made.".into(),
+                        );
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn stage_thread_action(
+        &mut self,
+        thread_id: String,
+        action: bodh::ThreadAction,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(binding), Some(snapshot)) =
+            (self.selected_review.clone(), self.draft_snapshot.clone())
+        else {
+            return;
+        };
+        let existing = snapshot
+            .thread_actions
+            .iter()
+            .find(|item| item.thread_id == thread_id)
+            .cloned();
+        let state = self.preparation_db.clone();
+        let epoch = self.operation_epoch.load(Ordering::Relaxed);
+        cx.spawn(async move|weak,cx|{let result=cx.background_executor().spawn(async move{let mut store=DraftStore::open(Path::new(&state))?;let saved=store.stage_thread_action(&binding.preparation_id,existing.as_ref().map(|item|item.id.as_str()),&thread_id,action,snapshot.workspace_revision,existing.as_ref().map(|item|item.revision).unwrap_or(0))?;let updated=store.list(&binding.preparation_id)?;Ok::<_,bodh::ContractError>((saved,updated))}).await;let _=weak.update(cx,|this,cx|{if this.operation_epoch.load(Ordering::Relaxed)!=epoch{return}match result{Ok((saved,snapshot))=>{this.draft_snapshot=Some(snapshot.clone());this.update_draft_counts(snapshot.counts);this.status=Some(format!("{:?} intent staged at workspace revision {}. Remote thread state is unchanged.",saved.action.action,saved.workspace_revision));},Err(error)=>this.error=Some(format!("{}: {}",error.code,error.message))}cx.notify();});}).detach();
     }
 
     fn render_changes(

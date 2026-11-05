@@ -10,6 +10,7 @@ use std::{
 pub enum WorkspaceTab {
     Overview,
     Changes,
+    Discussions,
     Findings,
 }
 impl WorkspaceTab {
@@ -17,6 +18,7 @@ impl WorkspaceTab {
         match self {
             Self::Overview => "Overview",
             Self::Changes => "Changes",
+            Self::Discussions => "Discussions",
             Self::Findings => "Findings",
         }
     }
