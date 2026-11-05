@@ -43,6 +43,9 @@ fn run() -> Result<Value, ContractError> {
     if args.first().is_some_and(|a| a == "draft") {
         return draft_command(&args[1..]);
     }
+    if args.first().is_some_and(|a| a == "review") {
+        return review_command(&args[1..]);
+    }
     if args.first().is_some_and(|a| a == "inspect") {
         return inspect_command(&args[1..]);
     }
@@ -521,6 +524,108 @@ fn draft_command(args: &[String]) -> Result<Value, ContractError> {
         _ => Err(arguments()),
     }
 }
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewStageInput {
+    expected_workspace_revision: u64,
+    expected_intent_revision: u64,
+    #[serde(default)]
+    selected: Vec<bodh::SelectedDraft>,
+    summary: Option<String>,
+    event: Option<bodh::ReviewEvent>,
+}
+
+fn review_command(args: &[String]) -> Result<Value, ContractError> {
+    match args.first().map(String::as_str) {
+        Some("intent") => {
+            let o = options(&args[1..], &["--prepared", "--state"])?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let intent = bodh::ReviewPublicationStore::open(std::path::Path::new(state))?
+                .intent(prepared)?;
+            serde_json::to_value(intent).map_err(|_| {
+                ContractError::new("SERIALIZATION_ERROR", "Cannot encode review intent", "")
+            })
+        }
+        Some("stage") => {
+            let o = options(&args[1..], &["--prepared", "--state", "--input"])?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let input = o.get("--input").ok_or_else(arguments)?;
+            let request: ReviewStageInput =
+                serde_json::from_slice(&read_input(input)?).map_err(|_| {
+                    ContractError::new(
+                        "REVIEW_INPUT_INVALID",
+                        "Expected a valid review staging request",
+                        "",
+                    )
+                })?;
+            let mut store = bodh::ReviewPublicationStore::open(std::path::Path::new(state))?;
+            let intent = store.stage(bodh::StageReviewRequest {
+                state: state.into(),
+                preparation_id: prepared.clone(),
+                expected_workspace_revision: request.expected_workspace_revision,
+                expected_intent_revision: request.expected_intent_revision,
+                selected: request.selected,
+                summary: request.summary,
+                event: request.event,
+            })?;
+            serde_json::to_value(intent).map_err(|_| {
+                ContractError::new("SERIALIZATION_ERROR", "Cannot encode review intent", "")
+            })
+        }
+        Some("confirm") => {
+            let o = options(
+                &args[1..],
+                &[
+                    "--prepared",
+                    "--state",
+                    "--intent-revision",
+                    "--timeout-ms",
+                    "--gh",
+                ],
+            )?;
+            let prepared = o.get("--prepared").ok_or_else(arguments)?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let expected_intent_revision = o
+                .get("--intent-revision")
+                .ok_or_else(arguments)?
+                .parse::<u64>()
+                .map_err(|_| arguments())?;
+            let binding =
+                bodh::PreparationStore::open(std::path::Path::new(state))?.load(prepared)?;
+            let control = inspect_control(&o)?;
+            let remote = bodh::inspect_remote_review_with_gh(
+                &binding,
+                std::path::Path::new(o.get("--gh").map(String::as_str).unwrap_or("gh")),
+                &control,
+            )?;
+            let mut store = bodh::ReviewPublicationStore::open(std::path::Path::new(state))?;
+            let operation = store.confirm(
+                prepared,
+                std::path::Path::new(state),
+                expected_intent_revision,
+                &remote,
+                &control,
+            )?;
+            serde_json::to_value(operation).map_err(|_| {
+                ContractError::new("SERIALIZATION_ERROR", "Cannot encode review plan", "")
+            })
+        }
+        Some("operation") => {
+            let o = options(&args[1..], &["--state", "--id"])?;
+            let state = o.get("--state").ok_or_else(arguments)?;
+            let id = o.get("--id").ok_or_else(arguments)?;
+            let operation =
+                bodh::ReviewPublicationStore::open(std::path::Path::new(state))?.operation(id)?;
+            serde_json::to_value(operation).map_err(|_| {
+                ContractError::new("SERIALIZATION_ERROR", "Cannot encode review operation", "")
+            })
+        }
+        _ => Err(arguments()),
+    }
+}
 fn inspect_control(
     o: &std::collections::BTreeMap<String, String>,
 ) -> Result<bodh::OperationControl, ContractError> {
@@ -622,7 +727,11 @@ fn evidence_validation(args: &[String]) -> Result<Value, ContractError> {
 }
 fn exit_category(error: &ContractError) -> i32 {
     match error.code.as_str() {
-        "CONTEXT_MISMATCH" | "WORKSPACE_REVISION_STALE" | "DRAFT_REVISION_STALE" => 3,
+        "CONTEXT_MISMATCH"
+        | "WORKSPACE_REVISION_STALE"
+        | "DRAFT_REVISION_STALE"
+        | "REVIEW_INTENT_STALE"
+        | "PR_HEAD_MOVED" => 3,
         "AUTH_ACCESS" | "GIT_UNAVAILABLE" | "GH_UNAVAILABLE" | "GIT_OBJECT_UNAVAILABLE" => 4,
         "OPERATION_TIMEOUT" | "CANCELLED" | "NETWORK_UNCERTAIN" => 5,
         "GIT_FAILED" | "STATE_UNAVAILABLE" | "STATE_INVALID" | "GH_RESPONSE_INVALID" => 10,
@@ -632,7 +741,7 @@ fn exit_category(error: &ContractError) -> i32 {
 fn arguments() -> ContractError {
     ContractError::new(
         "INVALID_ARGUMENTS",
-        "Use contract describe/schema, prepare --repo <checkout> --pr <number> --state <database> [--remote <name>], inspect --prepared <id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>, draft list|save|discard, or a validate command; optional --json",
+        "Use contract describe/schema, prepare --repo <checkout> --pr <number> --state <database> [--remote <name>], inspect --prepared <id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>, draft list|save|discard, review intent|stage|confirm|operation, or a validate command; optional --json",
         "",
     )
 }

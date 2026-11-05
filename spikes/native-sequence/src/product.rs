@@ -1,7 +1,9 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
 use bodh::{
-    CodeReplacementSnapshot, DraftSnapshot, DraftStore, OperationControl, PinnedDiff,
-    PreparationManifest, PreparationStore, PreparedBinding, Revision, SourceRef, read_diff,
+    CodeReplacementSnapshot, DraftSnapshot, DraftStore, GhReviewPublisher, OperationControl,
+    PinnedDiff, PreparationManifest, PreparationStore, PreparedBinding, ReviewEvent, ReviewIntent,
+    ReviewOperation, ReviewPublicationStore, Revision, SelectedDraft, SourceRef,
+    StageReviewRequest, inspect_remote_review_with_gh, read_diff,
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::preferences::{
@@ -44,6 +46,7 @@ enum Screen {
     Home,
     Repository,
     Workspace,
+    FinishReview,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -153,6 +156,11 @@ pub struct Product {
     reply_focus: FocusHandle,
     reply_saving: bool,
     dragging_pane: bool,
+    review_intent: Option<ReviewIntent>,
+    review_summary: String,
+    review_plan: Option<ReviewOperation>,
+    review_loading: bool,
+    review_summary_focus: FocusHandle,
 }
 
 impl Product {
@@ -225,6 +233,11 @@ impl Product {
             reply_focus: cx.focus_handle(),
             reply_saving: false,
             dragging_pane: false,
+            review_intent: None,
+            review_summary: String::new(),
+            review_plan: None,
+            review_loading: false,
+            review_summary_focus: cx.focus_handle(),
         };
         app.refresh_gh_cli(cx);
         app
@@ -1464,6 +1477,7 @@ impl Product {
         self.status = None;
         self.screen = match self.screen {
             Screen::Workspace => Screen::Repository,
+            Screen::FinishReview => Screen::Workspace,
             Screen::Repository => Screen::Home,
             Screen::Home => Screen::Home,
         };
@@ -1473,6 +1487,223 @@ impl Product {
             self.load_pull_requests(path, cx);
         }
         cx.notify();
+    }
+
+    fn open_finish_review(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving
+            || self
+                .draft_editor
+                .as_ref()
+                .is_some_and(TextDraftEditor::is_dirty)
+        {
+            self.error = Some(
+                "Save or explicitly discard the open inline draft before finishing the review."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(binding) = self.selected_review.as_ref() else {
+            return;
+        };
+        match ReviewPublicationStore::open(&self.preparation_db).and_then(|mut store| {
+            store.recover_interrupted(&binding.preparation_id)?;
+            let intent = store.intent(&binding.preparation_id)?;
+            let pending = store.pending_operation(&binding.preparation_id)?;
+            Ok::<_, bodh::ContractError>((intent, pending))
+        }) {
+            Ok((mut intent, pending)) => {
+                self.review_plan = pending.clone();
+                self.review_summary = intent.summary.clone().unwrap_or_default();
+                let mut stale_selection = false;
+                if pending.is_none()
+                    && let Some(snapshot) = self.draft_snapshot.as_ref()
+                {
+                    intent.selected.retain_mut(|selected| {
+                        if let Some(draft) =
+                            snapshot.drafts.iter().find(|draft| draft.id == selected.id)
+                        {
+                            if selected.revision != draft.revision {
+                                selected.revision = draft.revision;
+                                stale_selection = true;
+                            }
+                            true
+                        } else {
+                            stale_selection = true;
+                            false
+                        }
+                    });
+                }
+                self.review_intent = Some(intent);
+                self.screen = Screen::FinishReview;
+                self.error = None;
+                if stale_selection {
+                    self.save_review_intent();
+                }
+            }
+            Err(error) => self.error = Some(format!("{}: {}", error.code, error.message)),
+        }
+        cx.notify();
+    }
+
+    fn save_review_intent(&mut self) {
+        let (Some(binding), Some(intent), Some(snapshot)) = (
+            self.selected_review.as_ref(),
+            self.review_intent.as_ref(),
+            self.draft_snapshot.as_ref(),
+        ) else {
+            return;
+        };
+        let mut store = match ReviewPublicationStore::open(&self.preparation_db) {
+            Ok(store) => store,
+            Err(error) => {
+                self.error = Some(format!("{}: {}", error.code, error.message));
+                return;
+            }
+        };
+        let saved = store.stage(StageReviewRequest {
+            state: self.preparation_db.clone(),
+            preparation_id: binding.preparation_id.clone(),
+            expected_workspace_revision: snapshot.workspace_revision,
+            expected_intent_revision: intent.revision,
+            selected: intent.selected.clone(),
+            summary: if self.review_summary.trim().is_empty() {
+                None
+            } else {
+                Some(self.review_summary.clone())
+            },
+            event: intent.event,
+        });
+        match saved {
+            Ok(intent) => {
+                self.review_intent = Some(intent);
+                self.review_plan = None;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(format!("{}: {}", error.code, error.message)),
+        }
+    }
+
+    fn toggle_review_draft(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self
+            .review_plan
+            .as_ref()
+            .is_some_and(|plan| matches!(plan.state.as_str(), "planned" | "sending" | "unknown"))
+        {
+            self.status=Some("This operation is already planned or has an uncertain outcome. Reconcile it before changing its drafts.".into());
+            cx.notify();
+            return;
+        }
+        let Some(intent) = self.review_intent.as_mut() else {
+            return;
+        };
+        if let Some(index) = intent.selected.iter().position(|s| s.id == id) {
+            intent.selected.remove(index);
+        } else if let Some(draft) = self
+            .draft_snapshot
+            .as_ref()
+            .and_then(|s| s.drafts.iter().find(|d| d.id == id))
+        {
+            intent.selected.push(SelectedDraft {
+                id: draft.id.clone(),
+                revision: draft.revision,
+            });
+        }
+        self.save_review_intent();
+        cx.notify();
+    }
+
+    fn choose_review_event(&mut self, event: ReviewEvent, cx: &mut Context<Self>) {
+        if self
+            .review_plan
+            .as_ref()
+            .is_some_and(|plan| matches!(plan.state.as_str(), "planned" | "sending" | "unknown"))
+        {
+            self.status=Some("This operation is already planned or has an uncertain outcome. Reconcile it before changing its event.".into());
+            cx.notify();
+            return;
+        }
+        if let Some(intent) = self.review_intent.as_mut() {
+            intent.event = Some(event);
+        }
+        self.save_review_intent();
+        cx.notify();
+    }
+
+    fn review_summary_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if self
+            .review_plan
+            .as_ref()
+            .is_some_and(|plan| matches!(plan.state.as_str(), "planned" | "sending" | "unknown"))
+        {
+            return;
+        }
+        match event.keystroke.key.as_str() {
+            "backspace" => {
+                self.review_summary.pop();
+            }
+            "enter" => self.review_summary.push('\n'),
+            "escape" => {
+                self.review_summary.clear();
+            }
+            key if key.chars().count() == 1
+                && !event.keystroke.modifiers.control
+                && !event.keystroke.modifiers.platform =>
+            {
+                self.review_summary.push_str(key)
+            }
+            _ => return,
+        }
+        self.save_review_intent();
+        cx.notify();
+    }
+
+    fn confirm_review_plan(&mut self, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let Some(intent) = self.review_intent.clone() else {
+            return;
+        };
+        self.review_loading = true;
+        self.error = None;
+        self.status = Some("Checking the current PR and validating every selected anchor…".into());
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(30));
+        self.active_control = Some(control.clone());
+        cx.spawn(async move |weak,cx| {
+            let result=cx.background_executor().spawn(async move {
+                let remote=inspect_remote_review_with_gh(&binding,Path::new("gh"),&control)?;
+                ReviewPublicationStore::open(&state)?.confirm(&binding.preparation_id,&state,intent.revision,&remote,&control)
+            }).await;
+            let _=weak.update(cx,|this,cx| { if this.operation_epoch.load(Ordering::Relaxed)!=token{return;} this.review_loading=false; this.active_control=None; match result { Ok(plan)=>{this.review_plan=Some(plan);this.status=Some("Review plan saved. Inspect the exact event, summary and comments below before publishing.".into());this.error=None;}, Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;} } cx.notify(); });
+        }).detach();
+    }
+
+    fn publish_review_plan(&mut self, cx: &mut Context<Self>) {
+        let (Some(binding), Some(plan)) = (self.selected_review.clone(), self.review_plan.clone())
+        else {
+            return;
+        };
+        self.review_loading = true;
+        self.error = None;
+        self.status = Some("Rechecking PR permissions and head before publication…".into());
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(45));
+        self.active_control = Some(control.clone());
+        cx.spawn(async move |weak,cx| {
+            let result=cx.background_executor().spawn(async move {
+                let remote=inspect_remote_review_with_gh(&binding,Path::new("gh"),&control)?;
+                let mut store=ReviewPublicationStore::open(&state)?;
+                let publisher=GhReviewPublisher{executable:PathBuf::from("gh"),checkout:PathBuf::from(&binding.checkout),timeout:Duration::from_secs(35)};
+                let operation=store.publish_confirmed(&plan.id,&remote,&publisher,&control)?;
+                let snapshot=if operation.state=="confirmed" { Some(DraftStore::open(&state)?.list(&binding.preparation_id)?) } else { None };
+                Ok::<_,bodh::ContractError>((operation,snapshot))
+            }).await;
+            let _=weak.update(cx,|this,cx| { if this.operation_epoch.load(Ordering::Relaxed)!=token{return;} this.review_loading=false; this.active_control=None; match result { Ok((operation,snapshot))=>{if let Some(snapshot)=snapshot {this.update_draft_counts(snapshot.counts.clone());this.draft_snapshot=Some(snapshot);} this.status=Some(match operation.state.as_str(){"confirmed"=>format!("Review published · {}",operation.remote_url.as_deref().unwrap_or(operation.remote_review_id.as_deref().unwrap_or("confirmed"))),"failed"=>format!("GitHub rejected this review: {}",operation.failure.as_deref().unwrap_or("unknown error")),_=>format!("Publication outcome is uncertain. Do not resend. Reconcile operation {} before continuing.",operation.id)});this.review_plan=Some(operation);this.error=None;},Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;} } cx.notify(); });
+        }).detach();
     }
 
     fn palette(&self) -> Palette {
@@ -1498,6 +1729,10 @@ impl Product {
     }
 
     fn workspace_key(&mut self, event: &KeyDownEvent, window: &Window, cx: &mut Context<Self>) {
+        if self.review_summary_focus.is_focused(window) {
+            self.review_summary_key(event, cx);
+            return;
+        }
         if self.draft_focus.is_focused(window) {
             return;
         }
@@ -1590,6 +1825,7 @@ impl Render for Product {
         root = match self.screen {
             Screen::Home => root.child(self.render_home(p, cx)),
             Screen::Repository => root.child(self.render_repository(p, cx)),
+            Screen::FinishReview => root.child(self.render_finish_review(p, cx)),
             Screen::Workspace => root.child(self.render_workspace(
                 p,
                 cx,
@@ -1703,19 +1939,7 @@ impl Product {
                 "finish-review",
                 &finish_label,
                 p,
-                move |this, _, _, cx| {
-                    let pending = this
-                        .draft_snapshot
-                        .as_ref()
-                        .map(|snapshot| pending_draft_count(&snapshot.counts))
-                        .unwrap_or(0);
-                    this.status = Some(if pending > 0 {
-                        format!("{pending} local comment draft(s) are saved. Nothing has been published.")
-                    } else {
-                        "No review content has been staged yet. Your saved workspace is unchanged.".into()
-                    });
-                    cx.notify();
-                },
+                |this, _, _, cx| this.open_finish_review(cx),
                 cx,
             ));
         }
@@ -2009,6 +2233,244 @@ impl Product {
             }
         }
         content.child(list)
+    }
+
+    fn render_finish_review(&mut self, p: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let binding = self
+            .selected_review
+            .clone()
+            .expect("Finish Review screen requires a prepared review");
+        let intent = self.review_intent.clone();
+        let selected = intent
+            .as_ref()
+            .map(|i| {
+                i.selected
+                    .iter()
+                    .map(|s| s.id.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let mut page = div()
+            .id("finish-review")
+            .flex_1()
+            .min_h_0()
+            .overflow_scroll()
+            .p_6()
+            .flex()
+            .flex_col()
+            .gap_4();
+        page = page.child(
+            div()
+                .text_size(px(22.))
+                .font_weight(FontWeight::BOLD)
+                .child("Finish Review"),
+        );
+        page = page.child(div().text_color(rgb(p.muted)).child(format!(
+            "{}/{} #{} · nothing is sent until you confirm the exact plan below",
+            binding.context.pr.owner, binding.context.pr.repository, binding.context.pr.number
+        )));
+        let drafts = self
+            .draft_snapshot
+            .as_ref()
+            .map(|s| s.drafts.clone())
+            .unwrap_or_default();
+        if drafts.is_empty() {
+            page = page.child(empty_card(
+                "No inline comments saved",
+                "You can still write a review summary and choose an event.",
+                p,
+            ));
+        } else {
+            page = page.child(section_title(
+                "Inline comments · select or unstage each draft",
+                p,
+            ));
+            for draft in drafts {
+                let id = draft.id.clone();
+                let select_id = id.clone();
+                let edit_id = id.clone();
+                let label = if selected.contains(id.as_str()) {
+                    "✓ Selected"
+                } else {
+                    "＋ Add to review"
+                };
+                let entry = div()
+                    .flex()
+                    .items_start()
+                    .gap_3()
+                    .p_3()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.panel))
+                    .child(button(
+                        &format!("review-select-{id}"),
+                        label,
+                        p,
+                        move |this, _, _, cx| this.toggle_review_draft(&select_id, cx),
+                        cx,
+                    ))
+                    .child(button(
+                        &format!("review-edit-{id}"),
+                        "Edit in Changes",
+                        p,
+                        move |this, _, _, cx| {
+                            this.screen = Screen::Workspace;
+                            this.active_tab = WorkspaceTab::Changes;
+                            this.resume_text_draft(&edit_id, cx);
+                            cx.notify();
+                        },
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .font_family("DejaVu Sans Mono")
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .child(source_title(&draft.source)),
+                            )
+                            .child(div().child(draft.body)),
+                    );
+                page = page.child(entry);
+            }
+        }
+        page = page.child(section_title("Review event · choose explicitly", p));
+        let event = intent.as_ref().and_then(|i| i.event);
+        let events = [
+            ("COMMENT", ReviewEvent::Comment),
+            ("APPROVE", ReviewEvent::Approve),
+            ("REQUEST CHANGES", ReviewEvent::RequestChanges),
+        ];
+        let mut event_row = div().flex().gap_2();
+        for (label, value) in events {
+            let chosen = event == Some(value);
+            let button_label = if chosen {
+                match label {
+                    "COMMENT" => "✓ COMMENT",
+                    "APPROVE" => "✓ APPROVE",
+                    _ => "✓ REQUEST CHANGES",
+                }
+            } else {
+                label
+            };
+            event_row = event_row.child(button(
+                &format!("review-event-{label}"),
+                button_label,
+                p,
+                move |this, _, _, cx| this.choose_review_event(value, cx),
+                cx,
+            ));
+        }
+        page = page.child(event_row);
+        page = page.child(section_title("Review summary", p));
+        page = page.child(
+            div()
+                .id("finish-review-summary")
+                .min_h(px(88.))
+                .p_3()
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.panel))
+                .focus(|style| style.border_color(rgb(p.accent)))
+                .track_focus(&self.review_summary_focus)
+                .child(if self.review_summary.is_empty() {
+                    "Click to write a review summary. Request changes requires a summary."
+                        .to_owned()
+                } else {
+                    self.review_summary.clone()
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, _| window.focus(&this.review_summary_focus)),
+                ),
+        );
+        page=page.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child("Summary text input: type to append · Backspace removes · Enter starts a new line · Escape clears."));
+        if let Some(plan) = self.review_plan.clone() {
+            page = page.child(section_title("Exact confirmed plan", p));
+            page = page.child(empty_card(
+                &format!(
+                    "{} · {} inline comment(s)",
+                    format!("{:?}", plan.payload.event).to_ascii_uppercase(),
+                    plan.payload.comments.len()
+                ),
+                &format!(
+                    "Summary: {}",
+                    plan.payload.summary.as_deref().unwrap_or("(none)")
+                ),
+                p,
+            ));
+            for comment in &plan.payload.comments {
+                page = page.child(
+                    div()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.raised))
+                        .child(
+                            div()
+                                .font_family("DejaVu Sans Mono")
+                                .text_size(px(11.))
+                                .text_color(rgb(p.muted))
+                                .child(source_title(&comment.source)),
+                        )
+                        .child(comment.body.clone()),
+                );
+            }
+            page = page.child(
+                div()
+                    .font_family("DejaVu Sans Mono")
+                    .text_size(px(10.))
+                    .text_color(rgb(p.muted))
+                    .child(format!(
+                        "Fingerprint {} · operation {}",
+                        plan.fingerprint, plan.id
+                    )),
+            );
+            if plan.state == "planned" {
+                page = page.child(button(
+                    "publish-confirmed-review",
+                    "Publish this exact review to GitHub",
+                    p,
+                    |this, _, _, cx| this.publish_review_plan(cx),
+                    cx,
+                ));
+            } else if plan.state == "unknown" {
+                page=page.child(empty_card("Outcome uncertain","Do not resend this operation. Inspect the PR for the exact review before taking further action.",p));
+            } else {
+                page = page.child(
+                    div()
+                        .text_color(rgb(p.muted))
+                        .child(format!("Operation state: {}", plan.state)),
+                );
+            }
+        } else {
+            let can_confirm =
+                intent.as_ref().is_some_and(|i| i.event.is_some()) && !self.review_loading;
+            if can_confirm {
+                page = page.child(button(
+                    "confirm-review-plan",
+                    "Check PR state and confirm exact plan",
+                    p,
+                    |this, _, _, cx| this.confirm_review_plan(cx),
+                    cx,
+                ));
+            } else {
+                page = page.child(empty_card(
+                    "Choose an event",
+                    "Select Comment, Approve or Request Changes explicitly before confirmation.",
+                    p,
+                ));
+            }
+        }
+        if self.review_loading {
+            page = page.child(div().text_color(rgb(p.muted)).child("Working…"));
+        }
+        page
     }
 
     fn render_workspace(
