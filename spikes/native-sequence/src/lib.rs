@@ -1,5 +1,11 @@
 //! Disposable native rendering experiment, not the Bodh contract.
+pub mod manual_review;
 pub mod preferences;
+
+pub use manual_review::{
+    DiffLine, DiffLineKind, MarkdownBlock, MarkdownBlockKind, SplitDiffRow, SyntaxSpan,
+    SyntaxTokenKind, diff_rows, safe_markdown_blocks, split_diff_rows, syntax_spans,
+};
 
 pub const SOURCE: &str = include_str!("../fixtures/review.rs");
 pub const BASE_SOURCE: &str = include_str!("../fixtures/review.base.rs");

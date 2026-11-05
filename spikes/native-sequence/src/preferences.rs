@@ -1,4 +1,5 @@
 //! User navigation preferences. Review payloads remain in the preparation/workspace store.
+use bodh::Revision;
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
@@ -30,6 +31,20 @@ pub struct RecentReview {
     pub repository: String,
     pub number: u64,
     pub pending_work: u32,
+    #[serde(default)]
+    pub selected_file: Option<String>,
+    #[serde(default)]
+    pub source_revision: Option<Revision>,
+    #[serde(default)]
+    pub split_diff: bool,
+    #[serde(default)]
+    pub file_scroll_y: f32,
+    #[serde(default)]
+    pub diff_scroll_y: f32,
+    #[serde(default)]
+    pub source_scroll_y: f32,
+    #[serde(default)]
+    pub description_scroll_y: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,6 +93,8 @@ impl NavigationPreferences {
 #[cfg(test)]
 mod tests {
     use super::{NavigationPreferences, RecentReview, WorkspaceTab};
+    use bodh::Revision;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn navigation_preferences_persist_without_review_content() {
@@ -103,6 +120,13 @@ mod tests {
                 repository: "app".into(),
                 number: 24,
                 pending_work: 0,
+                selected_file: Some("src/lib.rs".into()),
+                source_revision: Some(Revision::Base),
+                split_diff: true,
+                file_scroll_y: 120.,
+                diff_scroll_y: 240.,
+                source_scroll_y: 360.,
+                description_scroll_y: 480.,
             }],
         };
         prefs.save(&path).unwrap();
@@ -112,10 +136,39 @@ mod tests {
         assert_eq!(restored.active_tab, Some(WorkspaceTab::Changes));
         assert_eq!(restored.repositories, ["/repo"]);
         assert_eq!(restored.recent[0].preparation_id, "opaque-1");
+        assert_eq!(
+            restored.recent[0].selected_file.as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(restored.recent[0].source_revision, Some(Revision::Base));
+        assert!(restored.recent[0].split_diff);
+        assert_eq!(restored.recent[0].file_scroll_y, 120.);
+        assert_eq!(restored.recent[0].diff_scroll_y, 240.);
+        assert_eq!(restored.recent[0].source_scroll_y, 360.);
+        assert_eq!(restored.recent[0].description_scroll_y, 480.);
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert!(value.get("review_result").is_none());
         assert!(value.get("drafts").is_none());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn old_navigation_preferences_load_with_default_review_positions() {
+        let path = std::env::temp_dir().join(format!(
+            "bodh-old-prefs-{}-{}.json",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, r#"{"dark":true,"inspector_width":420,"active_tab":"Changes","repositories":[],"recent":[{"preparation_id":"p1","repository_path":"/repo","title":"T","owner":"a","repository":"b","number":1,"pending_work":0}]}"#).unwrap();
+        let restored = NavigationPreferences::load(&path);
+        assert_eq!(restored.recent.len(), 1);
+        assert_eq!(restored.recent[0].selected_file, None);
+        assert!(!restored.recent[0].split_diff);
+        assert_eq!(restored.recent[0].source_revision, None);
+        let _ = std::fs::remove_file(path);
     }
 }

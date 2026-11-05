@@ -5,6 +5,134 @@ use std::path::Path;
 
 pub const MAX_DIFF_FILES: usize = 4096;
 pub const MAX_DIFF_HUNKS: usize = 65_536;
+/// Maximum unified patch text returned to an interactive workspace for one file.
+pub const MAX_DIFF_VIEW_BYTES: usize = 128 * 1024;
+
+/// A bounded unified diff for one path in a pinned merge-base-to-head comparison.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedDiff {
+    pub text: String,
+    pub truncated: bool,
+}
+
+/// Reads displayable patch text for exactly one prepared changed path.
+///
+/// Git receives only pinned object IDs and a literal pathspec. External diff and
+/// textconv are disabled, and the returned UTF-8 page is capped at
+/// [`MAX_DIFF_VIEW_BYTES`].
+pub fn read_diff(
+    repository: &Path,
+    context: &ReviewContext,
+    path: &str,
+    control: &OperationControl,
+) -> Result<PinnedDiff, ContractError> {
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path.chars().any(char::is_control)
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(ContractError::new(
+            "DIFF_PATH_INVALID",
+            "Use an unambiguous repository-relative POSIX path",
+            "/path",
+        ));
+    }
+    let index = diff_index(repository, context, control)?;
+    let file = index
+        .files
+        .iter()
+        .find(|file| {
+            file.old_path.as_deref() == Some(path) || file.new_path.as_deref() == Some(path)
+        })
+        .ok_or_else(|| {
+            ContractError::new(
+                "DIFF_PATH_UNAVAILABLE",
+                "Path is not part of the prepared change",
+                "/path",
+            )
+        })?;
+    if let Some(reason) = &file.unsupported_reason {
+        return Err(ContractError::new(
+            "DIFF_CONTENT_UNSUPPORTED",
+            "This changed entry does not have readable text diff content",
+            reason,
+        ));
+    }
+    let literal_path = format!(":(literal){path}");
+    let patch = git(
+        repository,
+        control,
+        &[
+            "-c",
+            "diff.suppressBlankEmpty=false",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--text",
+            "--unified=3",
+            "--inter-hunk-context=0",
+            "--diff-algorithm=myers",
+            "--no-indent-heuristic",
+            "--no-color",
+            "-O/dev/null",
+            &context.merge_base_sha,
+            &context.head_sha,
+            "--",
+            &literal_path,
+        ],
+    )
+    .map_err(|error| {
+        if error.code == "SOURCE_TOO_LARGE" {
+            ContractError::new(
+                "DIFF_TOO_LARGE",
+                "Pinned patch exceeds the maximum Git output bound",
+                "/path",
+            )
+        } else {
+            error
+        }
+    })?;
+    if patch.is_empty() {
+        return Err(ContractError::new(
+            "DIFF_PATH_UNAVAILABLE",
+            "Pinned path has no displayable patch",
+            "/path",
+        ));
+    }
+    let text = std::str::from_utf8(&patch).map_err(|_| {
+        ContractError::new(
+            "DIFF_CONTENT_UNSUPPORTED",
+            "Pinned patch output is not UTF-8 text",
+            "/path",
+        )
+    })?;
+    if text.len() <= MAX_DIFF_VIEW_BYTES {
+        return Ok(PinnedDiff {
+            text: text.to_owned(),
+            truncated: false,
+        });
+    }
+    let mut end = MAX_DIFF_VIEW_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    end = text[..end].rfind('\n').map_or(0, |newline| newline + 1);
+    if end == 0 {
+        return Err(ContractError::new(
+            "DIFF_TOO_LARGE",
+            "Pinned patch has no complete line within the display bound",
+            "/path",
+        ));
+    }
+    Ok(PinnedDiff {
+        text: text[..end].to_owned(),
+        truncated: true,
+    })
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DiffHunk {

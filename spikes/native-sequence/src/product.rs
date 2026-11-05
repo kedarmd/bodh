@@ -1,11 +1,16 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
 use bodh::{
-    OperationControl, PreparationManifest, PreparationStore, PreparedBinding, Revision, SourceRef,
+    OperationControl, PinnedDiff, PreparationManifest, PreparationStore, PreparedBinding, Revision,
+    SourceRef, read_diff,
 };
 use bodh_sequence_spike::preferences::{
     NavigationPreferences as Preferences, RecentReview, WorkspaceTab,
 };
-use gpui::{prelude::*, *};
+use bodh_sequence_spike::{
+    DiffLine, DiffLineKind, MarkdownBlock, MarkdownBlockKind, diff_rows, safe_markdown_blocks,
+    split_diff_rows, syntax_spans,
+};
+use gpui::{UniformListScrollHandle, prelude::*, uniform_list, *};
 use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
@@ -113,8 +118,20 @@ pub struct Product {
     active_control: Option<OperationControl>,
     focus: FocusHandle,
     search_focus: FocusHandle,
-    file_scroll: ScrollHandle,
+    file_search_focus: FocusHandle,
+    file_scroll: UniformListScrollHandle,
+    diff_scroll: UniformListScrollHandle,
     source_scroll: ScrollHandle,
+    description_scroll: ScrollHandle,
+    file_search: String,
+    source_revision: Revision,
+    split_diff: bool,
+    diff_page: Option<PinnedDiff>,
+    diff_rows: Vec<DiffLine>,
+    diff_loading: bool,
+    diff_error: Option<String>,
+    source_ref: Option<SourceRef>,
+    description_blocks: Vec<MarkdownBlock>,
     dragging_pane: bool,
 }
 
@@ -157,8 +174,20 @@ impl Product {
             active_control: None,
             focus: cx.focus_handle(),
             search_focus: cx.focus_handle(),
-            file_scroll: ScrollHandle::new(),
+            file_search_focus: cx.focus_handle(),
+            file_scroll: UniformListScrollHandle::new(),
+            diff_scroll: UniformListScrollHandle::new(),
             source_scroll: ScrollHandle::new(),
+            description_scroll: ScrollHandle::new(),
+            file_search: String::new(),
+            source_revision: Revision::Head,
+            split_diff: false,
+            diff_page: None,
+            diff_rows: Vec::new(),
+            diff_loading: false,
+            diff_error: None,
+            source_ref: None,
+            description_blocks: Vec::new(),
             dragging_pane: false,
         };
         if let Some(path) = app.active_repository.clone()
@@ -262,7 +291,9 @@ impl Product {
                     let manifest =
                         bodh::prepare_local_pr(Path::new(&path), number, None, &state, &control)?;
                     let binding = PreparationStore::open(&state)?.load(&manifest.preparation_id)?;
-                    Ok::<_, bodh::ContractError>((manifest, binding))
+                    let markdown = binding.description.as_deref().unwrap_or_default();
+                    let blocks = safe_markdown_blocks(markdown);
+                    Ok::<_, bodh::ContractError>((manifest, binding, blocks))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -272,15 +303,21 @@ impl Product {
                 this.loading = false;
                 this.active_control = None;
                 match result {
-                    Ok((manifest, binding)) => {
+                    Ok((manifest, binding, blocks)) => {
                         this.remember(&manifest, &binding, cx);
                         this.selected_review = Some(binding);
+                        this.description_blocks = blocks;
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
                         this.screen = Screen::Workspace;
                         this.selected_file = None;
                         this.source_text = None;
                         this.source_loading = false;
                         this.source_label = None;
+                        this.source_ref = None;
+                        this.diff_page = None;
+                        this.diff_rows.clear();
+                        this.diff_loading = false;
+                        this.diff_error = None;
                         this.error = None;
                     }
                     Err(error) => {
@@ -314,6 +351,13 @@ impl Product {
                 repository: pr.repository.clone(),
                 number: pr.number,
                 pending_work: 0,
+                selected_file: None,
+                source_revision: None,
+                split_diff: false,
+                file_scroll_y: 0.,
+                diff_scroll_y: 0.,
+                source_scroll_y: 0.,
+                description_scroll_y: 0.,
             },
         );
         self.prefs.recent.truncate(20);
@@ -331,7 +375,12 @@ impl Product {
         cx.spawn(async move |weak, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { PreparationStore::open(&state)?.load(&id) })
+                .spawn(async move {
+                    let binding = PreparationStore::open(&state)?.load(&id)?;
+                    let blocks =
+                        safe_markdown_blocks(binding.description.as_deref().unwrap_or_default());
+                    Ok::<_, bodh::ContractError>((binding, blocks))
+                })
                 .await;
             let _ = weak.update(cx, |this, cx| {
                 if this.operation_epoch.load(Ordering::Relaxed) != token {
@@ -339,11 +388,45 @@ impl Product {
                 }
                 this.loading = false;
                 match result {
-                    Ok(binding) => {
+                    Ok((binding, blocks)) => {
                         this.active_repository = Some(binding.checkout.clone());
                         this.screen = Screen::Workspace;
-                        this.selected_review = Some(binding);
+                        this.description_blocks = blocks;
+                        this.selected_review = Some(binding.clone());
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
+                        if let Some(saved) = this
+                            .prefs
+                            .recent
+                            .iter()
+                            .find(|review| review.preparation_id == binding.preparation_id)
+                            .cloned()
+                        {
+                            this.source_revision = saved.source_revision.unwrap_or(Revision::Head);
+                            this.split_diff = saved.split_diff;
+                            this.description_scroll
+                                .set_offset(point(px(0.), px(saved.description_scroll_y)));
+                            this.selected_file = saved.selected_file.as_deref().and_then(|path| {
+                                binding.changed_files.iter().position(|file| {
+                                    file.new_path.as_deref().or(file.old_path.as_deref())
+                                        == Some(path)
+                                })
+                            });
+                            if let Some(index) = this.selected_file {
+                                this.select_file(index, cx);
+                                this.file_scroll
+                                    .0
+                                    .borrow()
+                                    .base_handle
+                                    .set_offset(point(px(0.), px(saved.file_scroll_y)));
+                                this.diff_scroll
+                                    .0
+                                    .borrow()
+                                    .base_handle
+                                    .set_offset(point(px(0.), px(saved.diff_scroll_y)));
+                                this.source_scroll
+                                    .set_offset(point(px(0.), px(saved.source_scroll_y)));
+                            }
+                        }
                     }
                     Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
                 }
@@ -360,41 +443,69 @@ impl Product {
         let Some(file) = binding.changed_files.get(index).cloned() else {
             return;
         };
+        self.cancel_pending();
         self.selected_file = Some(index);
+        self.diff_page = None;
+        self.diff_rows.clear();
+        self.diff_error = None;
+        self.diff_loading = true;
         self.source_text = None;
-        self.source_loading = false;
+        self.source_loading = true;
+        self.source_ref = None;
+        self.source_label = None;
+        self.diff_scroll
+            .0
+            .borrow()
+            .base_handle
+            .set_offset(point(px(0.), px(0.)));
         self.source_scroll.set_offset(point(px(0.), px(0.)));
-        let Some(path) = file.new_path.clone().or(file.old_path.clone()) else {
-            self.source_label = Some("This tree entry has no readable file path.".into());
+        let revision = if file.new_path.is_some() {
+            Revision::Head
+        } else {
+            Revision::Base
+        };
+        self.source_revision = revision;
+        let Some(path) = (match revision {
+            Revision::Head => file.new_path.clone(),
+            Revision::Base => file.old_path.clone(),
+        }) else {
+            self.diff_loading = false;
+            self.source_loading = false;
+            self.diff_error = Some("This tree entry has no readable file path.".into());
             cx.notify();
             return;
         };
         if let Some(reason) = file.unsupported_reason {
-            self.source_label = Some(reason);
+            self.diff_loading = false;
+            self.source_loading = false;
+            self.diff_error = Some(format!("Unsupported content: {reason}"));
+            self.source_label = Some(format!("Unsupported content: {reason}"));
+            self.persist_navigation();
             cx.notify();
             return;
         }
         let Some(hunk) = file.hunks.first() else {
+            self.diff_loading = false;
+            self.source_loading = false;
+            self.diff_error = Some("This file has no line-based source range.".into());
             self.source_label = Some("This file has no line-based source range.".into());
+            self.persist_navigation();
             cx.notify();
             return;
         };
-        let (revision, start, count) = if file.new_path.is_some() {
-            (Revision::Head, hunk.new_start, hunk.new_lines)
-        } else {
-            (Revision::Base, hunk.old_start, hunk.old_lines)
+        let (start, count) = match revision {
+            Revision::Head => (hunk.new_start, hunk.new_lines),
+            Revision::Base => (hunk.old_start, hunk.old_lines),
         };
         if count == 0 {
+            self.diff_loading = false;
+            self.source_loading = false;
             self.source_label =
                 Some("This change has no readable lines on the selected side.".into());
+            self.diff_error = Some("No readable lines are available for this file.".into());
             cx.notify();
             return;
         }
-        let revision_label = if revision == Revision::Head {
-            "Head"
-        } else {
-            "Base"
-        };
         let source = SourceRef {
             path: path.clone(),
             revision,
@@ -403,20 +514,22 @@ impl Product {
                 .saturating_add(count.saturating_sub(1))
                 .min(start.saturating_add(79)),
         };
-        self.source_label = Some(format!(
-            "{} · {}:{}–{}",
-            revision_label, path, source.start_line, source.end_line
-        ));
-        self.source_loading = true;
+        self.source_ref = Some(source.clone());
+        self.source_label = Some(source_title(&source));
         let checkout = binding.checkout.clone();
         let context = binding.context.clone();
-        let control = OperationControl::with_timeout(Duration::from_secs(10));
+        let control = OperationControl::with_timeout(Duration::from_secs(30));
+        self.active_control = Some(control.clone());
         let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.persist_navigation();
         cx.spawn(async move |weak, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    bodh::read_source(Path::new(&checkout), &context, &source, &control)
+                    let diff = read_diff(Path::new(&checkout), &context, &path, &control)?;
+                    let source_text =
+                        bodh::read_source(Path::new(&checkout), &context, &source, &control)?;
+                    Ok::<_, bodh::ContractError>((diff, source_text))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -425,11 +538,19 @@ impl Product {
                 {
                     return;
                 }
+                this.active_control = None;
+                this.diff_loading = false;
                 this.source_loading = false;
                 match result {
-                    Ok(text) => this.source_text = Some(text),
+                    Ok((diff, text)) => {
+                        this.diff_rows = diff_rows(&diff.text);
+                        this.diff_page = Some(diff);
+                        this.source_text = Some(text);
+                    }
                     Err(error) => {
-                        this.source_label = Some(format!("{}: {}", error.code, error.message))
+                        let message = format!("{}: {}", error.code, error.message);
+                        this.diff_error = Some(message.clone());
+                        this.source_label = Some(message);
                     }
                 }
                 cx.notify();
@@ -437,6 +558,103 @@ impl Product {
         })
         .detach();
         cx.notify();
+    }
+
+    fn select_source_line(
+        &mut self,
+        index: usize,
+        revision: Revision,
+        line: u32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let Some(file) = binding.changed_files.get(index) else {
+            return;
+        };
+        let path = match revision {
+            Revision::Base => file.old_path.as_ref(),
+            Revision::Head => file.new_path.as_ref(),
+        };
+        let Some(path) = path.cloned() else {
+            return;
+        };
+        let source = SourceRef {
+            path,
+            revision,
+            start_line: line.max(1),
+            end_line: line.max(1),
+        };
+        self.cancel_pending();
+        self.selected_file = Some(index);
+        self.source_revision = revision;
+        self.source_ref = Some(source.clone());
+        self.source_label = Some(source_title(&source));
+        self.source_text = None;
+        self.source_loading = true;
+        self.source_scroll.set_offset(point(px(0.), px(0.)));
+        self.persist_navigation();
+        let repository = binding.checkout.clone();
+        let context = binding.context.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(10));
+        self.active_control = Some(control.clone());
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    bodh::read_source(Path::new(&repository), &context, &source, &control)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token
+                    || this.selected_file != Some(index)
+                {
+                    return;
+                }
+                this.active_control = None;
+                this.source_loading = false;
+                match result {
+                    Ok(text) => this.source_text = Some(text),
+                    Err(error) => {
+                        this.source_label = Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn persist_navigation(&mut self) {
+        let Some(binding) = &self.selected_review else {
+            return;
+        };
+        let id = &binding.preparation_id;
+        if let Some(saved) = self
+            .prefs
+            .recent
+            .iter_mut()
+            .find(|r| &r.preparation_id == id)
+        {
+            saved.selected_file = self.selected_file.and_then(|index| {
+                binding
+                    .changed_files
+                    .get(index)
+                    .and_then(|file| file.new_path.clone().or(file.old_path.clone()))
+            });
+            saved.source_revision = Some(self.source_revision);
+            saved.split_diff = self.split_diff;
+            saved.file_scroll_y =
+                f32::from(self.file_scroll.0.borrow().base_handle.offset().y).max(0.);
+            saved.diff_scroll_y =
+                f32::from(self.diff_scroll.0.borrow().base_handle.offset().y).max(0.);
+            saved.source_scroll_y = f32::from(self.source_scroll.offset().y).max(0.);
+            saved.description_scroll_y = f32::from(self.description_scroll.offset().y).max(0.);
+        }
+        self.persist();
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
@@ -568,9 +786,12 @@ impl Render for Product {
         root = match self.screen {
             Screen::Home => root.child(self.render_home(p, cx)),
             Screen::Repository => root.child(self.render_repository(p, cx)),
-            Screen::Workspace => {
-                root.child(self.render_workspace(p, cx, f32::from(_window.viewport_size().width)))
-            }
+            Screen::Workspace => root.child(self.render_workspace(
+                p,
+                cx,
+                f32::from(_window.viewport_size().width),
+                f32::from(_window.viewport_size().height),
+            )),
         };
         if let Some(error) = self.error.clone() {
             root = root.child(self.notice(p, &error, true));
@@ -928,6 +1149,7 @@ impl Product {
         p: Palette,
         cx: &mut Context<Self>,
         viewport_width: f32,
+        viewport_height: f32,
     ) -> impl IntoElement {
         let binding = self
             .selected_review
@@ -937,11 +1159,15 @@ impl Product {
             .id("review-workspace")
             .flex_1()
             .min_h_0()
-            .overflow_scroll()
             .p_6()
             .flex()
             .flex_col()
             .gap_4();
+        page = if self.active_tab == WorkspaceTab::Changes {
+            page.overflow_hidden()
+        } else {
+            page.overflow_scroll()
+        };
         page = page.child(
             div()
                 .child(
@@ -997,8 +1223,10 @@ impl Product {
         }
         page = page.child(tabs);
         let panel: AnyElement = match self.active_tab {
-            WorkspaceTab::Overview => self.render_overview(&binding, p).into_any_element(),
-            WorkspaceTab::Changes => self.render_changes(&binding, p, cx, viewport_width).into_any_element(),
+            WorkspaceTab::Overview => self.render_overview(&binding, p, cx).into_any_element(),
+            WorkspaceTab::Changes => self
+                .render_changes(&binding, p, cx, viewport_width, viewport_height)
+                .into_any_element(),
             WorkspaceTab::Findings => div().id("findings-empty").flex_1().min_h(px(360.)).p_6().border_1().border_color(rgb(p.border)).bg(rgb(p.panel))
                 .child(div().text_size(px(18.)).font_weight(FontWeight::MEDIUM).child("No findings to show"))
                 .child(div().mt_2().text_color(rgb(p.muted)).child("No generated review result is attached. Findings never start an agent; review the pinned changes manually.")).into_any_element(),
@@ -1006,9 +1234,20 @@ impl Product {
         page.child(panel)
     }
 
-    fn render_overview(&self, binding: &PreparedBinding, p: Palette) -> impl IntoElement {
-        let mut body = div().id("overview-content").flex().flex_col().gap_4();
+    fn render_overview(
+        &self,
+        binding: &PreparedBinding,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut body = div()
+            .id("overview-content")
+            .flex()
+            .flex_col()
+            .gap_4()
+            .overflow_scroll();
         body = body.child(empty_card("No generated overview", "This prepared review contains pinned code context only. No sequence diagram or analysis has been generated.", p));
+        let excerpt = markdown_excerpt(&self.description_blocks, 320);
         body = body.child(
             div()
                 .flex()
@@ -1020,14 +1259,42 @@ impl Product {
                 .bg(rgb(p.panel))
                 .child(section_title("Pull request description", p))
                 .child(
-                    div().text_color(rgb(p.text)).child(
-                        binding
-                            .description
-                            .clone()
-                            .unwrap_or_else(|| "No description was supplied.".into()),
-                    ),
+                    div()
+                        .mt_2()
+                        .text_color(rgb(p.muted))
+                        .child(if excerpt.is_empty() {
+                            "No description was supplied.".into()
+                        } else {
+                            excerpt
+                        }),
                 ),
         );
+        let mut reader = div()
+            .id("description-reader")
+            .track_scroll(&self.description_scroll)
+            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+            .h(px(440.))
+            .min_h(px(260.))
+            .overflow_scroll()
+            .p_4()
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.panel))
+            .flex()
+            .flex_col()
+            .gap_3();
+        if self.description_blocks.is_empty() {
+            reader = reader.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child("No description was supplied."),
+            );
+        } else {
+            for (index, block) in self.description_blocks.iter().enumerate() {
+                reader = reader.child(render_markdown_block(block, index, p));
+            }
+        }
+        body = body.child(reader);
         body.child(
             div()
                 .text_color(rgb(p.muted))
@@ -1046,17 +1313,102 @@ impl Product {
         p: Palette,
         cx: &mut Context<Self>,
         viewport_width: f32,
+        viewport_height: f32,
     ) -> impl IntoElement {
         let selected = self.selected_file;
         let source_width = self
             .prefs
             .inspector_width
-            .clamp(280., (viewport_width - 300.).max(280.));
-        let file_width = (viewport_width - 48. - source_width - 8.).max(240.);
-        let mut file_list = div()
+            .clamp(300., (viewport_width - 520.).max(300.));
+        let file_width = 220.;
+        let pane_height = (viewport_height - 190.).max(360.);
+        let filtered = binding
+            .changed_files
+            .iter()
+            .enumerate()
+            .filter(|(_, file)| {
+                file.new_path
+                    .as_deref()
+                    .or(file.old_path.as_deref())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(&self.file_search.to_ascii_lowercase())
+                    || file
+                        .status
+                        .to_ascii_lowercase()
+                        .contains(&self.file_search.to_ascii_lowercase())
+            })
+            .collect::<Vec<_>>();
+        let file_rows = filtered
+            .iter()
+            .map(|(index, file)| {
+                let name = file
+                    .new_path
+                    .as_deref()
+                    .or(file.old_path.as_deref())
+                    .unwrap_or("(unknown path)");
+                let label = if file.old_path.as_deref().is_some_and(|old| old != name) {
+                    format!(
+                        "{} → {}  {}",
+                        file.old_path.as_deref().unwrap(),
+                        name,
+                        file.status
+                    )
+                } else {
+                    format!("{name}  {}", file.status)
+                };
+                (*index, label)
+            })
+            .collect::<Vec<_>>();
+        let current_file = selected;
+        let owner = cx.entity().downgrade();
+        let virtual_files = uniform_list(
+            "changed-file-rows",
+            file_rows.len(),
+            move |range, _window, _cx| {
+                range
+                    .filter_map(|row| file_rows.get(row))
+                    .map(|(file_index, label)| {
+                        let file_index = *file_index;
+                        let label = label.clone();
+                        let owner = owner.clone();
+                        div()
+                            .id(file_index)
+                            .h(px(34.))
+                            .w_full()
+                            .px_2()
+                            .border_1()
+                            .border_color(rgb(p.border))
+                            .bg(rgb(if current_file == Some(file_index) {
+                                p.raised
+                            } else {
+                                p.panel
+                            }))
+                            .text_color(rgb(if current_file == Some(file_index) {
+                                p.text
+                            } else {
+                                p.muted
+                            }))
+                            .text_size(px(12.))
+                            .overflow_hidden()
+                            .cursor_pointer()
+                            .child(label)
+                            .on_click(move |_, window, app| {
+                                let _ = owner.update(app, |this, cx| {
+                                    window.focus(&this.focus);
+                                    this.select_file(file_index, cx);
+                                });
+                            })
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .track_scroll(self.file_scroll.clone())
+        .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+        .flex_1()
+        .min_h_0();
+        let file_list = div()
             .id("change-files")
-            .track_scroll(&self.file_scroll)
-            .overflow_scroll()
             .w(px(file_width))
             .h_full()
             .flex_shrink_0()
@@ -1066,31 +1418,195 @@ impl Product {
             .p_2()
             .flex()
             .flex_col()
-            .gap_1();
-        file_list = file_list.child(section_title("Changed files", p));
-        for (index, file) in binding.changed_files.iter().enumerate() {
-            let name = file
-                .new_path
-                .as_deref()
-                .or(file.old_path.as_deref())
-                .unwrap_or("(unknown path)");
-            let status = &file.status;
-            let is_selected = selected == Some(index);
-            file_list = file_list.child(
+            .gap_1()
+            .child(section_title("Changed files", p))
+            .child(
+                div()
+                    .id("file-search")
+                    .track_focus(&self.file_search_focus)
+                    .p_2()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.raised))
+                    .focus(|style| style.border_color(rgb(p.accent)))
+                    .text_size(px(12.))
+                    .child(if self.file_search.is_empty() {
+                        "Filter files".into()
+                    } else {
+                        self.file_search.clone()
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, _| window.focus(&this.file_search_focus)),
+                    )
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        match event.keystroke.key.as_str() {
+                            "backspace" => {
+                                this.file_search.pop();
+                            }
+                            "escape" => this.file_search.clear(),
+                            key if key.chars().count() == 1
+                                && !event.keystroke.modifiers.control
+                                && !event.keystroke.modifiers.platform =>
+                            {
+                                this.file_search.push_str(key)
+                            }
+                            _ => return,
+                        }
+                        this.file_scroll
+                            .0
+                            .borrow()
+                            .base_handle
+                            .set_offset(point(px(0.), px(0.)));
+                        cx.notify();
+                    })),
+            )
+            .child(virtual_files);
+
+        let mut diff = div()
+            .id("review-diff")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .bg(rgb(p.panel))
+            .border_1()
+            .border_color(rgb(p.border))
+            .flex()
+            .flex_col();
+        let selected_path = selected
+            .and_then(|index| binding.changed_files.get(index))
+            .map(|file| {
+                file.new_path
+                    .as_deref()
+                    .or(file.old_path.as_deref())
+                    .unwrap_or("")
+            })
+            .unwrap_or("");
+        let mut diff_toolbar = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .p_2()
+            .border_b_1()
+            .border_color(rgb(p.border))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(px(12.))
+                    .child(selected_path.to_owned()),
+            );
+        for (label, split) in [("Unified", false), ("Split", true)] {
+            diff_toolbar = diff_toolbar.child(
                 button(
-                    &format!("file-{index}"),
-                    &format!("{name}  {status}"),
+                    &format!("diff-mode-{label}"),
+                    label,
                     p,
-                    move |this, _, _, cx| this.select_file(index, cx),
+                    move |this, _, _, cx| {
+                        this.split_diff = split;
+                        this.persist_navigation();
+                        cx.notify();
+                    },
                     cx,
                 )
-                .text_color(rgb(if is_selected { p.text } else { p.muted }))
-                .bg(rgb(if is_selected { p.raised } else { p.panel })),
+                .text_size(px(12.))
+                .text_color(rgb(if self.split_diff == split {
+                    p.text
+                } else {
+                    p.muted
+                })),
             );
         }
+        diff = diff.child(diff_toolbar);
+        if self.diff_loading {
+            diff = diff.child(empty_card(
+                "Loading pinned diff",
+                "The selected file patch is read from the prepared base and head commits.",
+                p,
+            ));
+        } else if let Some(message) = self.diff_error.clone() {
+            diff = diff.child(empty_card("Diff unavailable", &message, p));
+        } else if let Some(page) = &self.diff_page {
+            let truncated = page.truncated;
+            let mut rows_view = div()
+                .id("diff-rows")
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .flex()
+                .flex_col();
+            if truncated {
+                rows_view = rows_view.child(
+                    div()
+                        .p_2()
+                        .text_color(rgb(p.muted))
+                        .child("Patch is truncated at the 128 KiB display limit."),
+                );
+            }
+            let extension = path_extension(selected_path).to_owned();
+            let owner = cx.entity().downgrade();
+            let virtual_rows = if self.split_diff {
+                let rows = split_diff_rows(&self.diff_rows);
+                uniform_list(
+                    "split-diff-virtual-list",
+                    rows.len(),
+                    move |range, _window, _cx| {
+                        range
+                            .filter_map(|index| rows.get(index).map(|row| (index, row)))
+                            .map(|(index, row)| {
+                                render_split_diff_row(
+                                    index,
+                                    row,
+                                    selected.unwrap_or(0),
+                                    &extension,
+                                    p,
+                                    &owner,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                )
+            } else {
+                let rows = self.diff_rows.clone();
+                let fallback = self.source_revision;
+                uniform_list(
+                    "unified-diff-virtual-list",
+                    rows.len(),
+                    move |range, _window, _cx| {
+                        range
+                            .filter_map(|index| rows.get(index).map(|row| (index, row)))
+                            .map(|(index, row)| {
+                                render_unified_diff_row(
+                                    index,
+                                    row,
+                                    selected.unwrap_or(0),
+                                    fallback,
+                                    &extension,
+                                    p,
+                                    &owner,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                )
+            }
+            .track_scroll(self.diff_scroll.clone())
+            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
+            .flex_1()
+            .min_h_0();
+            rows_view = rows_view.child(virtual_rows);
+            diff = diff.child(rows_view);
+        } else {
+            diff = diff.child(empty_card(
+                "Select a changed file",
+                "The unified patch and exact base/head line numbers appear here.",
+                p,
+            ));
+        }
+
         let mut source = div()
             .id("pinned-source")
             .track_scroll(&self.source_scroll)
+            .on_scroll_wheel(cx.listener(|this, _, _, _| this.persist_navigation()))
             .overflow_scroll()
             .w(px(source_width))
             .flex_shrink_0()
@@ -1099,47 +1615,89 @@ impl Product {
             .bg(rgb(p.panel))
             .border_1()
             .border_color(rgb(p.border))
-            .p_4();
-        source = source.child(
-            div().font_weight(FontWeight::MEDIUM).child(
-                self.source_label
-                    .clone()
-                    .unwrap_or_else(|| "Pinned source · select a changed file".into()),
-            ),
-        );
-        if let Some(text) = self.source_text.clone() {
-            source = source.child(
-                div()
-                    .mt_3()
-                    .font_family("DejaVu Sans Mono")
+            .p_3()
+            .flex()
+            .flex_col();
+        let file = selected.and_then(|index| binding.changed_files.get(index));
+        let has_base = file.is_some_and(|f| f.old_path.is_some());
+        let has_head = file.is_some_and(|f| f.new_path.is_some());
+        let mut source_toolbar = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(section_title("Pinned source", p));
+        for (label, revision, enabled) in [
+            ("Base", Revision::Base, has_base),
+            ("Head", Revision::Head, has_head),
+        ] {
+            if enabled {
+                source_toolbar = source_toolbar.child(
+                    button(
+                        &format!("source-side-{label}"),
+                        label,
+                        p,
+                        move |this, _, _, cx| {
+                            let index = this.selected_file.unwrap_or(0);
+                            let line = this
+                                .source_ref
+                                .as_ref()
+                                .map(|source| source.start_line)
+                                .unwrap_or(1);
+                            this.select_source_line(index, revision, line, cx);
+                        },
+                        cx,
+                    )
                     .text_size(px(12.))
-                    .whitespace_nowrap()
-                    .child(text),
+                    .text_color(rgb(if self.source_revision == revision {
+                        p.text
+                    } else {
+                        p.muted
+                    })),
+                );
+            }
+        }
+        source = source.child(source_toolbar);
+        if let Some(label) = self.source_label.clone() {
+            source = source.child(
+                div()
+                    .mt_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(label),
             );
-        } else if self.source_label.is_none() {
-            source = source.child(div().mt_3().text_color(rgb(p.muted)).child("Source excerpts are read from the prepared base/head commit blobs, never the working tree."));
-        } else if self.source_loading {
+        } else {
+            source = source.child(
+                div()
+                    .mt_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child("Select a diff line to inspect its exact pinned blob line."),
+            );
+        }
+        if self.source_loading {
             source = source.child(
                 div()
                     .mt_3()
                     .text_color(rgb(p.muted))
-                    .child("Loading the pinned source excerpt…"),
+                    .child("Loading source from the pinned commit…"),
             );
-        } else if self.source_text.is_none() {
-            source = source.child(
-                div()
-                    .mt_3()
-                    .text_color(rgb(p.muted))
-                    .child("The selected entry has no readable anchored range yet."),
-            );
+        } else if let (Some(text), Some(source_ref)) = (&self.source_text, &self.source_ref) {
+            let extension = path_extension(&source_ref.path);
+            let mut source_rows = div().mt_3().flex().flex_col().gap_0();
+            for (offset, line) in text.lines().enumerate() {
+                let number = source_ref.start_line.saturating_add(offset as u32);
+                source_rows = source_rows.child(render_source_row(number, line, extension, p));
+            }
+            source = source.child(source_rows);
         }
         div()
             .id("changes-panes")
             .flex()
-            .gap_0()
-            .h(px(500.))
+            .gap_2()
+            .h(px(pane_height))
             .min_h(px(360.))
             .child(file_list)
+            .child(diff)
             .child(
                 div()
                     .id("changes-divider")
@@ -1172,6 +1730,347 @@ impl Product {
             }))
             .child(text.to_owned())
     }
+}
+
+fn source_title(source: &SourceRef) -> String {
+    let side = match source.revision {
+        Revision::Base => "Base",
+        Revision::Head => "Head",
+    };
+    if source.start_line == source.end_line {
+        format!("{side} · {}:{}", source.path, source.start_line)
+    } else {
+        format!(
+            "{side} · {}:{}–{}",
+            source.path, source.start_line, source.end_line
+        )
+    }
+}
+
+fn path_extension(path: &str) -> &str {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+}
+
+fn markdown_excerpt(blocks: &[MarkdownBlock], limit: usize) -> String {
+    let text = blocks
+        .iter()
+        .filter(|block| block.kind != MarkdownBlockKind::PlainHtml)
+        .map(|block| block.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.chars().count() <= limit {
+        text
+    } else {
+        format!("{}…", text.chars().take(limit).collect::<String>())
+    }
+}
+
+fn render_markdown_block(block: &MarkdownBlock, index: usize, p: Palette) -> Stateful<Div> {
+    let base = div().id(("description-block", index));
+    match &block.kind {
+        MarkdownBlockKind::Heading(level) => base
+            .text_size(px((22. - f32::from(*level) * 1.3).max(15.)))
+            .font_weight(FontWeight::BOLD)
+            .text_color(rgb(p.text))
+            .child(block.text.clone()),
+        MarkdownBlockKind::Paragraph => base.text_color(rgb(p.text)).child(block.text.clone()),
+        MarkdownBlockKind::Quote => base
+            .pl_3()
+            .border_l_2()
+            .border_color(rgb(p.accent))
+            .text_color(rgb(p.muted))
+            .child(block.text.clone()),
+        MarkdownBlockKind::ListItem => base
+            .pl_3()
+            .text_color(rgb(p.text))
+            .child(block.text.clone()),
+        MarkdownBlockKind::Code(language) => {
+            let mut content = div()
+                .p_3()
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.raised))
+                .font_family("DejaVu Sans Mono")
+                .text_size(px(12.));
+            if !language.is_empty() {
+                content = content.child(
+                    div()
+                        .mb_2()
+                        .text_size(px(10.))
+                        .text_color(rgb(p.muted))
+                        .child(language.clone()),
+                );
+            }
+            content = content.child(code_text(&block.text, language, p));
+            base.child(content)
+        }
+        MarkdownBlockKind::Table => base
+            .font_family("DejaVu Sans Mono")
+            .text_size(px(12.))
+            .text_color(rgb(p.text))
+            .child(block.text.clone()),
+        MarkdownBlockKind::PlainHtml => base
+            .p_2()
+            .bg(rgb(p.raised))
+            .font_family("DejaVu Sans Mono")
+            .text_size(px(11.))
+            .text_color(rgb(p.muted))
+            .child(block.text.clone()),
+        MarkdownBlockKind::Rule => base.text_color(rgb(p.border)).child(block.text.clone()),
+    }
+}
+
+fn code_text(text: &str, language: &str, p: Palette) -> StyledText {
+    let highlights = syntax_spans(text, language)
+        .into_iter()
+        .map(|span| {
+            let color = match span.kind {
+                bodh_sequence_spike::SyntaxTokenKind::Keyword => 0x8ccecb,
+                bodh_sequence_spike::SyntaxTokenKind::String => 0xa6c98c,
+                bodh_sequence_spike::SyntaxTokenKind::Comment => 0x8391a5,
+                bodh_sequence_spike::SyntaxTokenKind::Number => 0xe5b37a,
+            };
+            (
+                span.start..span.end,
+                HighlightStyle::color(rgb(color).into()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let _ = p;
+    StyledText::new(text.to_owned()).with_highlights(highlights)
+}
+
+fn render_diff_gutter(row: &DiffLine) -> String {
+    let old = row
+        .old_line
+        .map(|line| line.to_string())
+        .unwrap_or_default();
+    let new = row
+        .new_line
+        .map(|line| line.to_string())
+        .unwrap_or_default();
+    format!("{old:>5} {new:>5}  ")
+}
+
+fn diff_row_color(kind: DiffLineKind, p: Palette) -> (u32, u32) {
+    match kind {
+        DiffLineKind::Addition => (
+            if p.canvas == CANVAS_DARK {
+                0x20352c
+            } else {
+                0xe9f5eb
+            },
+            if p.canvas == CANVAS_DARK {
+                0xb5e3bf
+            } else {
+                0x245331
+            },
+        ),
+        DiffLineKind::Deletion => (
+            if p.canvas == CANVAS_DARK {
+                0x3b292d
+            } else {
+                0xfbeaea
+            },
+            if p.canvas == CANVAS_DARK {
+                0xffc1c3
+            } else {
+                0x7e292c
+            },
+        ),
+        DiffLineKind::Hunk => (p.raised, p.accent),
+        DiffLineKind::Header => (p.panel, p.muted),
+        DiffLineKind::Context => (p.panel, p.text),
+        DiffLineKind::Meta => (p.panel, p.muted),
+    }
+}
+
+fn row_source(row: &DiffLine, fallback: Revision) -> Option<(Revision, u32)> {
+    match row.kind {
+        DiffLineKind::Addition => row.new_line.map(|line| (Revision::Head, line)),
+        DiffLineKind::Deletion => row.old_line.map(|line| (Revision::Base, line)),
+        DiffLineKind::Context => match fallback {
+            Revision::Base => row.old_line.map(|line| (Revision::Base, line)),
+            Revision::Head => row.new_line.map(|line| (Revision::Head, line)),
+        },
+        _ => None,
+    }
+}
+
+fn render_unified_diff_row(
+    index: usize,
+    row: &DiffLine,
+    file_index: usize,
+    fallback: Revision,
+    language: &str,
+    p: Palette,
+    owner: &WeakEntity<Product>,
+) -> Stateful<Div> {
+    let (background, foreground) = diff_row_color(row.kind, p);
+    let content = if matches!(
+        row.kind,
+        DiffLineKind::Addition | DiffLineKind::Deletion | DiffLineKind::Context
+    ) {
+        code_text(&row.content, language, p)
+    } else {
+        StyledText::new(row.content.clone())
+    };
+    let mut element = div()
+        .id(("diff-row", index))
+        .h(px(24.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .whitespace_nowrap()
+        .bg(rgb(background))
+        .text_color(rgb(foreground))
+        .font_family("DejaVu Sans Mono")
+        .text_size(px(11.))
+        .child(
+            div()
+                .w(px(90.))
+                .flex_shrink_0()
+                .text_color(rgb(p.muted))
+                .child(render_diff_gutter(row)),
+        )
+        .child(content);
+    if let Some((revision, line)) = row_source(row, fallback) {
+        let owner = owner.clone();
+        element = element.cursor_pointer().on_click(move |_, window, app| {
+            let _ = owner.update(app, |this, cx| {
+                window.focus(&this.focus);
+                this.select_source_line(file_index, revision, line, cx);
+            });
+        });
+    }
+    element
+}
+
+fn render_split_diff_row(
+    index: usize,
+    row: &bodh_sequence_spike::SplitDiffRow,
+    file_index: usize,
+    language: &str,
+    p: Palette,
+    owner: &WeakEntity<Product>,
+) -> Stateful<Div> {
+    let left_cell = render_split_cell(
+        index * 2,
+        row.left.as_ref(),
+        file_index,
+        Revision::Base,
+        language,
+        p,
+        owner,
+    );
+    let right_cell = render_split_cell(
+        index * 2 + 1,
+        row.right.as_ref(),
+        file_index,
+        Revision::Head,
+        language,
+        p,
+        owner,
+    );
+    div()
+        .id(("split-diff-row", index))
+        .h(px(24.))
+        .flex_shrink_0()
+        .flex()
+        .child(left_cell)
+        .child(right_cell)
+}
+
+fn render_split_cell(
+    id: usize,
+    row: Option<&DiffLine>,
+    file_index: usize,
+    revision: Revision,
+    language: &str,
+    p: Palette,
+    owner: &WeakEntity<Product>,
+) -> Stateful<Div> {
+    let Some(row) = row else {
+        return div().id(("split-empty", id)).flex_1().h(px(24.));
+    };
+    let (background, foreground) = diff_row_color(row.kind, p);
+    let line = match revision {
+        Revision::Base => row.old_line,
+        Revision::Head => row.new_line,
+    };
+    let number = line.map(|line| line.to_string()).unwrap_or_default();
+    let content = if matches!(
+        row.kind,
+        DiffLineKind::Addition | DiffLineKind::Deletion | DiffLineKind::Context
+    ) {
+        code_text(&row.content, language, p)
+    } else {
+        StyledText::new(row.content.clone())
+    };
+    let mut element = div()
+        .id(("split-diff-cell", id))
+        .flex_1()
+        .min_w_0()
+        .h(px(24.))
+        .flex()
+        .items_center()
+        .whitespace_nowrap()
+        .overflow_hidden()
+        .bg(rgb(background))
+        .text_color(rgb(foreground))
+        .font_family("DejaVu Sans Mono")
+        .text_size(px(11.))
+        .child(
+            div()
+                .w(px(42.))
+                .flex_shrink_0()
+                .text_color(rgb(p.muted))
+                .child(number),
+        )
+        .child(content);
+    if let Some(line) = line
+        && matches!(
+            row.kind,
+            DiffLineKind::Addition | DiffLineKind::Deletion | DiffLineKind::Context
+        )
+    {
+        let owner = owner.clone();
+        element = element.cursor_pointer().on_click(move |_, window, app| {
+            let _ = owner.update(app, |this, cx| {
+                window.focus(&this.focus);
+                this.select_source_line(file_index, revision, line, cx);
+            });
+        });
+    }
+    element
+}
+
+fn render_source_row(line_number: u32, text: &str, language: &str, p: Palette) -> Stateful<Div> {
+    div()
+        .id(("source-line", line_number))
+        .h(px(22.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .whitespace_nowrap()
+        .font_family("DejaVu Sans Mono")
+        .text_size(px(11.))
+        .child(
+            div()
+                .w(px(42.))
+                .flex_shrink_0()
+                .text_right()
+                .mr_3()
+                .text_color(rgb(p.muted))
+                .child(line_number.to_string()),
+        )
+        .child(code_text(text, language, p))
 }
 
 fn button(
