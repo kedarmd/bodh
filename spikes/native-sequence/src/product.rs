@@ -286,6 +286,37 @@ impl Product {
         self.load_pull_requests(path, cx);
     }
 
+    fn choose_repository_folder(&mut self, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose Repository".into()),
+        });
+        let weak = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| match prompt.await {
+            Ok(Ok(Some(paths))) => {
+                if let Some(path) = paths.first() {
+                    let path = path.to_string_lossy().into_owned();
+                    let _ = weak.update(cx, |this, cx| {
+                        this.repository_input = path;
+                        this.error = None;
+                        this.status = None;
+                        cx.notify();
+                    });
+                }
+            }
+            Ok(Ok(None)) | Err(_) => {}
+            Ok(Err(error)) => {
+                let _ = weak.update(cx, |this, cx| {
+                    this.error = Some(format!("Could not open the folder picker: {error}"));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
     fn refresh_gh_cli(&mut self, cx: &mut Context<Self>) {
         let token = self.gh_check_epoch.fetch_add(1, Ordering::Relaxed) + 1;
         let epoch = self.gh_check_epoch.clone();
@@ -1436,11 +1467,15 @@ impl Product {
                             } else if key == "enter" {
                                 let value = this.repository_input.clone();
                                 this.open_repository(value, cx);
-                            } else if key.chars().count() == 1
-                                && !event.keystroke.modifiers.control
-                                && !event.keystroke.modifiers.platform
+                            } else if let Some(text) =
+                                bodh_sequence_spike::repository_input::typed_text(
+                                    key,
+                                    event.keystroke.key_char.as_deref(),
+                                    event.keystroke.modifiers.control,
+                                    event.keystroke.modifiers.platform,
+                                )
                             {
-                                this.repository_input.push_str(key);
+                                this.repository_input.push_str(text);
                             }
                             cx.notify();
                         }))
@@ -1449,6 +1484,13 @@ impl Product {
                             cx.listener(|this, _, window, _| window.focus(&this.search_focus)),
                         ),
                 )
+                .child(button(
+                    "choose-repository-folder",
+                    "Choose Folder",
+                    p,
+                    |this, _, _, cx| this.choose_repository_folder(cx),
+                    cx,
+                ))
                 .child(button(
                     "open-repository",
                     "Open Repository",
