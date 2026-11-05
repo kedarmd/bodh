@@ -184,6 +184,89 @@ fn reply_and_thread_intent_persist_as_distinct_unpublished_work() {
 }
 
 #[test]
+fn confirmed_discussion_marker_hides_only_its_exact_draft_revision() {
+    let (_root, state, prep) = populated();
+    let mut store = DraftStore::open(&state).unwrap();
+    let initial = store.list(&prep).unwrap();
+    let reply = store
+        .save_reply(
+            &prep,
+            None,
+            "thread-1",
+            "comment-root",
+            "Published reply",
+            initial.workspace_revision,
+            0,
+        )
+        .unwrap();
+    let action = store
+        .stage_thread_action(
+            &prep,
+            None,
+            "thread-1",
+            bodh::ThreadAction::Resolve,
+            reply.workspace_revision,
+            0,
+        )
+        .unwrap();
+    let db = rusqlite::Connection::open(&state).unwrap();
+    let context_id: String = db
+        .query_row(
+            "SELECT context_id FROM preparations WHERE preparation_id=?1",
+            [&prep],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db
+        .execute_batch(
+            "CREATE TABLE discussion_published_replies(plan_id TEXT,preparation_id TEXT,context_id TEXT,draft_id TEXT,draft_revision INTEGER,step_id TEXT);
+             CREATE TABLE discussion_published_thread_actions(plan_id TEXT,preparation_id TEXT,context_id TEXT,draft_id TEXT,draft_revision INTEGER,step_id TEXT);",
+        )
+        .unwrap();
+    db.execute(
+        "INSERT INTO discussion_published_replies VALUES('plan',?1,?2,?3,?4,'reply-step')",
+        rusqlite::params![
+            prep,
+            context_id,
+            reply.reply.id,
+            reply.reply.revision as i64
+        ],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO discussion_published_thread_actions VALUES('plan',?1,?2,?3,?4,'action-step')",
+        rusqlite::params![
+            prep,
+            context_id,
+            action.action.id,
+            action.action.revision as i64
+        ],
+    )
+    .unwrap();
+    let published = store.list(&prep).unwrap();
+    assert!(published.reply_drafts.is_empty());
+    assert!(published.thread_actions.is_empty());
+    assert_eq!(published.counts.replies, 0);
+    assert_eq!(published.counts.thread_intents, 0);
+    let edited = store
+        .save_reply(
+            &prep,
+            Some(&reply.reply.id),
+            "thread-1",
+            "comment-root",
+            "New revision remains unpublished",
+            published.workspace_revision,
+            reply.reply.revision,
+        )
+        .unwrap();
+    let visible = store.list(&prep).unwrap();
+    assert_eq!(edited.reply.revision, 2);
+    assert_eq!(visible.reply_drafts.len(), 1);
+    assert_eq!(visible.reply_drafts[0].revision, 2);
+    assert!(visible.thread_actions.is_empty());
+}
+
+#[test]
 fn stale_revision_and_remote_permission_loss_reject_without_mutating_pending_work() {
     let (root, state, prep) = populated();
     let mut first = DraftStore::open(&state).unwrap();

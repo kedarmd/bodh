@@ -533,7 +533,12 @@ impl DraftStore {
                 updated_at,
             });
         }
-        let mut reply_statement = self.db.prepare("SELECT draft_id,thread_id,root_comment_id,body,revision,created_at,updated_at FROM reply_drafts WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5 ORDER BY created_at,draft_id").map_err(db_error)?;
+        let reply_query = if table_exists(&self.db, "discussion_published_replies")? {
+            "SELECT draft_id,thread_id,root_comment_id,body,revision,created_at,updated_at FROM reply_drafts d WHERE d.host=?1 AND d.owner=?2 AND d.repository=?3 AND d.number=?4 AND d.context_id=?5 AND NOT EXISTS (SELECT 1 FROM discussion_published_replies p WHERE p.context_id=d.context_id AND p.draft_id=d.draft_id AND p.draft_revision=d.revision) ORDER BY d.created_at,d.draft_id"
+        } else {
+            "SELECT draft_id,thread_id,root_comment_id,body,revision,created_at,updated_at FROM reply_drafts WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5 ORDER BY created_at,draft_id"
+        };
+        let mut reply_statement = self.db.prepare(reply_query).map_err(db_error)?;
         let reply_rows = reply_statement
             .query_map(
                 params![
@@ -559,7 +564,12 @@ impl DraftStore {
         let reply_drafts = reply_rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(db_error)?;
-        let mut action_statement=self.db.prepare("SELECT draft_id,thread_id,action,observed_resolved,revision,created_at,updated_at FROM thread_action_drafts WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5 ORDER BY created_at,draft_id").map_err(db_error)?;
+        let action_query = if table_exists(&self.db, "discussion_published_thread_actions")? {
+            "SELECT draft_id,thread_id,action,observed_resolved,revision,created_at,updated_at FROM thread_action_drafts d WHERE d.host=?1 AND d.owner=?2 AND d.repository=?3 AND d.number=?4 AND d.context_id=?5 AND NOT EXISTS (SELECT 1 FROM discussion_published_thread_actions p WHERE p.context_id=d.context_id AND p.draft_id=d.draft_id AND p.draft_revision=d.revision) ORDER BY d.created_at,d.draft_id"
+        } else {
+            "SELECT draft_id,thread_id,action,observed_resolved,revision,created_at,updated_at FROM thread_action_drafts WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5 ORDER BY created_at,draft_id"
+        };
+        let mut action_statement = self.db.prepare(action_query).map_err(db_error)?;
         let action_rows = action_statement
             .query_map(
                 params![
@@ -1360,6 +1370,15 @@ fn unix_millis() -> i64 {
         .unwrap_or_default()
         .as_millis()
         .min(i64::MAX as u128) as i64
+}
+
+fn table_exists(db: &Connection, table: &str) -> Result<bool, ContractError> {
+    db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+        [table],
+        |row| row.get(0),
+    )
+    .map_err(db_error)
 }
 
 fn db_error(_: rusqlite::Error) -> ContractError {

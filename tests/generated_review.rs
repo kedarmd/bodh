@@ -311,6 +311,296 @@ fn an_unpublished_replacement_blocks_changed_results() {
 }
 
 #[test]
+fn an_explicit_replacement_approval_is_bound_to_the_candidate_and_clears_only_its_drafts() {
+    let fixture = Fixture::new();
+    let store = GeneratedReviewStore::open(&fixture.state).unwrap();
+    let control = OperationControl::default();
+    store
+        .commit(&fixture.preparation_id, 0, &fixture.result(), &control)
+        .unwrap();
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    drafts
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &SourceRef {
+                path: "src.rs".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1,
+            },
+            "after\n",
+            "proposed\n",
+            1,
+            0,
+            &control,
+        )
+        .unwrap();
+    let mut changed: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    changed["coverage"]["limitations"] = json!(["Approved replacement"]);
+    let input = serde_json::to_vec(&changed).unwrap();
+
+    let approval = store
+        .authorize_replacement(&fixture.preparation_id, 2, &input, &control, |preview| {
+            assert_eq!(preview.pull_request_number, 27);
+            assert_eq!(preview.code_replacements, 1);
+            assert_eq!(preview.workspace_revision, 2);
+            Ok(true)
+        })
+        .unwrap();
+    let committed = store
+        .commit_authorized(&fixture.preparation_id, 2, &input, &approval.id, &control)
+        .unwrap();
+    assert_eq!(committed.status, "committed");
+    assert_eq!(committed.generation, 3);
+    assert!(
+        drafts
+            .list_replacements(&fixture.preparation_id)
+            .unwrap()
+            .drafts
+            .is_empty()
+    );
+    assert!(store.current(&fixture.preparation_id).unwrap().is_some());
+}
+
+#[test]
+fn replacement_approval_is_one_use_and_rejects_a_different_candidate() {
+    let fixture = Fixture::new();
+    let store = GeneratedReviewStore::open(&fixture.state).unwrap();
+    let control = OperationControl::default();
+    store
+        .commit(&fixture.preparation_id, 0, &fixture.result(), &control)
+        .unwrap();
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    let snapshot = drafts.list(&fixture.preparation_id).unwrap();
+    drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "Keep pending reviewer work.",
+            &SourceRef {
+                path: "src.rs".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1,
+            },
+            snapshot.workspace_revision,
+            0,
+            &control,
+        )
+        .unwrap();
+    let mut first: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    first["coverage"]["limitations"] = json!(["first candidate"]);
+    let first = serde_json::to_vec(&first).unwrap();
+    let approval = store
+        .authorize_replacement(&fixture.preparation_id, 2, &first, &control, |_| Ok(true))
+        .unwrap();
+    let mut other: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    other["coverage"]["limitations"] = json!(["different candidate"]);
+    let invalid = store
+        .commit_authorized(
+            &fixture.preparation_id,
+            2,
+            &serde_json::to_vec(&other).unwrap(),
+            &approval.id,
+            &control,
+        )
+        .unwrap_err();
+    assert_eq!(invalid.code, "APPROVAL_INVALID");
+    assert_eq!(
+        drafts.list(&fixture.preparation_id).unwrap().drafts.len(),
+        1
+    );
+    store
+        .commit_authorized(&fixture.preparation_id, 2, &first, &approval.id, &control)
+        .unwrap();
+
+    let after = drafts.list(&fixture.preparation_id).unwrap();
+    drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "A later reviewer note.",
+            &SourceRef {
+                path: "src.rs".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1,
+            },
+            after.workspace_revision,
+            0,
+            &control,
+        )
+        .unwrap();
+    let mut later: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    later["coverage"]["limitations"] = json!(["later candidate"]);
+    let spent = store
+        .commit_authorized(
+            &fixture.preparation_id,
+            4,
+            &serde_json::to_vec(&later).unwrap(),
+            &approval.id,
+            &control,
+        )
+        .unwrap_err();
+    assert_eq!(spent.code, "APPROVAL_ALREADY_USED");
+    assert_eq!(
+        drafts.list(&fixture.preparation_id).unwrap().drafts.len(),
+        1
+    );
+}
+
+#[test]
+fn declined_replacement_approval_does_not_change_result_or_work() {
+    let fixture = Fixture::new();
+    let store = GeneratedReviewStore::open(&fixture.state).unwrap();
+    let control = OperationControl::default();
+    let original = store
+        .commit(&fixture.preparation_id, 0, &fixture.result(), &control)
+        .unwrap();
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    let initial = drafts.list(&fixture.preparation_id).unwrap();
+    drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "Do not discard this note.",
+            &SourceRef {
+                path: "src.rs".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1,
+            },
+            initial.workspace_revision,
+            0,
+            &control,
+        )
+        .unwrap();
+    let mut changed: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    changed["coverage"]["limitations"] = json!(["declined candidate"]);
+    let declined = store
+        .authorize_replacement(
+            &fixture.preparation_id,
+            2,
+            &serde_json::to_vec(&changed).unwrap(),
+            &control,
+            |_| Ok(false),
+        )
+        .unwrap_err();
+    assert_eq!(declined.code, "APPROVAL_DECLINED");
+    assert_eq!(
+        store
+            .current(&fixture.preparation_id)
+            .unwrap()
+            .unwrap()
+            .result,
+        original.result
+    );
+    assert_eq!(
+        drafts.list(&fixture.preparation_id).unwrap().drafts.len(),
+        1
+    );
+}
+
+#[test]
+fn replacement_approval_expires_when_a_protected_draft_revision_changes() {
+    let fixture = Fixture::new();
+    let store = GeneratedReviewStore::open(&fixture.state).unwrap();
+    let control = OperationControl::default();
+    store
+        .commit(&fixture.preparation_id, 0, &fixture.result(), &control)
+        .unwrap();
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    let initial = drafts.list(&fixture.preparation_id).unwrap();
+    let draft = drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "Original note.",
+            &SourceRef {
+                path: "src.rs".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1,
+            },
+            initial.workspace_revision,
+            0,
+            &control,
+        )
+        .unwrap();
+    let mut changed: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    changed["coverage"]["limitations"] = json!(["candidate"]);
+    let candidate = serde_json::to_vec(&changed).unwrap();
+    let approval = store
+        .authorize_replacement(&fixture.preparation_id, 2, &candidate, &control, |_| {
+            Ok(true)
+        })
+        .unwrap();
+    drafts
+        .save(
+            &fixture.preparation_id,
+            Some(&draft.draft.id),
+            "Edited after approval.",
+            &draft.draft.source,
+            2,
+            draft.draft.revision,
+            &control,
+        )
+        .unwrap();
+    let stale = store
+        .commit_authorized(
+            &fixture.preparation_id,
+            3,
+            &candidate,
+            &approval.id,
+            &control,
+        )
+        .unwrap_err();
+    assert_eq!(stale.code, "APPROVAL_STALE");
+    assert_eq!(
+        drafts.list(&fixture.preparation_id).unwrap().drafts[0].body,
+        "Edited after approval."
+    );
+}
+
+#[test]
+fn unresolved_publication_payload_blocks_replacement_authorization() {
+    let fixture = Fixture::new();
+    let store = GeneratedReviewStore::open(&fixture.state).unwrap();
+    let control = OperationControl::default();
+    store
+        .commit(&fixture.preparation_id, 0, &fixture.result(), &control)
+        .unwrap();
+    let db = rusqlite::Connection::open(&fixture.state).unwrap();
+    db.execute(
+        "INSERT INTO review_operations(operation_id,preparation_id,fingerprint,state,payload_json,created_at,updated_at)
+         VALUES('unknown-op',?1,'fp','unknown','{\"immutable\":\"payload\"}',1,1)",
+        [&fixture.preparation_id],
+    )
+    .unwrap();
+    let mut changed: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    changed["coverage"]["limitations"] = json!(["candidate"]);
+    let blocked = store
+        .authorize_replacement(
+            &fixture.preparation_id,
+            1,
+            &serde_json::to_vec(&changed).unwrap(),
+            &control,
+            |_| panic!("must not prompt while publication outcome is unknown"),
+        )
+        .unwrap_err();
+    assert_eq!(blocked.code, "PUBLICATION_RECOVERY_REQUIRED");
+    let retained: String = db
+        .query_row(
+            "SELECT payload_json FROM review_operations WHERE operation_id='unknown-op'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(retained, "{\"immutable\":\"payload\"}");
+}
+
+#[test]
 fn a_staged_grouped_review_intent_blocks_changed_results() {
     let fixture = Fixture::new();
     let store = GeneratedReviewStore::open(&fixture.state).unwrap();
@@ -475,4 +765,12 @@ fn cli_rejects_invalid_full_result_without_writing() {
         store.workspace_generation(&fixture.preparation_id).unwrap(),
         0
     );
+}
+
+#[test]
+fn cli_replacement_authorization_requires_a_terminal() {
+    let fixture = Fixture::new();
+    let (authorized, output) = fixture.cli("authorize-replacement", &fixture.result(), 0);
+    assert!(!authorized);
+    assert_eq!(output["code"], "APPROVAL_TTY_REQUIRED");
 }
