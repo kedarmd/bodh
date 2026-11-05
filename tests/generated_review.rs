@@ -327,6 +327,8 @@ fn a_staged_grouped_review_intent_blocks_changed_results() {
             expected_intent_revision: 0,
             selected: vec![],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("Preserve this staged review summary.".into()),
             event: None,
         })
