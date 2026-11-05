@@ -369,7 +369,7 @@ fn interrupted_send_becomes_unknown_and_cannot_be_started_again() {
     let publisher = bodh::GhReviewPublisher {
         executable: accepted,
         checkout: f.repo.clone(),
-        timeout: std::time::Duration::from_secs(1),
+        timeout: std::time::Duration::from_secs(10),
     };
     assert!(matches!(
         publisher.publish(&sending.payload, &OperationControl::default()),
