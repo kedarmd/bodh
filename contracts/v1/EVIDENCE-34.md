@@ -20,6 +20,12 @@
 - `CARGO_BUILD_JOBS=2 cargo test --locked --test discussion_drafts` passes (5 tests).
 - Integrated `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passes after resolving a lock-ordering regression in load-latest approval consumption; full output is [VALIDATE-34-final.log](VALIDATE-34-final.log). The exact freshness regression test passed five repeated runs, then the full freshness target passed (5 tests).
 
+## Exact-object and recovery references
+
+- `tests/evidence.rs::historical_source_reads_exact_commit_and_reports_missing_objects` reads source only from the requested immutable commit and returns `GIT_OBJECT_UNAVAILABLE` for a missing object. The evidence service does not fall back to current checkout files.
+- `tests/manual_review.rs::interrupted_send_becomes_unknown_and_cannot_be_started_again` and `tests/discussion_publication.rs::interrupted_sending_step_becomes_unknown_and_cannot_be_retried` reload unresolved publication records as `unknown` and reject blind retries. The payload/journal records remain available for explicit reconciliation.
+- These existing service tests establish unavailable-object behavior and recovery-record retention. They do not simulate deleting a previously available Git object or run the full prepare/import/follow-up/publication/restart flow under forced eviction.
+
 ## Limits
 
 - The bounded policy is scoped to discussion cache history per preparation. Preparation rows and contexts are not globally evicted because drafts, generated results, and publication recovery do not share a complete safe reference/retention index yet. Human drafts, current generated results, compact prior concerns, and unresolved publication payloads remain preserved; this means total database size is not yet globally bounded.
