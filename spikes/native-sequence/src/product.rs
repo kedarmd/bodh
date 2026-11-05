@@ -4488,9 +4488,7 @@ impl Product {
             WorkspaceTab::Changes => self
                 .render_changes(&binding, p, cx, viewport_width)
                 .into_any_element(),
-            WorkspaceTab::Findings => self
-                .render_findings(&binding, p, cx, viewport_width)
-                .into_any_element(),
+            WorkspaceTab::Findings => self.render_findings(&binding, p, cx).into_any_element(),
         };
         page.child(panel)
     }
@@ -5242,7 +5240,6 @@ impl Product {
         binding: &PreparedBinding,
         p: Palette,
         cx: &mut Context<Self>,
-        viewport_width: f32,
     ) -> impl IntoElement {
         let current = self
             .committed_overview
@@ -5300,8 +5297,6 @@ impl Product {
             })
             .or_else(|| prioritized.first().copied());
         let selected_id = selected_index.map(|index| review.result.findings[index].id.clone());
-        let inspector_width = 340.;
-
         let mut list = div()
             .id("finding-list")
             .w(px(310.))
@@ -5348,8 +5343,8 @@ impl Product {
                 .gap_1()
                 .p_2()
                 .border_1()
-                .border_color(rgb(if selected { p.border } else { p.canvas }))
-                .bg(rgb(if selected { p.selection } else { p.canvas }))
+                .border_color(rgb(p.border))
+                .bg(rgb(if selected { p.selection } else { p.panel }))
                 .child(status_badge(
                     &format!("{:?}", finding.severity),
                     severity_color(&finding.severity, p),
@@ -5391,7 +5386,14 @@ impl Product {
             .filter(|row| !row.prominence.is_prominent())
             .collect::<Vec<_>>();
         if !unresolved.is_empty() || !resolved.is_empty() {
-            list = list.child(section_title("Follow-up", p));
+            list = list.child(
+                div()
+                    .mt_2()
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(rgb(p.border))
+                    .child(section_title("Follow-up", p)),
+            );
             for (index, row) in unresolved.iter().enumerate() {
                 let status = row.prominence.label();
                 if let Some(finding) = row.current_finding {
@@ -5402,6 +5404,9 @@ impl Product {
                             .flex_col()
                             .gap_1()
                             .p_2()
+                            .border_1()
+                            .border_color(rgb(p.border))
+                            .bg(rgb(p.panel))
                             .child(status_badge(status, follow_up_color(row.prominence, p)))
                             .child(
                                 button(
@@ -5422,6 +5427,9 @@ impl Product {
                             .flex_col()
                             .gap_1()
                             .p_2()
+                            .border_1()
+                            .border_color(rgb(p.border))
+                            .bg(rgb(p.panel))
                             .child(status_badge(status, follow_up_color(row.prominence, p)))
                             .child(row.concern.title.clone()),
                     );
@@ -5457,7 +5465,8 @@ impl Product {
                         cx,
                     )
                     .w_full()
-                    .text_left(),
+                    .text_left()
+                    .mt_2(),
                 );
                 if resolved_expanded {
                     let mut resolved_list = div().flex().flex_col().gap_2();
@@ -5467,6 +5476,10 @@ impl Product {
                                 .flex()
                                 .flex_col()
                                 .gap_1()
+                                .p_2()
+                                .border_1()
+                                .border_color(rgb(p.border))
+                                .bg(rgb(p.panel))
                                 .child(status_badge(
                                     row.prominence.label(),
                                     follow_up_color(row.prominence, p),
@@ -5501,7 +5514,7 @@ impl Product {
         let mut detail = div()
             .id("finding-detail")
             .flex_1()
-            .min_w(px(430.))
+            .min_w_0()
             .min_h_0()
             .h_full()
             .overflow_scroll()
@@ -5602,6 +5615,180 @@ impl Product {
                         )),
                 );
             }
+
+            let mut source_panel = div()
+                .id("finding-source-context")
+                .mt_1()
+                .p_3()
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.canvas))
+                .flex()
+                .flex_col()
+                .gap_2();
+            let source_header = div().flex().items_center().justify_between().gap_3().child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(p.muted))
+                            .child("SOURCE CODE"),
+                    )
+                    .child(
+                        div().text_size(px(12.)).text_color(rgb(p.muted)).child(
+                            self.finding_prior_source
+                                .as_ref()
+                                .map(|prior| {
+                                    format!(
+                                        "Prior revision · {}:{}–{} · {}",
+                                        prior.source.path,
+                                        prior.source.start_line,
+                                        prior.source.end_line,
+                                        short_sha(&prior.commit_sha)
+                                    )
+                                })
+                                .or_else(|| {
+                                    self.finding_source.as_ref().map(|source| {
+                                        format!(
+                                            "{} · {}:{}–{}",
+                                            match source.revision {
+                                                Revision::Base => "Base",
+                                                Revision::Head => "Head",
+                                            },
+                                            source.path,
+                                            source.start_line,
+                                            source.end_line
+                                        )
+                                    })
+                                })
+                                .unwrap_or_else(|| "Select evidence to read its source".into()),
+                        ),
+                    ),
+            );
+            let source_header = if let Some(source) = self.finding_source.clone() {
+                source_header.child(link_button(
+                    "open-finding-source-in-changes",
+                    "Open in Changes →",
+                    p,
+                    move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
+                    cx,
+                ))
+            } else {
+                source_header
+            };
+            source_panel = source_panel.child(source_header);
+
+            if let Some(preview) = self.prior_source_preview.as_ref() {
+                if preview.loading {
+                    source_panel = source_panel.child(
+                        div()
+                            .text_color(rgb(p.muted))
+                            .child("Reading the exact prior revision…"),
+                    );
+                }
+                if let Some(error) = &preview.error {
+                    source_panel =
+                        source_panel.child(empty_card("Prior source unavailable", error, p));
+                }
+                if let (Some(text), Some(prior)) =
+                    (preview.text.as_ref(), self.finding_prior_source.as_ref())
+                {
+                    let mut rows = div().flex().flex_col();
+                    for (offset, line) in text.lines().enumerate() {
+                        let number = prior.source.start_line.saturating_add(offset as u32);
+                        let selected =
+                            (prior.source.start_line..=prior.source.end_line).contains(&number);
+                        rows = rows.child(render_source_row(
+                            number,
+                            line,
+                            path_extension(&prior.source.path),
+                            p,
+                            selected,
+                        ));
+                    }
+                    source_panel = source_panel.child(
+                        div()
+                            .id("finding-prior-source-code")
+                            .max_h(px(420.))
+                            .overflow_scroll()
+                            .child(rows),
+                    );
+                }
+            } else if self.finding_source_loading {
+                source_panel = source_panel.child(
+                    div()
+                        .text_color(rgb(p.muted))
+                        .child("Reading source from the selected revision…"),
+                );
+            } else if let Some(error) = self.finding_source_error.as_ref() {
+                source_panel = source_panel.child(empty_card("Source unavailable", error, p));
+            } else if let (Some(text), Some(display), Some(source)) = (
+                self.finding_source_text.as_ref(),
+                self.finding_source_display.as_ref(),
+                self.finding_source.as_ref(),
+            ) {
+                let extension = path_extension(&display.path);
+                let mut rows = div().flex().flex_col();
+                for (offset, line) in text.lines().enumerate() {
+                    let number = display.start_line.saturating_add(offset as u32);
+                    let selected = (source.start_line..=source.end_line).contains(&number);
+                    rows = rows.child(render_source_row(number, line, extension, p, selected));
+                }
+                source_panel = source_panel.child(
+                    div()
+                        .id("finding-source-code")
+                        .track_scroll(&self.finding_source_scroll)
+                        .max_h(px(420.))
+                        .overflow_scroll()
+                        .child(rows),
+                );
+            } else {
+                source_panel = source_panel.child(empty_card(
+                    "Select source evidence",
+                    "Choose an evidence or source link above to read the exact source for this finding.",
+                    p,
+                ));
+            }
+            detail = detail.child(source_panel);
+
+            let follow_up = follow_up_concerns(review).and_then(|rows| {
+                rows.into_iter().find(|row| {
+                    row.current_finding
+                        .is_some_and(|current| current.id == finding.id)
+                })
+            });
+            if let Some(row) = follow_up {
+                if let Some(assessment) = row.assessment {
+                    detail = detail.child(
+                        div()
+                            .p_3()
+                            .border_1()
+                            .border_color(rgb(p.border))
+                            .bg(rgb(p.panel))
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(section_title("Follow-up", p))
+                                    .child(status_badge(
+                                        row.prominence.label(),
+                                        follow_up_color(row.prominence, p),
+                                    )),
+                            )
+                            .child(row.concern.title.clone())
+                            .child(assessment.explanation.clone()),
+                    );
+                }
+            }
+
             if !finding.related_thread_ids.is_empty() {
                 detail = detail.child(section_title("Related discussions", p));
                 for (thread_index, thread_id) in finding.related_thread_ids.iter().enumerate() {
@@ -5746,145 +5933,6 @@ impl Product {
             ));
         }
 
-        let mut inspector = div()
-            .id("finding-source-inspector")
-            .w(px(inspector_width))
-            .flex_shrink_0()
-            .min_w_0()
-            .h_full()
-            .border_l_1()
-            .border_color(rgb(p.border))
-            .bg(rgb(p.canvas))
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .overflow_scroll()
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(rgb(p.muted))
-                    .child("PINNED SOURCE"),
-            );
-        if let Some(prior) = self.finding_prior_source.as_ref() {
-            inspector = inspector.child(
-                div()
-                    .font_family("DejaVu Sans Mono")
-                    .text_size(px(11.))
-                    .text_color(rgb(p.muted))
-                    .child(format!(
-                        "Prior source · {}:{}–{} · {}",
-                        prior.source.path,
-                        prior.source.start_line,
-                        prior.source.end_line,
-                        short_sha(&prior.commit_sha)
-                    )),
-            );
-            if let Some(preview) = self.prior_source_preview.as_ref() {
-                if preview.loading {
-                    inspector = inspector.child(
-                        div()
-                            .text_color(rgb(p.muted))
-                            .child("Loading exact prior source…"),
-                    );
-                }
-                if let Some(error) = &preview.error {
-                    inspector = inspector.child(empty_card("Prior source unavailable", error, p));
-                }
-                if let Some(text) = &preview.text {
-                    let mut rows = div().flex().flex_col();
-                    for (offset, line) in text.lines().enumerate() {
-                        let number = prior.source.start_line.saturating_add(offset as u32);
-                        let selected =
-                            (prior.source.start_line..=prior.source.end_line).contains(&number);
-                        rows = rows.child(render_source_row(
-                            number,
-                            line,
-                            path_extension(&prior.source.path),
-                            p,
-                            selected,
-                        ));
-                    }
-                    inspector = inspector.child(
-                        div()
-                            .id("finding-prior-pinned-source-code")
-                            .overflow_scroll()
-                            .flex_1()
-                            .min_h_0()
-                            .child(rows),
-                    );
-                }
-            }
-        } else if let Some(source) = self.finding_source.clone() {
-            inspector = inspector.child(
-                div()
-                    .font_family("DejaVu Sans Mono")
-                    .text_size(px(11.))
-                    .text_color(rgb(p.muted))
-                    .child(format!(
-                        "{} · {}:{}–{}",
-                        match source.revision {
-                            Revision::Base => "Base",
-                            Revision::Head => "Head",
-                        },
-                        source.path,
-                        source.start_line,
-                        source.end_line
-                    )),
-            );
-        }
-        if self.finding_source_loading {
-            inspector = inspector.child(
-                div()
-                    .text_color(rgb(p.muted))
-                    .child("Loading source from the pinned commit…"),
-            );
-        }
-        if let Some(error) = self.finding_source_error.clone() {
-            inspector = inspector.child(empty_card("Pinned source unavailable", &error, p));
-        }
-        if self.finding_prior_source.is_none() {
-            if let (Some(text), Some(display), Some(source)) = (
-                &self.finding_source_text,
-                &self.finding_source_display,
-                &self.finding_source,
-            ) {
-                let extension = path_extension(&display.path);
-                let mut rows = div().flex().flex_col();
-                for (offset, line) in text.lines().enumerate() {
-                    let number = display.start_line.saturating_add(offset as u32);
-                    let selected = (source.start_line..=source.end_line).contains(&number);
-                    rows = rows.child(render_source_row(number, line, extension, p, selected));
-                }
-                inspector = inspector.child(
-                    div()
-                        .id("finding-pinned-source-code")
-                        .track_scroll(&self.finding_source_scroll)
-                        .overflow_scroll()
-                        .flex_1()
-                        .min_h_0()
-                        .child(rows),
-                );
-            } else if self.finding_source.is_none() {
-                inspector = inspector.child(div().flex_1().min_h_0().child(empty_card(
-                    "Select source evidence",
-                    "Choose an evidence or source link to inspect the exact pinned code here.",
-                    p,
-                )));
-            }
-        }
-
-        if let Some(source) = self.finding_source.clone() {
-            inspector = inspector.child(link_button(
-                "open-finding-source-in-changes",
-                "Open in Changes →",
-                p,
-                move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
-                cx,
-            ));
-        }
-
         if let Some(index) = selected_index {
             let finding = &review.result.findings[index];
             let finding_id = finding.id.clone();
@@ -5900,8 +5948,8 @@ impl Product {
                 .and_then(|entry| entry.manual_feedback.as_deref())
                 .unwrap_or("")
                 .to_owned();
-            inspector = inspector
-                .child(div().border_t_1().border_color(rgb(p.border)).pt_3())
+            detail = detail
+                .child(div().mt_2().pt_3().border_t_1().border_color(rgb(p.border)))
                 .child(section_title("Add a comment", p))
                 .child(
                     div()
@@ -5915,7 +5963,7 @@ impl Product {
                 } else {
                     format!("{}|", self.finding_feedback_body)
                 };
-                inspector = inspector.child(
+                detail = detail.child(
                     div()
                         .id("finding-independent-feedback-editor")
                         .track_focus(&self.finding_feedback_focus)
@@ -5951,7 +5999,7 @@ impl Product {
                         })),
                 );
                 let save_finding = finding_id.clone();
-                inspector = inspector.child(button(
+                detail = detail.child(button(
                     "save-finding-feedback",
                     if self.finding_action_saving {
                         "Saving locally…"
@@ -5964,7 +6012,7 @@ impl Product {
                 ));
             } else {
                 let open_finding = finding_id;
-                inspector = inspector.child(button(
+                detail = detail.child(button(
                     "edit-finding-feedback",
                     if current_feedback.is_empty() {
                         "Add comment"
@@ -5999,11 +6047,10 @@ impl Product {
             .min_h_0()
             .w_full()
             .flex()
-            .overflow_x_scroll()
-            .min_w(px(if viewport_width < 1080. { 1080. } else { 0. }))
+            .min_w_0()
+            .overflow_hidden()
             .child(list)
             .child(detail)
-            .child(inspector)
     }
 
     fn stage_finding_alternative(
