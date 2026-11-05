@@ -1,7 +1,7 @@
 use bodh::{
     DraftStore, OperationControl, PrIdentity, PreparationStore, RemoteReviewState, ReviewContext,
     ReviewEvent, ReviewIntent, ReviewPublicationStore, ReviewPublisher, Revision, SelectedDraft,
-    SourceRef, StageReviewRequest,
+    SourceRef, StageReviewRequest, suggestion_markdown,
 };
 use std::{
     io::Write,
@@ -12,6 +12,109 @@ use std::{
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn github_suggestion_markdown_is_built_from_structured_replacement_text() {
+    assert_eq!(
+        suggestion_markdown("    let value = 3;\n\n").unwrap(),
+        "```suggestion\n    let value = 3;\n\n```"
+    );
+}
+
+#[test]
+fn confirmed_replacement_publishes_exact_suggestion_and_only_then_removes_draft() {
+    let f = Fixture::new();
+    let source = SourceRef {
+        path: "a.rs".into(),
+        revision: Revision::Head,
+        start_line: 2,
+        end_line: 2,
+    };
+    let replacement = DraftStore::open(&f.state)
+        .unwrap()
+        .save_replacement(
+            &f.prep,
+            None,
+            &source,
+            "    2\n",
+            "    3\n",
+            1,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap()
+        .draft;
+    let snapshot = DraftStore::open(&f.state).unwrap().list(&f.prep).unwrap();
+    let intent = ReviewPublicationStore::open(&f.state)
+        .unwrap()
+        .stage(StageReviewRequest {
+            state: f.state.clone(),
+            preparation_id: f.prep.clone(),
+            expected_workspace_revision: snapshot.workspace_revision,
+            expected_intent_revision: 0,
+            selected: vec![],
+            selected_replacements: vec![SelectedDraft {
+                id: replacement.id.clone(),
+                revision: replacement.revision,
+            }],
+            summary: None,
+            event: Some(ReviewEvent::Comment),
+        })
+        .unwrap();
+    let remote = RemoteReviewState {
+        pull_request_id: "PR_node".into(),
+        head_sha: git(&f.repo, &["rev-parse", "HEAD"]),
+        base_sha: git(&f.repo, &["rev-parse", "HEAD~1"]),
+        state: "OPEN".into(),
+        viewer_permission: "WRITE".into(),
+    };
+    let plan = ReviewPublicationStore::open(&f.state)
+        .unwrap()
+        .confirm(
+            &f.prep,
+            &f.state,
+            intent.revision,
+            &remote,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        plan.payload.suggestions[0].body,
+        "```suggestion\n    3\n```"
+    );
+    assert_eq!(plan.payload.suggestions[0].source, source);
+    let capture = f.root.join("suggestion-request.json");
+    let fake = fake_gh(
+        &f.root.join("suggestion-gh"),
+        &format!(
+            "cat > '{}'\nprintf '%s' '{{\"data\":{{\"addPullRequestReview\":{{\"pullRequestReview\":{{\"id\":\"PRR_SUGGEST\",\"url\":\"https://example.invalid/review/2\"}}}}}}}}'",
+            capture.display()
+        ),
+    );
+    let publisher = bodh::GhReviewPublisher {
+        executable: fake,
+        checkout: f.repo.clone(),
+        timeout: std::time::Duration::from_secs(2),
+    };
+    let result = ReviewPublicationStore::open(&f.state)
+        .unwrap()
+        .publish_confirmed(&plan.id, &remote, &publisher, &OperationControl::default())
+        .unwrap();
+    assert_eq!(result.state, "confirmed");
+    let sent: serde_json::Value = serde_json::from_slice(&std::fs::read(capture).unwrap()).unwrap();
+    assert_eq!(
+        sent["variables"]["threads"][0]["body"],
+        "```suggestion\n    3\n```"
+    );
+    assert_eq!(sent["variables"]["threads"][0]["line"], 2);
+    assert_eq!(sent["variables"]["threads"][0]["side"], "RIGHT");
+    let remaining = DraftStore::open(&f.state)
+        .unwrap()
+        .list_replacements(&f.prep)
+        .unwrap();
+    assert!(remaining.drafts.is_empty());
+}
+
 fn git(repo: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
@@ -120,6 +223,7 @@ impl Fixture {
                     id: self.draft_id.clone(),
                     revision: 1,
                 }],
+                selected_replacements: vec![],
                 summary: Some("Please address this before merge.".into()),
                 event,
             })
@@ -194,6 +298,7 @@ fn event_must_be_chosen_and_confirmed_payload_binds_exact_draft_revision_and_hea
                 id: f.draft_id.clone(),
                 revision: 1,
             }],
+            selected_replacements: vec![],
             summary: Some("Please address this before merge.".into()),
             event: Some(ReviewEvent::RequestChanges),
         })
@@ -227,6 +332,7 @@ fn interrupted_send_becomes_unknown_and_cannot_be_started_again() {
                 id: f.draft_id.clone(),
                 revision: 1,
             }],
+            selected_replacements: vec![],
             summary: Some("A summary".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -289,6 +395,7 @@ fn changed_head_or_permission_after_confirmation_blocks_send_without_starting_jo
                 id: f.draft_id.clone(),
                 revision: 1,
             }],
+            selected_replacements: vec![],
             summary: Some("A summary".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -346,6 +453,7 @@ fn controlled_gh_receives_exact_confirmed_group_and_returns_persisted_review_lin
                 id: f.draft_id.clone(),
                 revision: 1,
             }],
+            selected_replacements: vec![],
             summary: Some("A summary".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -435,6 +543,7 @@ fn controlled_gh_receives_exact_confirmed_group_and_returns_persisted_review_lin
                 id: f.draft_id.clone(),
                 revision: 2,
             }],
+            selected_replacements: vec![],
             summary: Some("A revised summary.".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -464,6 +573,7 @@ fn rejection_is_definitive_but_timeout_after_request_is_unknown_and_not_retryabl
                 id: f.draft_id.clone(),
                 revision: 1,
             }],
+            selected_replacements: vec![],
             summary: Some("Summary".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -513,6 +623,7 @@ fn rejection_is_definitive_but_timeout_after_request_is_unknown_and_not_retryabl
                 id: f.draft_id.clone(),
                 revision: 1,
             }],
+            selected_replacements: vec![],
             summary: Some("Summary updated".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -631,6 +742,7 @@ fn cli_stage_and_intent_round_trip_preserve_explicit_missing_event() {
                 id: f.draft_id.clone(),
                 revision: 1,
             }],
+            selected_replacements: vec![],
             summary: None,
             event: None,
         })

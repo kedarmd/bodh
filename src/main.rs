@@ -532,6 +532,8 @@ struct ReviewStageInput {
     expected_intent_revision: u64,
     #[serde(default)]
     selected: Vec<bodh::SelectedDraft>,
+    #[serde(default)]
+    selected_replacements: Vec<bodh::SelectedDraft>,
     summary: Option<String>,
     event: Option<bodh::ReviewEvent>,
 }
@@ -568,6 +570,7 @@ fn review_command(args: &[String]) -> Result<Value, ContractError> {
                 expected_workspace_revision: request.expected_workspace_revision,
                 expected_intent_revision: request.expected_intent_revision,
                 selected: request.selected,
+                selected_replacements: request.selected_replacements,
                 summary: request.summary,
                 event: request.event,
             })?;

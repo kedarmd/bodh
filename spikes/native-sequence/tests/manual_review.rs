@@ -219,6 +219,7 @@ fn failed_save_retains_typed_text_and_success_keeps_newer_keystrokes() {
             inline_comments: 1,
             replies: 0,
             thread_intents: 0,
+            code_replacements: 0,
             review_comments: 0,
         },
         draft: persisted,

@@ -594,6 +594,7 @@ impl DraftStore {
             inline_comments: drafts.len() as u64,
             replies: reply_drafts.len() as u64,
             thread_intents: thread_actions.len() as u64,
+            code_replacements: self.list_replacements(preparation_id)?.drafts.len() as u64,
             review_comments: review_summary_count(&self.db, preparation_id)?,
         };
         Ok(DraftSnapshot {
@@ -614,7 +615,8 @@ impl DraftStore {
         let pr = &prepared.context.pr;
         let mut statement = self.db.prepare(
             "SELECT draft_id,source_json,original_text,replacement,provenance_json,revision,created_at,updated_at
-             FROM code_replacement_drafts WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5
+             FROM code_replacement_drafts d WHERE d.host=?1 AND d.owner=?2 AND d.repository=?3 AND d.number=?4 AND d.context_id=?5
+             AND NOT EXISTS (SELECT 1 FROM review_published_replacements p WHERE p.context_id=?6 AND p.draft_id=d.draft_id AND p.draft_revision=d.revision)
              ORDER BY created_at,draft_id"
         ).map_err(db_error)?;
         let rows = statement
@@ -624,6 +626,7 @@ impl DraftStore {
                     pr.owner,
                     pr.repository,
                     i64::try_from(pr.number).map_err(|_| state_error())?,
+                    prepared.context.context_id,
                     prepared.context.context_id
                 ],
                 |r| {
@@ -1206,10 +1209,22 @@ fn count_all(
     let count = |table: &str| -> Result<u64, ContractError> {
         tx.query_row(&format!("SELECT count(*) FROM {table} WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4 AND context_id=?5"),params![pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_|state_error())?,context_id],|r|r.get::<_,i64>(0)).map_err(db_error).and_then(|value|u64::try_from(value).map_err(|_|state_error()))
     };
+    let code_replacements = tx
+        .query_row(
+            "SELECT count(*) FROM code_replacement_drafts d
+             WHERE d.host=?1 AND d.owner=?2 AND d.repository=?3 AND d.number=?4 AND d.context_id=?5
+               AND NOT EXISTS (SELECT 1 FROM review_published_replacements p
+                               WHERE p.context_id=?6 AND p.draft_id=d.draft_id AND p.draft_revision=d.revision)",
+            params![pr.host,pr.owner,pr.repository,i64::try_from(pr.number).map_err(|_|state_error())?,context_id,context_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(db_error)
+        .and_then(|value| u64::try_from(value).map_err(|_| state_error()))?;
     Ok(DraftCounts {
         inline_comments: inline,
         replies: count("reply_drafts")?,
         thread_intents: count("thread_action_drafts")?,
+        code_replacements,
         review_comments: review_summary_count(tx, preparation_id)?,
     })
 }
