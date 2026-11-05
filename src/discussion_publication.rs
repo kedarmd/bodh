@@ -604,7 +604,7 @@ impl DiscussionPublicationStore {
         }
         begin.commit().map_err(db_error)?;
         let binding = PreparationStore::open(&self.path)?.load(&plan.preparation_id)?;
-        for planned in plan.steps {
+        for planned in &plan.steps {
             if planned.state != "planned" {
                 continue;
             }
@@ -685,7 +685,7 @@ impl DiscussionPublicationStore {
             };
             match outcome {
                 DiscussionSendOutcome::Confirmed { remote_id } => {
-                    self.confirm_step(&plan, &planned, remote_id.as_deref())?
+                    self.confirm_step(&plan, planned, remote_id.as_deref())?
                 }
                 DiscussionSendOutcome::Rejected { message } => {
                     self.set_step(plan_id, &planned.id, "failed", None, Some(&message))?
