@@ -2,20 +2,23 @@ use super::*;
 
 /// Builds native labels and hit regions only after the actual clipped viewport is known.
 /// Scrolling runs prepaint again, so it cannot leave stale virtualized hit targets.
-pub struct SequenceDiagram {
+pub struct SequenceDiagram<T> {
     pub flow: std::rc::Rc<Flow>,
     pub scene: std::rc::Rc<Scene>,
     pub selected: usize,
     pub palette: Palette,
-    pub owner: WeakEntity<Demo>,
+    pub owner: WeakEntity<T>,
+    pub select: fn(&mut T, usize, &mut Window, &mut Context<T>),
+    pub interaction_ids: std::rc::Rc<Vec<String>>,
+    pub changed_interactions: Option<std::rc::Rc<std::collections::HashSet<usize>>>,
 }
-impl IntoElement for SequenceDiagram {
+impl<T: 'static> IntoElement for SequenceDiagram<T> {
     type Element = Self;
     fn into_element(self) -> Self {
         self
     }
 }
-impl Element for SequenceDiagram {
+impl<T: 'static> Element for SequenceDiagram<T> {
     type RequestLayoutState = ();
     type PrepaintState = AnyElement;
     fn id(&self) -> Option<ElementId> {
@@ -56,6 +59,7 @@ impl Element for SequenceDiagram {
         let scene = &self.scene;
         let selected = self.selected;
         let palette = self.palette;
+        let changed_interactions = self.changed_interactions.clone();
         let interactions = flow.interactions();
         let mut diagram = div()
             .relative()
@@ -64,6 +68,7 @@ impl Element for SequenceDiagram {
             .h(px(scene.height));
         let lines_scene = scene.clone();
         let lines_flow = flow.clone();
+        let canvas_changed_interactions = changed_interactions.clone();
         diagram = diagram.child(
             canvas(
                 move |_, _, _| (),
@@ -76,7 +81,10 @@ impl Element for SequenceDiagram {
                         h: f32::from(mask.size.height),
                     };
                     // Clip before tessellation: a paint mask alone does not avoid building enormous dashed paths.
-                    let top = (65. + ((viewport.y - 65.).max(0.) / 11.).floor() * 11.).max(65.);
+                    let lifeline_start = 16. + lines_scene.participant_height + 9.;
+                    let top = (lifeline_start
+                        + ((viewport.y - lifeline_start).max(0.) / 11.).floor() * 11.)
+                        .max(lifeline_start);
                     let bottom = lines_scene.height.min(viewport.y + viewport.h);
                     for &x in &lines_scene.columns {
                         if x < viewport.x || x > viewport.x + viewport.w || top >= bottom {
@@ -100,12 +108,16 @@ impl Element for SequenceDiagram {
                         let a = lines_scene.columns[i.from];
                         let b = lines_scene.columns[i.to];
                         let y = row.arrow_y;
-                        let color = if i.source.changed() {
+                        let changed = canvas_changed_interactions.as_ref().map_or_else(
+                            || i.source.changed(),
+                            |set| set.contains(&row.interaction),
+                        );
+                        let color = if changed {
                             palette.accent
                         } else {
                             palette.text
                         };
-                        let width = if i.source.changed() { 3. } else { 1. };
+                        let width = if changed { 3. } else { 1. };
                         let (end, direction) = if i.kind == Kind::SelfCall {
                             stroke(
                                 window,
@@ -150,7 +162,7 @@ impl Element for SequenceDiagram {
                 x: scene.columns[index] - 100.,
                 y: 16.,
                 w: 200.,
-                h: 65.,
+                h: scene.participant_height,
             })
             .intersects(viewport)
             {
@@ -162,6 +174,7 @@ impl Element for SequenceDiagram {
                     .left(px(scene.columns[index] - 100.))
                     .top(px(16.))
                     .w(px(200.))
+                    .h(px(scene.participant_height))
                     .p_2()
                     .bg(rgb(palette.panel))
                     .border_1()
@@ -194,11 +207,19 @@ impl Element for SequenceDiagram {
         for row in scene.visible_rows(viewport) {
             let index = row.interaction;
             let i = interactions[index];
-            let changed = i.source.changed();
+            let changed = changed_interactions
+                .as_ref()
+                .map_or_else(|| i.source.changed(), |set| set.contains(&index));
+            let stable_id = self
+                .interaction_ids
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| index.to_string());
             let owner = self.owner.clone();
+            let select = self.select;
             diagram = diagram.child(
                 div()
-                    .id(("interaction", index))
+                    .id(ElementId::Name(stable_id.into()))
                     .absolute()
                     .left(px(row.rect.x))
                     .top(px(row.rect.y))
@@ -232,10 +253,9 @@ impl Element for SequenceDiagram {
                                 i.label
                             )),
                     )
-                    .on_click(move |_, window, cx| {
-                        let _ = owner.update(cx, |this, cx| {
-                            window.focus(&this.focus);
-                            this.select(index, cx);
+                    .on_click(move |_, window, app| {
+                        let _ = owner.update(app, |this, cx| {
+                            select(this, index, window, cx);
                         });
                     }),
             );

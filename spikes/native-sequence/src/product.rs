@@ -1,4 +1,6 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
+use super::diagram::SequenceDiagram;
+use super::diagram_adapter::{AdaptedDiagram, ChangedLines, adapt_diagram};
 use bodh::{
     AnchorRepairPreview, AnchorRepairStatus, CodeReplacementSnapshot, DiscussionPlan,
     DiscussionPublicationStore, DiscussionSelection, DraftSnapshot, DraftStore,
@@ -190,6 +192,24 @@ pub struct Product {
     finding_feedback_focus: FocusHandle,
     focused_discussion_thread: Option<String>,
     pending_overview_source: Option<(usize, SourceRef)>,
+    diagram_views: Vec<AdaptedDiagram>,
+    diagram_changed_lines: ChangedLines,
+    diagram_diff_context: Option<String>,
+    diagram_diff_loading: bool,
+    diagram_selected: std::collections::HashMap<String, usize>,
+    diagram_scrolls: std::collections::HashMap<String, ScrollHandle>,
+    active_diagram: Option<String>,
+    diagram_source: Option<SourceRef>,
+    diagram_source_display: Option<SourceRef>,
+    diagram_source_text: Option<String>,
+    diagram_source_loading: bool,
+    diagram_source_error: Option<String>,
+    diagram_source_scroll: ScrollHandle,
+    diagram_epoch: Arc<AtomicU64>,
+    diagram_source_epoch: Arc<AtomicU64>,
+    diagram_diff_control: Option<OperationControl>,
+    diagram_source_control: Option<OperationControl>,
+    selected_finding_id: Option<String>,
 }
 
 impl Product {
@@ -289,6 +309,24 @@ impl Product {
             finding_feedback_focus: cx.focus_handle(),
             focused_discussion_thread: None,
             pending_overview_source: None,
+            diagram_views: Vec::new(),
+            diagram_changed_lines: ChangedLines::new(),
+            diagram_diff_context: None,
+            diagram_diff_loading: false,
+            diagram_selected: std::collections::HashMap::new(),
+            diagram_scrolls: std::collections::HashMap::new(),
+            active_diagram: None,
+            diagram_source: None,
+            diagram_source_display: None,
+            diagram_source_text: None,
+            diagram_source_loading: false,
+            diagram_source_error: None,
+            diagram_source_scroll: ScrollHandle::new(),
+            diagram_epoch: Arc::new(AtomicU64::new(0)),
+            diagram_source_epoch: Arc::new(AtomicU64::new(0)),
+            diagram_diff_control: None,
+            diagram_source_control: None,
+            selected_finding_id: None,
         };
         app.refresh_gh_cli(cx);
         app
@@ -615,9 +653,39 @@ impl Product {
             self.overview_loading = false;
             self.finding_triage_snapshot = None;
             self.finding_triage_loading = false;
+            self.diagram_views.clear();
+            self.diagram_changed_lines.clear();
+            self.diagram_diff_context = None;
+            self.active_diagram = None;
+            self.diagram_source = None;
+            self.diagram_source_display = None;
+            self.diagram_source_text = None;
+            self.diagram_source_error = None;
             return;
         };
         self.refresh_finding_triage(cx);
+        if self.diagram_diff_context.as_deref() != Some(&binding.context.context_id) {
+            if let Some(control) = self.diagram_diff_control.take() {
+                control.cancel();
+            }
+            if let Some(control) = self.diagram_source_control.take() {
+                control.cancel();
+            }
+            self.diagram_views.clear();
+            self.diagram_changed_lines.clear();
+            self.diagram_diff_context = None;
+            self.diagram_diff_loading = false;
+            self.diagram_selected.clear();
+            self.diagram_scrolls.clear();
+            self.active_diagram = None;
+            self.diagram_source = None;
+            self.diagram_source_display = None;
+            self.diagram_source_text = None;
+            self.diagram_source_error = None;
+            self.selected_finding_id = None;
+            self.diagram_source_epoch.fetch_add(1, Ordering::Relaxed);
+            self.diagram_epoch.fetch_add(1, Ordering::Relaxed);
+        }
         if self
             .committed_overview
             .committed
@@ -649,11 +717,38 @@ impl Product {
                     return;
                 }
                 this.overview_loading = false;
+                let previous_generation = this
+                    .committed_overview
+                    .committed
+                    .as_ref()
+                    .map(|review| review.generation);
                 this.committed_overview = apply_committed_overview_load(
                     &expected_context,
                     &this.committed_overview,
                     result,
                 );
+                let current_generation = this
+                    .committed_overview
+                    .committed
+                    .as_ref()
+                    .map(|review| review.generation);
+                if previous_generation != current_generation {
+                    if let Some(control) = this.diagram_source_control.take() {
+                        control.cancel();
+                    }
+                    this.diagram_source_epoch.fetch_add(1, Ordering::Relaxed);
+                    this.diagram_selected.clear();
+                    this.diagram_scrolls.clear();
+                    this.active_diagram = None;
+                    this.diagram_source = None;
+                    this.diagram_source_display = None;
+                    this.diagram_source_text = None;
+                    this.diagram_source_error = None;
+                    this.selected_finding_id = None;
+                }
+                this.rebuild_diagram_views();
+                this.ensure_initial_diagram_selection(cx);
+                this.refresh_diagram_change_lines(cx);
                 cx.notify();
             });
         })
@@ -707,6 +802,260 @@ impl Product {
         .detach();
     }
 
+    fn rebuild_diagram_views(&mut self) {
+        let Some(committed) = self.committed_overview.committed.as_ref() else {
+            self.diagram_views.clear();
+            self.active_diagram = None;
+            return;
+        };
+        self.diagram_views = committed
+            .result
+            .diagrams
+            .iter()
+            .map(|diagram| {
+                adapt_diagram(
+                    diagram,
+                    &committed.result.findings,
+                    &self.diagram_changed_lines,
+                )
+            })
+            .collect();
+        let ids = self
+            .diagram_views
+            .iter()
+            .map(|diagram| diagram.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        self.diagram_selected.retain(|id, _| ids.contains(id));
+        self.diagram_scrolls.retain(|id, _| ids.contains(id));
+        if self
+            .active_diagram
+            .as_ref()
+            .is_none_or(|active| !ids.contains(active))
+        {
+            self.active_diagram = self.diagram_views.first().map(|diagram| diagram.id.clone());
+        }
+        for diagram in &self.diagram_views {
+            let selected = self.diagram_selected.entry(diagram.id.clone()).or_insert(0);
+            if *selected >= diagram.links.len() {
+                *selected = 0;
+            }
+        }
+    }
+
+    fn ensure_initial_diagram_selection(&mut self, cx: &mut Context<Self>) {
+        if self.diagram_source.is_some() || self.diagram_source_loading {
+            return;
+        }
+        let Some(id) = self.active_diagram.clone() else {
+            return;
+        };
+        let selected = self.diagram_selected.get(&id).copied().unwrap_or(0);
+        self.select_diagram_interaction(selected, cx);
+    }
+
+    fn refresh_diagram_change_lines(&mut self, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if self.diagram_diff_context.as_deref() == Some(&binding.context.context_id)
+            || self.diagram_diff_loading
+        {
+            return;
+        }
+        let Some(committed) = self.committed_overview.committed.as_ref() else {
+            return;
+        };
+        let findings = committed.result.findings.clone();
+        let empty = ChangedLines::new();
+        let mut paths = std::collections::BTreeSet::new();
+        for diagram in &committed.result.diagrams {
+            let adapted = adapt_diagram(diagram, &findings, &empty);
+            for link in adapted.links {
+                if let Some(source) = link.source {
+                    paths.insert(source.path);
+                }
+            }
+        }
+        let files = binding
+            .changed_files
+            .iter()
+            .filter_map(|file| {
+                let old_path = file.old_path.clone();
+                let new_path = file.new_path.clone();
+                if !old_path.as_ref().is_some_and(|path| paths.contains(path))
+                    && !new_path.as_ref().is_some_and(|path| paths.contains(path))
+                {
+                    return None;
+                }
+                let read_path = new_path.clone().or_else(|| old_path.clone())?;
+                Some((old_path, new_path, read_path))
+            })
+            .collect::<Vec<_>>();
+        let checkout = binding.checkout.clone();
+        let context = binding.context.clone();
+        let context_id = context.context_id.clone();
+        let token = self.diagram_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.diagram_epoch.clone();
+        self.diagram_diff_loading = true;
+        self.diagram_diff_context = Some(context_id.clone());
+        let control = OperationControl::with_timeout(Duration::from_secs(30));
+        self.diagram_diff_control = Some(control.clone());
+        cx.spawn(async move |weak, cx| {
+            let changed = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut result = ChangedLines::new();
+                    for (old_path, new_path, read_path) in files {
+                        if control.check().is_err() {
+                            break;
+                        }
+                        let Ok(diff) =
+                            read_diff(Path::new(&checkout), &context, &read_path, &control)
+                        else {
+                            continue;
+                        };
+                        for row in diff_rows(&diff.text) {
+                            match row.kind {
+                                DiffLineKind::Addition => {
+                                    if let (Some(path), Some(line)) =
+                                        (new_path.as_ref(), row.new_line)
+                                    {
+                                        result
+                                            .entry((path.clone(), true))
+                                            .or_default()
+                                            .insert(line);
+                                    }
+                                }
+                                DiffLineKind::Deletion => {
+                                    if let (Some(path), Some(line)) =
+                                        (old_path.as_ref(), row.old_line)
+                                    {
+                                        result
+                                            .entry((path.clone(), false))
+                                            .or_default()
+                                            .insert(line);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    result
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|current| current.context.context_id != context_id)
+                {
+                    return;
+                }
+                this.diagram_diff_loading = false;
+                this.diagram_diff_control = None;
+                this.diagram_diff_context = Some(context_id.clone());
+                this.diagram_changed_lines = changed;
+                this.rebuild_diagram_views();
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn select_diagram_flow(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.diagram_views.iter().any(|diagram| diagram.id == id) {
+            return;
+        }
+        self.active_diagram = Some(id.clone());
+        let selected = self.diagram_selected.get(&id).copied().unwrap_or(0);
+        self.select_diagram_interaction(selected, cx);
+    }
+
+    fn select_diagram_interaction(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(id) = self.active_diagram.clone() else {
+            return;
+        };
+        let Some(diagram) = self.diagram_views.iter().find(|diagram| diagram.id == id) else {
+            return;
+        };
+        if index >= diagram.links.len() {
+            return;
+        }
+        if let Some(control) = self.diagram_source_control.take() {
+            control.cancel();
+        }
+        self.diagram_selected.insert(id, index);
+        self.diagram_source_scroll.set_offset(point(px(0.), px(0.)));
+        self.diagram_source_error = None;
+        let Some(source) = diagram.links[index].source.clone() else {
+            self.diagram_source = None;
+            self.diagram_source_display = None;
+            self.diagram_source_text = None;
+            self.diagram_source_loading = false;
+            self.diagram_source_epoch.fetch_add(1, Ordering::Relaxed);
+            cx.notify();
+            return;
+        };
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let display = source_context_range(&source, 4);
+        self.diagram_source = Some(source.clone());
+        self.diagram_source_display = Some(display.clone());
+        self.diagram_source_text = None;
+        self.diagram_source_loading = true;
+        let token = self.diagram_source_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.diagram_source_epoch.clone();
+        let checkout = binding.checkout.clone();
+        let context = binding.context.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(10));
+        self.diagram_source_control = Some(control.clone());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    read_source_context(
+                        Path::new(&checkout),
+                        &context,
+                        &display,
+                        source.start_line,
+                        &control,
+                    )
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.diagram_source_loading = false;
+                this.diagram_source_control = None;
+                match result {
+                    Ok((display, text)) => {
+                        this.diagram_source_display = Some(display);
+                        this.diagram_source_text = Some(text);
+                    }
+                    Err(error) => {
+                        this.diagram_source_error =
+                            Some(format!("{}: {}", error.code, error.message));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn select_diagram_finding(&mut self, id: String, cx: &mut Context<Self>) {
+        self.selected_finding_id = Some(id);
+        self.active_tab = WorkspaceTab::Findings;
+        self.prefs.active_tab = Some(WorkspaceTab::Findings);
+        self.persist();
+        self.refresh_committed_overview(cx);
+        cx.notify();
+    }
+
     fn select_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
         self.active_tab = tab;
         self.prefs.active_tab = Some(tab);
@@ -726,6 +1075,10 @@ impl Product {
             cx.notify();
             return;
         };
+        if let Some(control) = self.diagram_source_control.take() {
+            control.cancel();
+        }
+        self.diagram_source_epoch.fetch_add(1, Ordering::Relaxed);
         self.active_tab = WorkspaceTab::Changes;
         self.prefs.active_tab = Some(WorkspaceTab::Changes);
         self.pending_overview_source = Some((index, source));
@@ -2817,6 +3170,39 @@ impl Product {
             cx.notify();
             return;
         }
+        if self.screen == Screen::Workspace && self.active_tab == WorkspaceTab::Overview {
+            let key = event.keystroke.key.as_str();
+            if matches!(key, "down" | "right" | "up" | "left") {
+                let selection_state = self.active_diagram.as_ref().and_then(|id| {
+                    self.diagram_views
+                        .iter()
+                        .find(|item| item.id == *id)
+                        .map(|diagram| (id.clone(), diagram.links.len()))
+                });
+                if let Some((id, count)) = selection_state.filter(|(_, count)| *count > 0) {
+                    let current = self.diagram_selected.get(&id).copied().unwrap_or(0);
+                    let next = match key {
+                        "down" | "right" => (current + 1) % count,
+                        _ => (current + count - 1) % count,
+                    };
+                    self.select_diagram_interaction(next, cx);
+                    let row_rect = self
+                        .diagram_views
+                        .iter()
+                        .find(|diagram| diagram.id == id)
+                        .and_then(|diagram| diagram.scene.rows.get(next))
+                        .map(|row| row.rect);
+                    if let (Some(row), Some(scroll)) = (row_rect, self.diagram_scrolls.get(&id)) {
+                        scroll.set_offset(point(
+                            px(-(row.x - 40.).max(0.)),
+                            px(-(row.y - 90.).max(0.)),
+                        ));
+                    }
+                    cx.notify();
+                }
+                return;
+            }
+        }
         match event.keystroke.key.as_str() {
             "[" => self.prefs.inspector_width = (self.prefs.inspector_width - 24.).max(340.),
             "]" => {
@@ -3996,7 +4382,9 @@ impl Product {
         }
         page = page.child(tabs);
         let panel: AnyElement = match self.active_tab {
-            WorkspaceTab::Overview => self.render_overview(&binding, p, cx).into_any_element(),
+            WorkspaceTab::Overview => self
+                .render_overview(&binding, p, cx, viewport_width, viewport_height)
+                .into_any_element(),
             WorkspaceTab::Changes => self
                 .render_changes(&binding, p, cx, viewport_width, viewport_height)
                 .into_any_element(),
@@ -4006,10 +4394,12 @@ impl Product {
     }
 
     fn render_overview(
-        &self,
+        &mut self,
         binding: &PreparedBinding,
         p: Palette,
         cx: &mut Context<Self>,
+        viewport_width: f32,
+        viewport_height: f32,
     ) -> impl IntoElement {
         let mut body = div()
             .id("overview-content")
@@ -4022,7 +4412,7 @@ impl Product {
         let current = self
             .committed_overview
             .committed
-            .as_ref()
+            .clone()
             .filter(|review| committed_matches_context(review, &binding.context));
         if self.overview_loading && current.is_none() {
             body = body.child(empty_card(
@@ -4085,6 +4475,15 @@ impl Product {
                     .child(section_title("Implementation summary", p))
                     .child(generated.overview.implementation_summary.clone()),
             );
+
+            body = body.child(self.render_sequence_workspace(
+                generated,
+                binding,
+                p,
+                cx,
+                viewport_width,
+                viewport_height,
+            ));
 
             if generated.overview.key_changes.is_empty() {
                 body = body.child(empty_card(
@@ -4339,6 +4738,263 @@ impl Product {
         )
     }
 
+    fn render_sequence_workspace(
+        &mut self,
+        generated: &bodh::ReviewResult,
+        _binding: &PreparedBinding,
+        p: Palette,
+        cx: &mut Context<Self>,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> impl IntoElement {
+        let mut workspace = div()
+            .id("sequence-review-workspace")
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_2();
+        if self.diagram_views.is_empty() {
+            return workspace.child(empty_card(
+                "No sequence diagrams",
+                "The committed result contains no sequence flows. No diagram is synthesized.",
+                p,
+            ));
+        }
+
+        let active_id = self
+            .active_diagram
+            .clone()
+            .unwrap_or_else(|| self.diagram_views[0].id.clone());
+        let Some(diagram) = self
+            .diagram_views
+            .iter()
+            .find(|diagram| diagram.id == active_id)
+            .cloned()
+        else {
+            return workspace.child(empty_card(
+                "Sequence flow unavailable",
+                "The selected flow is no longer part of the committed result.",
+                p,
+            ));
+        };
+        let selected = self
+            .diagram_selected
+            .get(&diagram.id)
+            .copied()
+            .unwrap_or(0)
+            .min(diagram.links.len().saturating_sub(1));
+        let mut toolbar = div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(section_title(&diagram.flow.title, p));
+        if self.diagram_views.len() > 1 {
+            for flow in &self.diagram_views {
+                let id = flow.id.clone();
+                let active = id == diagram.id;
+                toolbar = toolbar.child(
+                    button(
+                        &format!("select-diagram-{}", id),
+                        &flow.flow.title,
+                        p,
+                        move |this, _, window, cx| {
+                            window.focus(&this.focus);
+                            this.select_diagram_flow(id.clone(), cx);
+                        },
+                        cx,
+                    )
+                    .text_size(px(11.))
+                    .text_color(rgb(if active { p.text } else { p.muted })),
+                );
+            }
+        }
+        workspace = workspace.child(toolbar);
+
+        let pair_height = (viewport_height - 340.).max(360.);
+        let source_width = (viewport_width * 0.42).clamp(300., 560.);
+        let mut diagram_panel = div()
+            .id("sequence-diagram-panel")
+            .flex_1()
+            .min_w_0()
+            .h(px(pair_height))
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.panel))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(rgb(p.border))
+                    .child(diagram.description.clone()),
+            );
+        let scroll = self.diagram_scrolls.entry(diagram.id.clone()).or_default();
+        let diagram_element = SequenceDiagram {
+            flow: std::rc::Rc::new(diagram.flow.clone()),
+            scene: std::rc::Rc::new(diagram.scene.clone()),
+            selected,
+            palette: super::Palette {
+                bg: p.canvas,
+                panel: p.panel,
+                text: p.text,
+                muted: p.muted,
+                accent: p.accent,
+            },
+            owner: cx.entity().downgrade(),
+            select: select_product_diagram_interaction,
+            interaction_ids: std::rc::Rc::new(
+                diagram
+                    .links
+                    .iter()
+                    .map(|link| {
+                        format!(
+                            "diagram:{}:{}:step:{}:{}",
+                            diagram.id.len(),
+                            diagram.id,
+                            link.id.len(),
+                            link.id
+                        )
+                    })
+                    .collect(),
+            ),
+            changed_interactions: Some(std::rc::Rc::new(diagram.changed_interactions.clone())),
+        };
+        diagram_panel = diagram_panel.child(
+            div()
+                .id(ElementId::Name(SharedString::from(format!(
+                    "sequence-diagram-scroll-{}",
+                    diagram.id
+                ))))
+                .track_scroll(scroll)
+                .overflow_scroll()
+                .flex_1()
+                .min_h_0()
+                .child(diagram_element),
+        );
+
+        let mut inspector = div()
+            .id("sequence-source-inspector")
+            .w(px(source_width))
+            .flex_shrink_0()
+            .min_w_0()
+            .h(px(pair_height))
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.panel))
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(section_title("Pinned source", p));
+        if let Some(link) = diagram.links.get(selected) {
+            inspector = inspector.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(link.explanation.clone()),
+            );
+            if let Some(source) = link.source.clone() {
+                inspector = inspector.child(button(
+                    "open-diagram-source-in-changes",
+                    "Open source in Changes",
+                    p,
+                    move |this, _, _, cx| {
+                        this.open_overview_evidence(source.clone(), cx);
+                    },
+                    cx,
+                ));
+            }
+            for finding_id in &link.findings {
+                if let Some(finding) = generated
+                    .findings
+                    .iter()
+                    .find(|finding| finding.id == *finding_id)
+                {
+                    let id = finding.id.clone();
+                    inspector = inspector.child(button(
+                        &format!("diagram-linked-finding-{id}"),
+                        &format!("Finding · {}", finding.title),
+                        p,
+                        move |this, _, window, cx| {
+                            window.focus(&this.focus);
+                            this.select_diagram_finding(id.clone(), cx);
+                        },
+                        cx,
+                    ));
+                }
+            }
+        }
+        if self.diagram_source_loading {
+            inspector = inspector.child(
+                div()
+                    .text_color(rgb(p.muted))
+                    .child("Loading source from the pinned commit…"),
+            );
+        }
+        if let Some(error) = self.diagram_source_error.clone() {
+            inspector = inspector.child(empty_card("Pinned source unavailable", &error, p));
+        }
+        if let (Some(text), Some(display), Some(source)) = (
+            &self.diagram_source_text,
+            &self.diagram_source_display,
+            &self.diagram_source,
+        ) {
+            let extension = path_extension(&display.path);
+            let mut rows = div().flex().flex_col();
+            for (offset, line) in text.lines().enumerate() {
+                let number = display.start_line.saturating_add(offset as u32);
+                let selected = (source.start_line..=source.end_line).contains(&number);
+                rows = rows.child(render_source_row(number, line, extension, p, selected));
+            }
+            inspector = inspector.child(
+                div()
+                    .id("diagram-source-code")
+                    .track_scroll(&self.diagram_source_scroll)
+                    .overflow_scroll()
+                    .flex_1()
+                    .min_h_0()
+                    .child(rows),
+            );
+        } else if diagram
+            .links
+            .get(selected)
+            .is_some_and(|link| link.source.is_some())
+            && !self.diagram_source_loading
+        {
+            inspector = inspector.child(empty_card(
+                "Source not loaded",
+                "Select this interaction again to read its pinned source range.",
+                p,
+            ));
+        } else if diagram
+            .links
+            .get(selected)
+            .is_none_or(|link| link.source.is_none())
+        {
+            inspector = inspector.child(empty_card(
+                "No pinned source range",
+                "This interaction has no source link in the committed result.",
+                p,
+            ));
+        }
+        workspace.child(
+            div()
+                .id("sequence-source-pair")
+                .w_full()
+                .min_w_0()
+                .flex()
+                .gap_2()
+                .h(px(pair_height))
+                .child(diagram_panel)
+                .child(inspector),
+        )
+    }
+
     fn render_findings(
         &self,
         binding: &PreparedBinding,
@@ -4377,14 +5033,16 @@ impl Product {
             }
             for finding_index in bodh::prioritized_finding_indices(&review.result.findings) {
                 let finding = &review.result.findings[finding_index];
+                let selected_finding =
+                    self.selected_finding_id.as_deref() == Some(finding.id.as_str());
                 let mut card = div()
                     .flex()
                     .flex_col()
                     .gap_2()
                     .p_4()
                     .border_1()
-                    .border_color(rgb(p.border))
-                    .bg(rgb(p.panel))
+                    .border_color(rgb(if selected_finding { p.accent } else { p.border }))
+                    .bg(rgb(if selected_finding { p.raised } else { p.panel }))
                     .child(
                         div()
                             .flex()
@@ -6474,6 +7132,16 @@ impl Product {
             }))
             .child(text.to_owned())
     }
+}
+
+fn select_product_diagram_interaction(
+    product: &mut Product,
+    index: usize,
+    window: &mut Window,
+    cx: &mut Context<Product>,
+) {
+    window.focus(&product.focus);
+    product.select_diagram_interaction(index, cx);
 }
 
 fn source_title(source: &SourceRef) -> String {
