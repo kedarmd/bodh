@@ -2,6 +2,8 @@
 
 User feedback from the native PR review trial on 2026-11-05. The user confirmed repository/PR opening, Overview description rendering, changed-file rendering, diff rendering, and Base/Head/Draft comment controls. These screenshots record three remaining visual issues:
 
+Parent: [Bodh V1 implementation specification, issue #1](https://github.com/kedarmd/bodh/issues/1). This follows native Changes work in [issue #17](https://github.com/kedarmd/bodh/issues/17) and should be complete before the final integrated UI qualification in [issue #37](https://github.com/kedarmd/bodh/issues/37).
+
 1. Changed-file labels sit high within their rows instead of aligning vertically with the row.
 2. The selected Base/Head source revision and the open Draft comment editor do not have a clear active state.
 3. Split diff columns leave most of the available diff pane blank and have no visible separator.
