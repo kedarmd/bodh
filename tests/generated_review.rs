@@ -1068,6 +1068,87 @@ fn cli_rejects_invalid_full_result_without_writing() {
 }
 
 #[test]
+fn cli_failed_validation_correction_rounds_preserve_committed_result_and_drafts() {
+    let fixture = Fixture::new();
+    let control = OperationControl::default();
+    let store = GeneratedReviewStore::open(&fixture.state).unwrap();
+    let committed = store
+        .commit(&fixture.preparation_id, 0, &fixture.result(), &control)
+        .unwrap();
+    assert_eq!(committed.generation, 1);
+
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    let before_draft = drafts.list(&fixture.preparation_id).unwrap();
+    let saved = drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "Keep this reviewer draft while analysis is corrected.",
+            &SourceRef {
+                path: "src.rs".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1,
+            },
+            before_draft.workspace_revision,
+            0,
+            &control,
+        )
+        .unwrap();
+    let validation_generation = drafts
+        .list(&fixture.preparation_id)
+        .unwrap()
+        .workspace_revision;
+
+    // Model the initial validation and all three permitted correction rounds.
+    // Each candidate fixes the previous error but retains one independent
+    // contract error, so the public CLI must reject all four without commit.
+    let mut candidates = Vec::new();
+    let mut candidate: Value = serde_json::from_slice(&fixture.result()).unwrap();
+    candidate["findings"] = json!("not an array");
+    candidates.push(candidate.clone());
+    candidate["findings"] = json!([]);
+    candidate["diagrams"] = json!("not an array");
+    candidates.push(candidate.clone());
+    candidate["diagrams"] = json!([]);
+    candidate["coverage"]["limitations"] = json!("not an array");
+    candidates.push(candidate.clone());
+    candidate["coverage"]["limitations"] = json!([]);
+    candidate["follow_up"] = json!("not an array");
+    candidates.push(candidate);
+
+    for (round, candidate) in candidates.iter().enumerate() {
+        let (valid, output) = fixture.cli(
+            "validate",
+            &serde_json::to_vec(candidate).unwrap(),
+            validation_generation,
+        );
+        assert!(!valid, "round {round} unexpectedly validated: {output}");
+        assert_eq!(
+            output["code"], "CONTRACT_INVALID",
+            "round {round}: {output}"
+        );
+        assert!(
+            output["pointer"]
+                .as_str()
+                .is_some_and(|pointer| !pointer.is_empty()),
+            "round {round} did not report an actionable contract pointer: {output}"
+        );
+    }
+
+    let current = store.current(&fixture.preparation_id).unwrap().unwrap();
+    assert_eq!(current.generation, committed.generation);
+    assert_eq!(current.result, committed.result);
+    let after_draft = drafts.list(&fixture.preparation_id).unwrap();
+    assert_eq!(after_draft.drafts.len(), 1);
+    assert_eq!(after_draft.drafts[0].id, saved.draft.id);
+    assert_eq!(
+        after_draft.drafts[0].body,
+        "Keep this reviewer draft while analysis is corrected."
+    );
+}
+
+#[test]
 fn cli_replacement_authorization_requires_a_terminal() {
     let fixture = Fixture::new();
     let (authorized, output) = fixture.cli("authorize-replacement", &fixture.result(), 0);
