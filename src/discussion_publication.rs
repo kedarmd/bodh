@@ -43,6 +43,7 @@ pub struct DiscussionPlan {
     pub fingerprint: String,
     pub preparation_id: String,
     pub context_id: String,
+    pub intent_revision: u64,
     /// An optional grouped review operation. It must be confirmed before these
     /// dependent discussion operations can be sent.
     pub review_operation_id: Option<String>,
@@ -314,7 +315,7 @@ impl DiscussionPublicationStore {
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS discussion_publication_plans(
                 plan_id TEXT PRIMARY KEY NOT NULL, preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id),
-                context_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                context_id TEXT NOT NULL, intent_revision INTEGER NOT NULL, fingerprint TEXT NOT NULL,
                 review_operation_id TEXT, state TEXT NOT NULL CHECK(state IN ('planned','sending','partial','confirmed','failed','unknown')),
                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
             CREATE UNIQUE INDEX IF NOT EXISTS one_unresolved_discussion_plan
@@ -348,6 +349,7 @@ impl DiscussionPublicationStore {
     pub fn confirm(
         &mut self,
         preparation_id: &str,
+        expected_intent_revision: u64,
         review_operation_id: Option<&str>,
         replies: &[DiscussionSelection],
         actions: &[DiscussionSelection],
@@ -356,6 +358,33 @@ impl DiscussionPublicationStore {
             return Err(invalid("Select at least one reply or thread action", ""));
         }
         let binding = PreparationStore::open(&self.path)?.load(preparation_id)?;
+        let intent = crate::ReviewPublicationStore::open(&self.path)?.intent(preparation_id)?;
+        if intent.revision != expected_intent_revision
+            || intent
+                .selected_replies
+                .iter()
+                .map(|s| (&s.id, s.revision))
+                .collect::<Vec<_>>()
+                != replies
+                    .iter()
+                    .map(|s| (&s.id, s.revision))
+                    .collect::<Vec<_>>()
+            || intent
+                .selected_thread_actions
+                .iter()
+                .map(|s| (&s.id, s.revision))
+                .collect::<Vec<_>>()
+                != actions
+                    .iter()
+                    .map(|s| (&s.id, s.revision))
+                    .collect::<Vec<_>>()
+        {
+            return Err(ContractError::new(
+                "REVIEW_INTENT_STALE",
+                "Discussion selection changed; reopen Finish Review",
+                "",
+            ));
+        }
         let snapshot = DraftStore::open(&self.path)?.list(preparation_id)?;
         let mut seen = std::collections::HashSet::new();
         let mut prepared = Vec::new();
@@ -426,6 +455,7 @@ impl DiscussionPublicationStore {
         let canonical = serde_json::to_vec(&(
             preparation_id,
             &binding.context.context_id,
+            expected_intent_revision,
             review_operation_id,
             &prepared,
         ))
@@ -456,7 +486,7 @@ impl DiscussionPublicationStore {
             format!("discussion-{}-retry{attempt}", &fingerprint[..24])
         };
         let now = now_ms();
-        tx.execute("INSERT INTO discussion_publication_plans(plan_id,preparation_id,context_id,fingerprint,review_operation_id,state,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,'planned',?6,?6)", params![id,preparation_id,binding.context.context_id,fingerprint,review_operation_id,now]).map_err(db_error)?;
+        tx.execute("INSERT INTO discussion_publication_plans(plan_id,preparation_id,context_id,intent_revision,fingerprint,review_operation_id,state,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,'planned',?7,?7)", params![id,preparation_id,binding.context.context_id,i64::try_from(expected_intent_revision).map_err(|_|state_error())?,fingerprint,review_operation_id,now]).map_err(db_error)?;
         for (ordinal, step) in prepared.iter().enumerate() {
             let step_id = format!("{}-{ordinal:04}", &fingerprint[..16]);
             tx.execute("INSERT INTO discussion_publication_steps(step_id,plan_id,ordinal,kind,draft_id,draft_revision,thread_id,root_comment_id,body,action,observed_resolved,state,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'planned',?12,?12)", params![step_id,id,ordinal as i64,step.0,step.1,i64::try_from(step.2).map_err(|_|state_error())?,step.3,step.4,step.5,step.6.map(action_name),step.7.map(i64::from),now]).map_err(db_error)?;
@@ -466,8 +496,15 @@ impl DiscussionPublicationStore {
     }
 
     pub fn plan(&self, id: &str) -> Result<DiscussionPlan, ContractError> {
-        let header: Option<(String,String,String,Option<String>,String)> = self.db.query_row("SELECT preparation_id,context_id,fingerprint,review_operation_id,state FROM discussion_publication_plans WHERE plan_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(db_error)?;
-        let Some((preparation_id, context_id, fingerprint, review_operation_id, state)) = header
+        let header: Option<(String,String,i64,String,Option<String>,String)> = self.db.query_row("SELECT preparation_id,context_id,intent_revision,fingerprint,review_operation_id,state FROM discussion_publication_plans WHERE plan_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(db_error)?;
+        let Some((
+            preparation_id,
+            context_id,
+            intent_revision,
+            fingerprint,
+            review_operation_id,
+            state,
+        )) = header
         else {
             return Err(invalid("Discussion plan not found", "/id"));
         };
@@ -535,6 +572,7 @@ impl DiscussionPublicationStore {
             fingerprint,
             preparation_id,
             context_id,
+            intent_revision: u64::try_from(intent_revision).map_err(|_| state_error())?,
             review_operation_id,
             state,
             steps,

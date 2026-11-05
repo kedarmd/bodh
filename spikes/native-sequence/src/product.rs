@@ -1997,6 +1997,7 @@ impl Product {
                         Some(
                             DiscussionPublicationStore::open(&state)?.confirm(
                                 &binding.preparation_id,
+                                intent.revision,
                                 review.as_ref().map(|p| p.id.as_str()),
                                 &intent
                                     .selected_replies
