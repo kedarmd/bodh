@@ -2,6 +2,8 @@
 
 This GPUI executable now has a product-mode home, repository/PR browser, and prepared review workspace for [issue #16](https://github.com/kedarmd/bodh/issues/16). The original rendering feasibility demo for [issue #2](https://github.com/kedarmd/bodh/issues/2) remains available with `--diagnostic`; it is not the product UI.
 
+For a user-local installation, run `scripts/install-local` from the repository root. It installs the native binary as `bodh-gui`, adds a `Bodh` desktop entry, and leaves the headless `bodh` CLI available separately. The default menu action opens the review home; direct review opening accepts `--open --repo <checkout> --pr <number>`. See the root [README](../../README.md) for state paths and the tested installation boundary.
+
 From the repository root, in a Linux graphical session:
 
 ```sh

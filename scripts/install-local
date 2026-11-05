@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/install-local [--prefix PATH]
+
+Build and install Bodh into PATH, defaulting to ~/.local. Installs the headless
+`bodh` CLI, the `bodh-gui` native application, and a Bodh desktop entry.
+EOF
+}
+
+prefix=${HOME:?HOME must be set}/.local
+while (($#)); do
+  case "$1" in
+    --prefix)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      prefix=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+[[ $prefix == /* ]] || { printf 'Install prefix must be an absolute path.\n' >&2; exit 2; }
+[[ $prefix != *$'\n'* && $prefix != *$'\t'* ]] || { printf 'Install prefix must not contain control whitespace.\n' >&2; exit 2; }
+applications_base=${XDG_DATA_HOME:-$HOME/.local/share}
+[[ $applications_base == /* ]] || { printf 'XDG_DATA_HOME must be an absolute path.\n' >&2; exit 2; }
+
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+native_manifest="$repo_root/spikes/native-sequence/Cargo.toml"
+cd -- "$repo_root"
+
+if [[ -n ${CARGO_TARGET_DIR:-} ]]; then
+  target_dir=$CARGO_TARGET_DIR
+  [[ $target_dir == /* ]] || target_dir="$repo_root/$target_dir"
+  cli_release="$target_dir/release"
+  gui_release="$target_dir/release"
+else
+  cli_release="$repo_root/target/release"
+  gui_release="$repo_root/spikes/native-sequence/target/release"
+fi
+
+printf 'Building Bodh CLI and native app with the pinned lockfiles…\n'
+cargo build --release --locked --manifest-path "$repo_root/Cargo.toml" --bin bodh
+cargo build --release --locked --manifest-path "$native_manifest" --bin bodh-sequence-spike
+
+bin_dir="$prefix/bin"
+applications_dir="$applications_base/applications"
+install -D -m 755 "$cli_release/bodh" "$bin_dir/bodh"
+install -D -m 755 "$gui_release/bodh-sequence-spike" "$bin_dir/bodh-gui"
+install -D -m 755 "$repo_root/packaging/bodh-gui-launcher" "$bin_dir/bodh-gui-launcher"
+
+desktop_escape() {
+  local value=$1
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  value=${value//%/%%}
+  printf '%s' "$value"
+}
+
+launcher=$(desktop_escape "$bin_dir/bodh-gui-launcher")
+install -d "$applications_dir"
+{
+  printf '[Desktop Entry]\n'
+  printf 'Type=Application\n'
+  printf 'Name=Bodh\n'
+  printf 'Comment=Review GitHub pull requests from a local checkout\n'
+  printf 'Exec="%s"\n' "$launcher"
+  printf 'Terminal=false\n'
+  printf 'StartupNotify=true\n'
+  printf 'StartupWMClass=bodh\n'
+  printf 'Categories=Development;Utility;\n'
+} > "$applications_dir/bodh.desktop"
+
+printf 'Installed Bodh CLI: %s\n' "$bin_dir/bodh"
+printf 'Installed Bodh GUI: %s\n' "$bin_dir/bodh-gui"
+printf 'Installed desktop entry: %s\n' "$applications_dir/bodh.desktop"
+printf 'Review state defaults to ~/.local/state/bodh (or $XDG_STATE_HOME/bodh).\n'
