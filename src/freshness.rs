@@ -350,6 +350,52 @@ pub fn apply_latest_switch_approval(
     approval_id: &str,
 ) -> Result<PreparedBinding, ContractError> {
     ensure_switch_tables(state)?;
+    // Load the immutable preparation bindings before taking the write lock.
+    // PreparationStore::open may configure WAL on a separate SQLite handle;
+    // doing that while this connection holds BEGIN IMMEDIATE can block until
+    // the busy timeout and hide the more useful stale-approval result.
+    let db = open_db(state)?;
+    let row: Option<ApprovalRow> = db
+        .query_row(
+            "SELECT current_preparation_id,candidate_preparation_id,current_context_id,
+                    candidate_context_id,workspace_revision,work_fingerprint,expires_at_ms,consumed_at_ms
+             FROM latest_switch_approvals WHERE approval_id=?1",
+            [approval_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(db_error)?;
+    drop(db);
+    let Some(initial_row) = row else {
+        return Err(approval_invalid());
+    };
+    let (
+        current_id,
+        candidate_id,
+        current_context,
+        candidate_context,
+        revision,
+        fingerprint,
+        expires_at,
+        consumed_at,
+    ) = initial_row.clone();
+    if consumed_at.is_some() || expires_at <= now_ms() {
+        return Err(approval_invalid());
+    }
+    let current = PreparationStore::open(state)?.load(&current_id)?;
+    let candidate = PreparationStore::open(state)?.load(&candidate_id)?;
+
     let mut db = open_db(state)?;
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -375,24 +421,10 @@ pub fn apply_latest_switch_approval(
         )
         .optional()
         .map_err(db_error)?;
-    let Some((
-        current_id,
-        candidate_id,
-        current_context,
-        candidate_context,
-        revision,
-        fingerprint,
-        expires_at,
-        consumed_at,
-    )) = row
-    else {
-        return Err(approval_invalid());
-    };
-    if consumed_at.is_some() || expires_at <= now_ms() {
+    if row.as_ref() != Some(&initial_row) {
         return Err(approval_invalid());
     }
-    let current = PreparationStore::open(state)?.load(&current_id)?;
-    let candidate = PreparationStore::open(state)?.load(&candidate_id)?;
+
     if current.context.context_id != current_context
         || candidate.context.context_id != candidate_context
         || i64::try_from(current.expected_generation).unwrap_or(-1) < 0
