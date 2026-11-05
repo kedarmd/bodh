@@ -27,6 +27,12 @@ fn run() -> Result<Value, ContractError> {
         return Err(arguments());
     }
     args.retain(|a| a != "--json");
+    if args.first().is_some_and(|a| a == "validate") && args.iter().any(|a| a == "--prepared") {
+        return generated_review_command("validate", &args[1..]);
+    }
+    if args.first().is_some_and(|a| a == "commit") {
+        return generated_review_command("commit", &args[1..]);
+    }
     if args.first().is_some_and(|a| a == "validate")
         && args.iter().any(|a| {
             matches!(
@@ -65,6 +71,58 @@ fn run() -> Result<Value, ContractError> {
             )
         }
         _ => Err(arguments()),
+    }
+}
+fn generated_review_command(command: &str, args: &[String]) -> Result<Value, ContractError> {
+    let o = options(
+        args,
+        &[
+            "--prepared",
+            "--input",
+            "--state",
+            "--expected-generation",
+            "--timeout-ms",
+        ],
+    )?;
+    let prepared = o.get("--prepared").ok_or_else(arguments)?;
+    let input = o.get("--input").ok_or_else(arguments)?;
+    let state = o.get("--state").ok_or_else(arguments)?;
+    let expected_generation = o
+        .get("--expected-generation")
+        .ok_or_else(arguments)?
+        .parse::<u64>()
+        .map_err(|_| arguments())?;
+    let timeout_ms = o
+        .get("--timeout-ms")
+        .map(|s| s.parse::<u64>().map_err(|_| arguments()))
+        .transpose()?
+        .unwrap_or(30_000);
+    if timeout_ms > 120_000 {
+        return Err(arguments());
+    }
+    let control =
+        bodh::OperationControl::with_timeout(std::time::Duration::from_millis(timeout_ms));
+    let store = bodh::GeneratedReviewStore::open(std::path::Path::new(state))?;
+    let bytes = read_input(input)?;
+    if command == "validate" {
+        let result = store.validate(prepared, expected_generation, &bytes, &control)?;
+        Ok(json!({
+            "valid": true,
+            "validation": "complete",
+            "context_id": result.context.context_id,
+            "expected_generation": expected_generation,
+            "finding_count": result.findings.len(),
+            "diagram_count": result.diagrams.len()
+        }))
+    } else {
+        let committed = store.commit(prepared, expected_generation, &bytes, &control)?;
+        Ok(json!({
+            "status": committed.status,
+            "generation": committed.generation,
+            "context_id": committed.result.context.context_id,
+            "finding_count": committed.result.findings.len(),
+            "diagram_count": committed.result.diagrams.len()
+        }))
     }
 }
 fn options(
@@ -159,7 +217,14 @@ fn inspect_command(args: &[String]) -> Result<Value, ContractError> {
         "discussions" => {
             bodh::acquire_discussions(&p, std::path::Path::new(state), &inspect_control(&o)?)
         }
-        "previous" => Ok(json!({"available":false,"reason":"NO_PRIOR_RESULT"})),
+        "previous" => {
+            match bodh::GeneratedReviewStore::open(std::path::Path::new(state))?.current(id)? {
+                Some(current) => Ok(
+                    json!({"available":true,"generation":current.generation,"result":current.result}),
+                ),
+                None => Ok(json!({"available":false,"reason":"NO_PRIOR_RESULT"})),
+            }
+        }
         "source" => {
             let path = o.get("--path").ok_or_else(arguments)?;
             let revision = match o.get("--revision").map(String::as_str) {
@@ -227,6 +292,14 @@ fn with_discussion_summary(mut manifest: Value, state: &str) -> Result<Value, Co
             json!(drafts.workspace_revision),
         );
         object.insert("draft_counts".into(), json!(drafts.counts));
+        object.insert(
+            "previous_result_available".into(),
+            json!(
+                bodh::GeneratedReviewStore::open(std::path::Path::new(state))?
+                    .current(&preparation_id)?
+                    .is_some()
+            ),
+        );
     }
     Ok(manifest)
 }
@@ -734,6 +807,8 @@ fn exit_category(error: &ContractError) -> i32 {
         | "WORKSPACE_REVISION_STALE"
         | "DRAFT_REVISION_STALE"
         | "REVIEW_INTENT_STALE"
+        | "PREPARATION_CONTEXT_STALE"
+        | "APPROVAL_REQUIRED"
         | "PR_HEAD_MOVED" => 3,
         "AUTH_ACCESS" | "GIT_UNAVAILABLE" | "GH_UNAVAILABLE" | "GIT_OBJECT_UNAVAILABLE" => 4,
         "OPERATION_TIMEOUT" | "CANCELLED" | "NETWORK_UNCERTAIN" => 5,
