@@ -21,11 +21,13 @@ pub use generated_review::*;
 mod model;
 mod preparation;
 mod publication;
+mod replacement_authorization;
 pub use evidence::*;
 pub use freshness::*;
 pub use model::*;
 pub use preparation::*;
 pub use publication::*;
+pub use replacement_authorization::{ReplacementApproval, ReplacementApprovalPreview};
 use serde::Serialize;
 use serde_json::{Value, json};
 

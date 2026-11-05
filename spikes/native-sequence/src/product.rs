@@ -1,10 +1,10 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
 use bodh::{
     CodeReplacementSnapshot, DiscussionPlan, DiscussionPublicationStore, DiscussionSelection,
-    DraftSnapshot, DraftStore, GeneratedReviewStore, GhDiscussionPublisher,
-    GhReviewPublisher, OperationControl, PinnedDiff, PreparationManifest, PreparationStore,
-    PreparedBinding, ReviewEvent, ReviewIntent, ReviewOperation, ReviewPublicationStore, Revision,
-    SelectedDraft, SourceRef, StageReviewRequest, inspect_remote_review_with_gh, read_diff,
+    DraftSnapshot, DraftStore, GeneratedReviewStore, GhDiscussionPublisher, GhReviewPublisher,
+    OperationControl, PinnedDiff, PreparationManifest, PreparationStore, PreparedBinding,
+    ReviewEvent, ReviewIntent, ReviewOperation, ReviewPublicationStore, Revision, SelectedDraft,
+    SourceRef, StageReviewRequest, inspect_remote_review_with_gh, read_diff,
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::overview::{

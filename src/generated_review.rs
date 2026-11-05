@@ -1,4 +1,5 @@
 //! Production validation and atomic persistence for one current generated review.
+use crate::replacement_authorization::{self, ReplacementApproval, ReplacementApprovalPreview};
 use crate::{
     ContractError, DiscussionFailure, DiscussionObservation, DraftStore, OperationControl,
     PreparationStore, PreparedBinding, PreparedEvidenceContext, PriorConcern, ReviewResult,
@@ -6,6 +7,7 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -55,6 +57,7 @@ impl GeneratedReviewStore {
              INSERT OR IGNORE INTO generated_review_migrations(version) VALUES(1);",
         )
         .map_err(db_error)?;
+        replacement_authorization::ensure_schema(&db)?;
         Ok(Self {
             path: path.to_path_buf(),
         })
@@ -87,6 +90,79 @@ impl GeneratedReviewStore {
         expected_generation: u64,
         input: &[u8],
         control: &OperationControl,
+    ) -> Result<GeneratedReviewCommit, ContractError> {
+        self.commit_inner(preparation_id, expected_generation, input, control, None)
+    }
+
+    /// Replaces a generated result after consuming a fresh, explicit approval.
+    pub fn commit_authorized(
+        &self,
+        preparation_id: &str,
+        expected_generation: u64,
+        input: &[u8],
+        approval_id: &str,
+        control: &OperationControl,
+    ) -> Result<GeneratedReviewCommit, ContractError> {
+        self.commit_inner(
+            preparation_id,
+            expected_generation,
+            input,
+            control,
+            Some(approval_id),
+        )
+    }
+
+    /// Requests human authorization for replacing the current result and its
+    /// exact snapshot of unpublished reviewer work.
+    pub fn authorize_replacement<F>(
+        &self,
+        preparation_id: &str,
+        expected_generation: u64,
+        input: &[u8],
+        control: &OperationControl,
+        confirm: F,
+    ) -> Result<ReplacementApproval, ContractError>
+    where
+        F: FnOnce(&ReplacementApprovalPreview) -> Result<bool, ContractError>,
+    {
+        let db = open_connection(&self.path)?;
+        let binding = load_binding(&db, preparation_id)?;
+        require_current_context(&db, &binding)?;
+        require_generation(
+            workspace_generation(&db, &binding.context.pr)?,
+            expected_generation,
+        )?;
+        let context = validation_context(&db, &binding)?;
+        let validated = validate_complete(input, &context, Path::new(&binding.checkout), control)?;
+        let candidate_json = serde_json::to_vec(&validated).map_err(json_error)?;
+        let validation_json = serde_json::to_vec(&context).map_err(json_error)?;
+        let candidate_fingerprint = format!("v1-{:x}", sha2::Sha256::digest(candidate_json));
+        let validation_fingerprint = format!("v1-{:x}", sha2::Sha256::digest(validation_json));
+        let snapshot = replacement_authorization::protected_snapshot(
+            &db,
+            &binding,
+            expected_generation,
+            &candidate_fingerprint,
+            &validation_fingerprint,
+        )?;
+        replacement_authorization::persist_approval(
+            &self.path,
+            &binding,
+            expected_generation,
+            &candidate_fingerprint,
+            &validation_fingerprint,
+            &snapshot,
+            confirm,
+        )
+    }
+
+    fn commit_inner(
+        &self,
+        preparation_id: &str,
+        expected_generation: u64,
+        input: &[u8],
+        control: &OperationControl,
+        approval_id: Option<&str>,
     ) -> Result<GeneratedReviewCommit, ContractError> {
         let candidate = validate_structure(input)?;
         let mut db = open_connection(&self.path)?;
@@ -125,6 +201,9 @@ impl GeneratedReviewStore {
             })
             .collect::<Vec<_>>();
         let prior_concerns_json = serde_json::to_string(&prior_concerns).map_err(json_error)?;
+        let candidate_fingerprint = format!("v1-{:x}", sha2::Sha256::digest(&result_json));
+        let validation_fingerprint =
+            format!("v1-{:x}", sha2::Sha256::digest(&validation_context_json));
 
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -142,13 +221,6 @@ impl GeneratedReviewStore {
             });
         }
 
-        if unpublished_work_count(&tx, &binding)? > 0 {
-            return Err(ContractError::new(
-                "APPROVAL_REQUIRED",
-                "Changed generated results cannot replace unpublished reviewer work",
-                "",
-            ));
-        }
         let current_generation = workspace_generation(&tx, &binding.context.pr)?;
         require_generation(current_generation, expected_generation)?;
         let current_validation_context = validation_context(&tx, &binding)?;
@@ -160,6 +232,49 @@ impl GeneratedReviewStore {
                 "Prepared discussions or prior concerns changed during validation; reload context and validate again",
                 "",
             ));
+        }
+        let snapshot = replacement_authorization::protected_snapshot(
+            &tx,
+            &binding,
+            current_generation,
+            &candidate_fingerprint,
+            &validation_fingerprint,
+        )?;
+        if snapshot.unresolved_publications > 0 {
+            return Err(ContractError::new(
+                "PUBLICATION_RECOVERY_REQUIRED",
+                "Resolve in-flight or uncertain publication steps before replacing the generated review",
+                "",
+            ));
+        }
+        let authorized = if snapshot.preview.total_unpublished_work > 0 {
+            let Some(approval_id) = approval_id else {
+                return Err(ContractError::new(
+                    "APPROVAL_REQUIRED",
+                    "Changed generated results cannot replace unpublished reviewer work without explicit approval",
+                    "",
+                ));
+            };
+            Some(replacement_authorization::consume_approval(
+                &tx,
+                &binding,
+                current_generation,
+                &candidate_fingerprint,
+                &validation_fingerprint,
+                approval_id,
+            )?)
+        } else {
+            None
+        };
+        if approval_id.is_some() && authorized.is_none() {
+            return Err(ContractError::new(
+                "APPROVAL_NOT_REQUIRED",
+                "No unpublished reviewer work remains to authorize",
+                "",
+            ));
+        }
+        if let Some(work) = authorized {
+            replacement_authorization::clear_authorized_work(&tx, &binding, &work)?;
         }
         control.check()?;
         let next_generation = current_generation.checked_add(1).ok_or_else(state_error)?;
@@ -474,81 +589,6 @@ fn load_current(
         })
     })
     .transpose()
-}
-
-fn unpublished_work_count(
-    db: &Connection,
-    binding: &PreparedBinding,
-) -> Result<u64, ContractError> {
-    let pr = &binding.context.pr;
-    let mut total = 0u64;
-    for table in [
-        "manual_text_drafts",
-        "code_replacement_drafts",
-        "reply_drafts",
-        "thread_action_drafts",
-    ] {
-        if !table_exists(db, table)? {
-            continue;
-        }
-        let query = if table_exists(db, "review_published_drafts")? {
-            format!(
-                "SELECT count(*) FROM {table} d
-                 WHERE d.host=?1 AND d.owner=?2 AND d.repository=?3 AND d.number=?4
-                   AND NOT EXISTS (
-                     SELECT 1 FROM review_published_drafts p
-                     WHERE p.context_id=d.context_id AND p.draft_id=d.draft_id
-                       AND p.draft_revision=d.revision
-                   )"
-            )
-        } else {
-            format!(
-                "SELECT count(*) FROM {table}
-                 WHERE host=?1 AND owner=?2 AND repository=?3 AND number=?4"
-            )
-        };
-        let count: i64 = db
-            .query_row(
-                &query,
-                params![
-                    pr.host,
-                    pr.owner,
-                    pr.repository,
-                    i64::try_from(pr.number).map_err(|_| state_error())?
-                ],
-                |row| row.get(0),
-            )
-            .map_err(db_error)?;
-        total = total
-            .checked_add(u64::try_from(count).map_err(|_| state_error())?)
-            .ok_or_else(state_error)?;
-    }
-    if table_exists(db, "review_intents")? {
-        let count: i64 = db
-            .query_row(
-                "SELECT count(*) FROM review_intents WHERE preparation_id=?1",
-                [&binding.preparation_id],
-                |row| row.get(0),
-            )
-            .map_err(db_error)?;
-        total = total
-            .checked_add(u64::try_from(count).map_err(|_| state_error())?)
-            .ok_or_else(state_error)?;
-    }
-    if table_exists(db, "review_operations")? {
-        let count: i64 = db
-            .query_row(
-                "SELECT count(*) FROM review_operations
-                 WHERE preparation_id=?1 AND state IN ('planned','sending','unknown')",
-                [&binding.preparation_id],
-                |row| row.get(0),
-            )
-            .map_err(db_error)?;
-        total = total
-            .checked_add(u64::try_from(count).map_err(|_| state_error())?)
-            .ok_or_else(state_error)?;
-    }
-    Ok(total)
 }
 
 fn table_exists(db: &Connection, table: &str) -> Result<bool, ContractError> {

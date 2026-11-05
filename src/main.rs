@@ -1,6 +1,6 @@
 use bodh::{ContractError, MAX_INPUT_BYTES, PROTOCOL_VERSION};
 use serde_json::{Value, json};
-use std::io::Read;
+use std::io::{IsTerminal, Read, Write};
 
 fn read_input(path: &str) -> Result<Vec<u8>, ContractError> {
     let reader: Box<dyn Read> =
@@ -32,6 +32,9 @@ fn run() -> Result<Value, ContractError> {
     }
     if args.first().is_some_and(|a| a == "commit") {
         return generated_review_command("commit", &args[1..]);
+    }
+    if args.first().is_some_and(|a| a == "authorize-replacement") {
+        return generated_review_command("authorize-replacement", &args[1..]);
     }
     if args.first().is_some_and(|a| a == "validate")
         && args.iter().any(|a| {
@@ -82,6 +85,7 @@ fn generated_review_command(command: &str, args: &[String]) -> Result<Value, Con
             "--state",
             "--expected-generation",
             "--timeout-ms",
+            "--approval",
         ],
     )?;
     let prepared = o.get("--prepared").ok_or_else(arguments)?;
@@ -100,6 +104,9 @@ fn generated_review_command(command: &str, args: &[String]) -> Result<Value, Con
     if timeout_ms > 120_000 {
         return Err(arguments());
     }
+    if command != "commit" && o.contains_key("--approval") {
+        return Err(arguments());
+    }
     let control =
         bodh::OperationControl::with_timeout(std::time::Duration::from_millis(timeout_ms));
     let store = bodh::GeneratedReviewStore::open(std::path::Path::new(state))?;
@@ -114,8 +121,30 @@ fn generated_review_command(command: &str, args: &[String]) -> Result<Value, Con
             "finding_count": result.findings.len(),
             "diagram_count": result.diagrams.len()
         }))
+    } else if command == "authorize-replacement" {
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() || input == "-" {
+            return Err(ContractError::new(
+                "APPROVAL_TTY_REQUIRED",
+                "Replacement approval requires an interactive terminal and an input file",
+                "",
+            ));
+        }
+        let approval = store.authorize_replacement(prepared, expected_generation, &bytes, &control, |preview| {
+            let phrase = format!("{}/{}/{}#{}", preview.host, preview.owner, preview.repository, preview.pull_request_number);
+            eprintln!("This replaces the generated review and clears {} unpublished items ({} comments, {} code replacements, {} replies, {} thread actions, {} grouped intents). Candidate: {}", preview.total_unpublished_work, preview.inline_comments, preview.code_replacements, preview.replies, preview.thread_actions, preview.review_intents, preview.candidate_fingerprint);
+            eprint!("Type {phrase} to authorize: ");
+            std::io::stderr().flush().map_err(|_| ContractError::new("APPROVAL_INPUT_FAILED", "Could not display approval prompt", ""))?;
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer).map_err(|_| ContractError::new("APPROVAL_INPUT_FAILED", "Could not read approval response", ""))?;
+            Ok(answer.trim() == phrase)
+        })?;
+        Ok(json!({"approval_id": approval.id, "expires_at_ms": approval.expires_at_ms}))
     } else {
-        let committed = store.commit(prepared, expected_generation, &bytes, &control)?;
+        let committed = if let Some(approval) = o.get("--approval") {
+            store.commit_authorized(prepared, expected_generation, &bytes, approval, &control)?
+        } else {
+            store.commit(prepared, expected_generation, &bytes, &control)?
+        };
         Ok(json!({
             "status": committed.status,
             "generation": committed.generation,
@@ -815,6 +844,8 @@ fn exit_category(error: &ContractError) -> i32 {
         | "REVIEW_INTENT_STALE"
         | "PREPARATION_CONTEXT_STALE"
         | "APPROVAL_REQUIRED"
+        | "APPROVAL_STALE"
+        | "PUBLICATION_RECOVERY_REQUIRED"
         | "PR_HEAD_MOVED" => 3,
         "AUTH_ACCESS" | "GIT_UNAVAILABLE" | "GH_UNAVAILABLE" | "GIT_OBJECT_UNAVAILABLE" => 4,
         "OPERATION_TIMEOUT" | "CANCELLED" | "NETWORK_UNCERTAIN" => 5,
@@ -825,7 +856,7 @@ fn exit_category(error: &ContractError) -> i32 {
 fn arguments() -> ContractError {
     ContractError::new(
         "INVALID_ARGUMENTS",
-        "Use contract describe/schema, prepare --repo <checkout> --pr <number> --state <database> [--remote <name>], inspect --prepared <id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>, draft list|save|discard, review intent|stage|confirm|operation, or a validate command; optional --json",
+        "Use contract describe/schema, prepare --repo <checkout> --pr <number> --state <database> [--remote <name>], inspect --prepared <id> --kind <manifest|description|files|diff|source|discussions|previous> --state <database>, draft list|save|discard, review intent|stage|confirm|operation, validate, commit, or authorize-replacement; optional --json",
         "",
     )
 }

@@ -693,7 +693,7 @@ impl DiscussionPublicationStore {
                 self.set_step(plan_id,&planned.id,"unsent",None,Some("Current thread permission or state does not allow this operation; no request was sent"))?;
                 continue;
             }
-            match self.begin_step(plan_id, &planned) {
+            match self.begin_step(plan_id, planned) {
                 Ok(true) => (),
                 Ok(false) => continue,
                 Err(error) => {
