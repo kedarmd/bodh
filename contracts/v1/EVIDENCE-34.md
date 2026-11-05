@@ -18,11 +18,12 @@
 - `CARGO_BUILD_JOBS=2 cargo test --locked --test discussions` passes (8 tests).
 - `CARGO_BUILD_JOBS=2 cargo test --locked --test manual_drafts` passes (14 tests).
 - `CARGO_BUILD_JOBS=2 cargo test --locked --test discussion_drafts` passes (5 tests).
+- Integrated `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passes after resolving a lock-ordering regression in load-latest approval consumption; full output is [VALIDATE-34-final.log](VALIDATE-34-final.log). The exact freshness regression test passed five repeated runs, then the full freshness target passed (5 tests).
 
 ## Limits
 
 - The bounded policy is scoped to discussion cache history per preparation. Preparation rows and contexts are not globally evicted because drafts, generated results, and publication recovery do not share a complete safe reference/retention index yet. Human drafts, current generated results, compact prior concerns, and unresolved publication payloads remain preserved; this means total database size is not yet globally bounded.
 - The cache is bounded by observation count, not by on-disk byte size. Each acquired observation already has an 8 MiB transport limit, but page rows and normalized thread rows duplicate some data. Final numeric storage budgets remain for qualification.
-- The interrupted migration test simulates a stale version marker against an existing schema. No process-kill fault injection was performed between SQLite DDL statements; SQLite transactional rollback is exercised through the failed migration path.
+- Load-latest approval consumption now reads immutable preparation bindings before acquiring its write transaction, then revalidates the approval inside the transaction; this avoids nested WAL setup under a held write lock. The interrupted migration test simulates a stale version marker against an existing schema. No process-kill fault injection was performed between SQLite DDL statements; SQLite transactional rollback is exercised through the failed migration path.
 - No full repeated prepare/import/follow-up/publication/restart workflow was run under forced Git-object eviction. No native GUI and CLI preference-write race was run. Existing exact-source behavior reports unavailable pinned objects rather than substituting current worktree source; this ticket's cache cleanup does not alter it.
 - No live GitHub writes were performed.
