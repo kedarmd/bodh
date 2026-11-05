@@ -13,6 +13,8 @@ pub use drafts::*;
 mod findings;
 pub use findings::*;
 mod follow_up;
+mod generated_review;
+pub use generated_review::*;
 mod model;
 mod preparation;
 mod publication;
@@ -140,11 +142,11 @@ pub fn describe() -> Value {
             "validate --input <file> --structural",
             "validate --input <file> --evidence-only --context <fixture.json> --repository <checkout>",
             "validate --input <file> --findings-only --context <fixture.json> --repository <checkout>",
-            "validate --input <file> --complete-fixture --context <fixture.json> --repository <checkout>"
+            "validate --input <file> --complete-fixture --context <fixture.json> --repository <checkout>",
+            "validate --prepared <preparation-id> --input <file|-> --state <database> --expected-generation <revision> [--timeout-ms <milliseconds>]",
+            "commit --prepared <preparation-id> --input <file|-> --state <database> --expected-generation <revision> [--timeout-ms <milliseconds>]"
         ],
         "reserved_commands":[
-            "validate --prepared <preparation-id> --input <file>",
-            "commit --prepared <preparation-id> --input <operation-id> [--approval <grant-id>]",
             "authorize-replacement --prepared <preparation-id> [...human interaction]",
             "open --repo <checkout> --pr <number>"
         ],
