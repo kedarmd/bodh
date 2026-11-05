@@ -161,6 +161,10 @@ pub struct Product {
     review_plan: Option<ReviewOperation>,
     review_loading: bool,
     review_summary_focus: FocusHandle,
+    freshness_observation: Option<bodh::FreshnessObservation>,
+    latest_switch_preview: Option<bodh::LatestSwitchPreview>,
+    freshness_loading: bool,
+    last_freshness_check: Option<std::time::Instant>,
 }
 
 impl Product {
@@ -238,6 +242,10 @@ impl Product {
             review_plan: None,
             review_loading: false,
             review_summary_focus: cx.focus_handle(),
+            freshness_observation: None,
+            latest_switch_preview: None,
+            freshness_loading: false,
+            last_freshness_check: None,
         };
         app.refresh_gh_cli(cx);
         app
@@ -1706,6 +1714,171 @@ impl Product {
         }).detach();
     }
 
+    fn check_freshness(&mut self, cx: &mut Context<Self>) {
+        if self.freshness_loading {
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let gh = match &self.gh_cli_status {
+            GhCliStatus::Available(path) => PathBuf::from(path),
+            _ => PathBuf::from("gh"),
+        };
+        let control = OperationControl::with_timeout(Duration::from_secs(12));
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let id = binding.preparation_id.clone();
+        self.freshness_loading = true;
+        self.last_freshness_check = Some(std::time::Instant::now());
+        self.error = None;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(
+                    async move { bodh::refresh_freshness_with_gh(&binding, &state, &control, &gh) },
+                )
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|item| item.preparation_id != id)
+                {
+                    return;
+                }
+                this.freshness_loading = false;
+                match result {
+                    Ok(observation) => {
+                        this.freshness_observation = Some(observation);
+                        this.latest_switch_preview = None;
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn stage_latest(&mut self, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let gh = match &self.gh_cli_status {
+            GhCliStatus::Available(path) => PathBuf::from(path),
+            _ => PathBuf::from("gh"),
+        };
+        let control = OperationControl::with_timeout(Duration::from_secs(90));
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let id = binding.preparation_id.clone();
+        let prepare_id = id.clone();
+        self.freshness_loading = true;
+        self.error = None;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    bodh::prepare_latest_candidate_with_gh(&prepare_id, &state, &control, &gh)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token
+                    || this
+                        .selected_review
+                        .as_ref()
+                        .is_none_or(|item| item.preparation_id != id)
+                {
+                    return;
+                }
+                this.freshness_loading = false;
+                match result {
+                    Ok(preview) => {
+                        this.latest_switch_preview = Some(preview);
+                        this.error = None;
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn apply_latest(&mut self, cx: &mut Context<Self>) {
+        if self.draft_saving
+            || self
+                .draft_editor
+                .as_ref()
+                .is_some_and(TextDraftEditor::is_dirty)
+            || self
+                .replacement_editor
+                .as_ref()
+                .is_some_and(CodeReplacementEditor::is_dirty)
+            || (!self.reply_body.is_empty() && !self.reply_saving)
+            || self.review_intent.as_ref().is_some_and(|intent| {
+                intent.summary.as_deref() != Some(self.review_summary.as_str())
+            })
+        {
+            self.error =
+                Some("Save the current editor contents before loading another preparation.".into());
+            cx.notify();
+            return;
+        }
+        let (Some(binding), Some(preview)) = (
+            self.selected_review.clone(),
+            self.latest_switch_preview.clone(),
+        ) else {
+            return;
+        };
+        let state = self.preparation_db.clone();
+        let gh = match &self.gh_cli_status {
+            GhCliStatus::Available(path) => PathBuf::from(path),
+            _ => PathBuf::from("gh"),
+        };
+        let current_id = binding.preparation_id.clone();
+        let candidate_id = preview.candidate.preparation_id.clone();
+        let candidate = preview.candidate.clone();
+        let expected = preview.protected_work.fingerprint.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(90));
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.freshness_loading = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx.background_executor().spawn(async move {
+                bodh::verify_latest_candidate_with_gh(&candidate, &state, &control, &gh)?;
+                let approval = bodh::authorize_latest_switch(&state, &current_id, &candidate_id, &expected)?;
+                let switched = bodh::apply_latest_switch_approval(&state, &approval.approval_id)?;
+                let drafts = DraftStore::open(&state)?.list(&switched.preparation_id)?;
+                let replacements = DraftStore::open(&state)?.list_replacements(&switched.preparation_id)?;
+                let discussions = bodh::load_latest_discussions(&state, &switched.preparation_id)?;
+                let freshness = bodh::refresh_freshness_with_gh(&switched, &state, &control, &gh)?;
+                Ok::<_, bodh::ContractError>((switched, drafts, replacements, discussions, freshness))
+            }).await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token { return; }
+                this.freshness_loading = false;
+                match result {
+                    Ok((binding, drafts, replacements, discussions, freshness)) => {
+                        let id = binding.preparation_id.clone();
+                        this.active_repository = Some(binding.checkout.clone());
+                        this.description_blocks = safe_markdown_blocks(binding.description.as_deref().unwrap_or_default());
+                        this.draft_snapshot = Some(drafts.clone()); this.update_draft_counts(drafts.counts);
+                        this.replacement_snapshot = Some(replacements); this.discussion_state = discussions;
+                        this.selected_review = Some(binding.clone()); this.remember(&PreparationManifest::from(binding.clone()), &binding, cx);
+                        this.freshness_observation = Some(freshness); this.latest_switch_preview = None;
+                        this.draft_editor = None; this.replacement_editor = None; this.reply_body.clear();
+                        this.status = Some(format!("Loaded latest PR preparation {}. Previous review work remains on the earlier preparation.", id));
+                        this.error = None;
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
+                }
+                cx.notify();
+            });
+        }).detach();
+    }
+
     fn palette(&self) -> Palette {
         Palette::new(self.prefs.dark)
     }
@@ -1789,6 +1962,15 @@ impl Product {
 
 impl Render for Product {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.screen == Screen::Workspace
+            && _window.is_window_active()
+            && !self.freshness_loading
+            && self
+                .last_freshness_check
+                .is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
+        {
+            self.check_freshness(cx);
+        }
         let p = self.palette();
         let mut root = div()
             .id("bodh-workspace")
@@ -2521,6 +2703,75 @@ impl Product {
                         )),
                 ),
         );
+        let freshness_label = if self.freshness_loading {
+            "Checking GitHub metadata…".to_owned()
+        } else if let Some(observation) = &self.freshness_observation {
+            match observation.status {
+                bodh::FreshnessStatus::Current => {
+                    format!("Up to date · checked {}", observation.checked_at_ms)
+                }
+                bodh::FreshnessStatus::Changed => format!(
+                    "PR changed on GitHub · head moved: {}, base moved: {}",
+                    observation.head_moved, observation.base_moved
+                ),
+                bodh::FreshnessStatus::Closed => "PR is no longer open on GitHub".into(),
+                bodh::FreshnessStatus::Unknown => format!(
+                    "Freshness unknown · {}",
+                    observation
+                        .error_code
+                        .as_deref()
+                        .unwrap_or("metadata unavailable")
+                ),
+            }
+        } else {
+            "Freshness has not been checked".into()
+        };
+        let mut freshness_bar = div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .p_3()
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.panel))
+            .child(
+                div()
+                    .flex_1()
+                    .text_color(rgb(p.muted))
+                    .child(freshness_label),
+            );
+        freshness_bar = freshness_bar.child(button(
+            "check-pr-freshness",
+            "Check for Updates",
+            p,
+            |this, _, _, cx| this.check_freshness(cx),
+            cx,
+        ));
+        if self
+            .freshness_observation
+            .as_ref()
+            .is_some_and(|item| item.status == bodh::FreshnessStatus::Changed)
+        {
+            freshness_bar = freshness_bar.child(button(
+                "stage-latest-pr",
+                "Load Latest…",
+                p,
+                |this, _, _, cx| this.stage_latest(cx),
+                cx,
+            ));
+        }
+        page = page.child(freshness_bar);
+        if let Some(preview) = self.latest_switch_preview.clone() {
+            page = page.child(div().flex().items_center().gap_3().p_3().border_1()
+                .border_color(rgb(p.accent)).bg(rgb(p.raised))
+                .child(div().flex_1().child(format!(
+                    "Ready to load latest · base {} · head {} · {} pending work item(s) stay on the current review",
+                    short_sha(&preview.candidate.context.base_sha), short_sha(&preview.candidate.context.head_sha),
+                    preview.protected_work.unpublished_draft_count + preview.protected_work.unresolved_publication_count
+                )))
+                .child(button("apply-latest-pr", "Load this preparation", p,
+                    |this, _, _, cx| this.apply_latest(cx), cx)));
+        }
         let mut tabs = div()
             .flex()
             .gap_2()
