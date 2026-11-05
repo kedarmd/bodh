@@ -64,6 +64,17 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_sources(
+            "fn main() {\n    let count = 1;\n}\n",
+            "fn main() {\n    let count = 2;\n}\n",
+        )
+    }
+
+    fn with_sources(base_source: &str, head_source: &str) -> Self {
+        Self::with_paths("source.rs", "source.rs", base_source, head_source)
+    }
+
+    fn with_paths(old_path: &str, new_path: &str, base_source: &str, head_source: &str) -> Self {
         let root = std::env::temp_dir().join(format!(
             "bodh-manual-drafts-{}-{}",
             std::process::id(),
@@ -73,20 +84,17 @@ impl Fixture {
         let state = root.join("state.sqlite");
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-b", "main"]);
-        std::fs::write(
-            repo.join("source.rs"),
-            "fn main() {\n    let count = 1;\n}\n",
-        )
-        .unwrap();
+        std::fs::write(repo.join(old_path), base_source).unwrap();
         std::fs::write(repo.join("unchanged.rs"), "fn stable() {}\n").unwrap();
+        std::fs::write(repo.join("binary.bin"), [0u8, 1, 2]).unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "base"]);
         let base = git(&repo, &["rev-parse", "HEAD"]);
-        std::fs::write(
-            repo.join("source.rs"),
-            "fn main() {\n    let count = 2;\n}\n",
-        )
-        .unwrap();
+        if old_path != new_path {
+            std::fs::rename(repo.join(old_path), repo.join(new_path)).unwrap();
+        }
+        std::fs::write(repo.join(new_path), head_source).unwrap();
+        std::fs::write(repo.join("binary.bin"), [0u8, 1, 3]).unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "head"]);
         let head = git(&repo, &["rev-parse", "HEAD"]);
@@ -122,7 +130,7 @@ impl Fixture {
             state,
             preparation_id: binding.preparation_id,
             source: SourceRef {
-                path: "source.rs".into(),
+                path: new_path.into(),
                 revision: Revision::Head,
                 start_line: 2,
                 end_line: 2,
@@ -180,6 +188,273 @@ fn saved_comment_draft_reopens_with_pinned_provenance_and_revision() {
     assert_eq!(loaded.workspace_revision, 1);
     assert_eq!(loaded.drafts, [saved.draft]);
     assert_eq!(fixture.snapshot(), before);
+}
+
+#[test]
+fn code_replacement_drafts_validate_exact_head_spans_and_keep_checkout_unchanged() {
+    let fixture = Fixture::new();
+    let before = fixture.snapshot();
+    let original = "    let count = 2;\n";
+    let mut first = DraftStore::open(&fixture.state).unwrap();
+    let saved = first
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &fixture.source,
+            original,
+            "    let count = 3;\n",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(saved.draft.original_text, original);
+    assert_eq!(saved.draft.replacement, "    let count = 3;\n");
+    let listed = first.list_replacements(&fixture.preparation_id).unwrap();
+    assert_eq!(listed.drafts.len(), 1);
+    assert_eq!(listed.drafts[0], saved.draft);
+    assert_eq!(
+        before,
+        fixture.snapshot(),
+        "draft creation must never apply the proposal"
+    );
+
+    let mut resumed = DraftStore::open(&fixture.state).unwrap();
+    let revised = resumed
+        .save_replacement(
+            &fixture.preparation_id,
+            Some(&saved.draft.id),
+            &fixture.source,
+            original,
+            "    let count = 4;\n",
+            saved.workspace_revision,
+            1,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(revised.draft.revision, 2);
+    assert_eq!(revised.draft.replacement, "    let count = 4;\n");
+}
+
+#[test]
+fn code_replacement_accepts_inclusive_multiline_head_range_and_preserves_final_newline() {
+    let fixture = Fixture::new();
+    let source = SourceRef {
+        path: "source.rs".into(),
+        revision: Revision::Head,
+        start_line: 1,
+        end_line: 2,
+    };
+    let original = "fn main() {\n    let count = 2;\n";
+    let mut store = DraftStore::open(&fixture.state).unwrap();
+    let result = store
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &source,
+            original,
+            "fn main() {\n    let count = 3;\n",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(result.draft.original_text, original);
+    assert!(result.draft.original_text.ends_with('\n'));
+}
+
+#[test]
+fn replacement_source_round_trips_crlf_and_missing_final_newline_exactly() {
+    let fixture = Fixture::with_sources(
+        "fn main() {\r\n    let count = 1;\r\n}\r\n",
+        "fn main() {\r\n    let count = 2;",
+    );
+    let source = SourceRef {
+        path: "source.rs".into(),
+        revision: Revision::Head,
+        start_line: 2,
+        end_line: 2,
+    };
+    let mut store = DraftStore::open(&fixture.state).unwrap();
+    let draft = store
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &source,
+            "    let count = 2;",
+            "    let count = 3;",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(draft.draft.original_text, "    let count = 2;");
+    assert!(!draft.draft.original_text.ends_with('\n'));
+}
+
+#[test]
+fn edited_renames_are_eligible_by_head_path_and_binary_spans_are_rejected() {
+    let fixture = Fixture::with_paths(
+        "old-name.rs",
+        "new-name.rs",
+        "fn value() {\n    let count = 1;\n}\n",
+        "fn value() {\n    let count = 2;\n}\n",
+    );
+    let renamed = SourceRef {
+        path: "new-name.rs".into(),
+        revision: Revision::Head,
+        start_line: 2,
+        end_line: 2,
+    };
+    let mut store = DraftStore::open(&fixture.state).unwrap();
+    let saved = store
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &renamed,
+            "    let count = 2;\n",
+            "    let count = 3;\n",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(saved.draft.source.path, "new-name.rs");
+    let binary = SourceRef {
+        path: "binary.bin".into(),
+        revision: Revision::Head,
+        start_line: 1,
+        end_line: 1,
+    };
+    let error = store
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &binary,
+            "\u{0}",
+            "text",
+            saved.workspace_revision,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "INLINE_CONTENT_UNSUPPORTED");
+}
+
+#[test]
+fn code_replacements_reject_old_side_changed_source_and_stale_concurrent_saves() {
+    let fixture = Fixture::new();
+    let mut store = DraftStore::open(&fixture.state).unwrap();
+    let mut old_side = fixture.source.clone();
+    old_side.revision = Revision::Base;
+    let error = store
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &old_side,
+            "    let count = 1;\n",
+            "x\n",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "REPLACEMENT_HEAD_ONLY");
+    let error = store
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &fixture.source,
+            "changed\n",
+            "x\n",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "REPLACEMENT_SOURCE_CHANGED");
+
+    let saved = store
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &fixture.source,
+            "    let count = 2;\n",
+            "x\n",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    store
+        .save_replacement(
+            &fixture.preparation_id,
+            Some(&saved.draft.id),
+            &fixture.source,
+            "    let count = 2;\n",
+            "first edit\n",
+            saved.workspace_revision,
+            1,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let mut second = DraftStore::open(&fixture.state).unwrap();
+    let error = second
+        .save_replacement(
+            &fixture.preparation_id,
+            Some(&saved.draft.id),
+            &fixture.source,
+            "    let count = 2;\n",
+            "lost edit\n",
+            saved.workspace_revision,
+            1,
+            &OperationControl::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "WORKSPACE_REVISION_STALE");
+}
+
+#[test]
+fn replacement_cli_uses_separate_list_and_save_envelopes() {
+    let fixture = Fixture::new();
+    let args = [
+        "draft",
+        "replacement-list",
+        "--prepared",
+        &fixture.preparation_id,
+        "--state",
+        fixture.state.to_str().unwrap(),
+    ];
+    let listed = invoke_cli(&args, None);
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let envelope: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert!(envelope["data"]["drafts"].as_array().unwrap().is_empty());
+    let input = serde_json::json!({"source":fixture.source,"original_text":"    let count = 2;\n","replacement":"    let count = 5;\n","expected_workspace_revision":0,"expected_draft_revision":0});
+    let args = [
+        "draft",
+        "replacement-save",
+        "--prepared",
+        &fixture.preparation_id,
+        "--state",
+        fixture.state.to_str().unwrap(),
+        "--input",
+        "-",
+    ];
+    let saved = invoke_cli(&args, Some(&input));
+    assert!(
+        saved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&saved.stderr)
+    );
+    let envelope: serde_json::Value = serde_json::from_slice(&saved.stdout).unwrap();
+    assert_eq!(
+        envelope["data"]["draft"]["replacement"],
+        "    let count = 5;\n"
+    );
 }
 
 #[test]

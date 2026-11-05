@@ -1,3 +1,4 @@
+use bodh::{CodeReplacementDraft, CodeReplacementSaveResult};
 use bodh::{DraftSaveResult, ManualTextDraft, SourceRef};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -38,6 +39,167 @@ pub struct TextDraftEditor {
     pub error_code: Option<String>,
     pub error: Option<String>,
     saved_body: Option<String>,
+}
+
+/// Local editable replacement state with the exact pinned excerpt kept for preview.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodeReplacementEditor {
+    pub draft_id: Option<String>,
+    pub source: SourceRef,
+    pub original_text: String,
+    pub replacement: String,
+    pub cursor: usize,
+    pub select_all: bool,
+    pub workspace_revision: u64,
+    pub draft_revision: u64,
+    pub error: Option<String>,
+    pub error_code: Option<String>,
+    saved_replacement: Option<String>,
+}
+
+impl CodeReplacementEditor {
+    pub fn new(source: SourceRef, original_text: String, workspace_revision: u64) -> Self {
+        Self {
+            draft_id: None,
+            source,
+            original_text,
+            replacement: String::new(),
+            cursor: 0,
+            select_all: false,
+            workspace_revision,
+            draft_revision: 0,
+            error: None,
+            error_code: None,
+            saved_replacement: None,
+        }
+    }
+    pub fn resume(draft: &CodeReplacementDraft, workspace_revision: u64) -> Self {
+        Self {
+            draft_id: Some(draft.id.clone()),
+            source: draft.source.clone(),
+            original_text: draft.original_text.clone(),
+            replacement: draft.replacement.clone(),
+            cursor: draft.replacement.len(),
+            select_all: false,
+            workspace_revision,
+            draft_revision: draft.revision,
+            error: None,
+            error_code: None,
+            saved_replacement: Some(draft.replacement.clone()),
+        }
+    }
+    pub fn is_dirty(&self) -> bool {
+        self.saved_replacement.as_deref() != Some(&self.replacement)
+    }
+    pub fn can_save(&self) -> bool {
+        self.is_dirty()
+    }
+    pub fn insert_text(&mut self, text: &str) {
+        if self.select_all {
+            self.replacement.clear();
+            self.cursor = 0;
+            self.select_all = false;
+        }
+        self.cursor = self.cursor.min(self.replacement.len());
+        while !self.replacement.is_char_boundary(self.cursor) {
+            self.cursor -= 1;
+        }
+        self.replacement.insert_str(self.cursor, text);
+        self.cursor += text.len();
+        self.error = None;
+        self.error_code = None;
+    }
+    pub fn backspace(&mut self) {
+        if self.select_all {
+            self.replacement.clear();
+            self.cursor = 0;
+            self.select_all = false;
+        } else if self.cursor > 0 {
+            let mut previous = self.cursor - 1;
+            while !self.replacement.is_char_boundary(previous) {
+                previous -= 1;
+            }
+            self.replacement.replace_range(previous..self.cursor, "");
+            self.cursor = previous;
+        }
+        self.error = None;
+    }
+    pub fn delete_forward(&mut self) {
+        if self.select_all {
+            self.replacement.clear();
+            self.cursor = 0;
+            self.select_all = false;
+        } else if self.cursor < self.replacement.len() {
+            let mut next = self.cursor + 1;
+            while !self.replacement.is_char_boundary(next) {
+                next += 1;
+            }
+            self.replacement.replace_range(self.cursor..next, "");
+        }
+        self.error = None;
+    }
+    pub fn set_replacement(&mut self, text: String) {
+        self.replacement = text;
+        self.cursor = self.replacement.len();
+        self.error = None;
+        self.error_code = None;
+    }
+    pub fn move_cursor(&mut self, direction: i32) {
+        self.select_all = false;
+        if direction < 0 && self.cursor > 0 {
+            self.cursor -= 1;
+            while !self.replacement.is_char_boundary(self.cursor) {
+                self.cursor -= 1;
+            }
+        } else if direction > 0 && self.cursor < self.replacement.len() {
+            self.cursor += 1;
+            while !self.replacement.is_char_boundary(self.cursor) {
+                self.cursor += 1;
+            }
+        }
+    }
+    pub fn move_cursor_to_edge(&mut self, end: bool) {
+        self.cursor = if end { self.replacement.len() } else { 0 };
+        self.select_all = false;
+    }
+    pub fn select_all(&mut self) {
+        self.select_all = true;
+    }
+    pub fn display_text_with_cursor(&self) -> String {
+        let mut text = self.replacement.clone();
+        let cursor = self.cursor.min(text.len());
+        let cursor = (0..=cursor)
+            .rev()
+            .find(|i| text.is_char_boundary(*i))
+            .unwrap_or(0);
+        text.insert(cursor, '|');
+        text
+    }
+    pub fn save_succeeded(&mut self, result: &CodeReplacementSaveResult, submitted: &str) {
+        self.draft_id = Some(result.draft.id.clone());
+        self.source = result.draft.source.clone();
+        self.original_text = result.draft.original_text.clone();
+        self.workspace_revision = result.workspace_revision;
+        self.draft_revision = result.draft.revision;
+        self.saved_replacement = Some(submitted.to_owned());
+        self.error = None;
+        self.error_code = None;
+    }
+    pub fn save_failed(&mut self, code: String, message: String) {
+        self.error_code = Some(code);
+        self.error = Some(message);
+    }
+    pub fn discard_succeeded(&mut self, workspace_revision: u64) {
+        self.draft_id = None;
+        self.draft_revision = 0;
+        self.workspace_revision = workspace_revision;
+        self.replacement.clear();
+        self.cursor = 0;
+        self.select_all = false;
+        self.saved_replacement = None;
+        self.error = None;
+        self.error_code = None;
+    }
 }
 
 impl TextDraftEditor {
