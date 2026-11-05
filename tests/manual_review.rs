@@ -57,6 +57,8 @@ fn confirmed_replacement_publishes_exact_suggestion_and_only_then_removes_draft(
                 id: replacement.id.clone(),
                 revision: replacement.revision,
             }],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: None,
             event: Some(ReviewEvent::Comment),
         })
@@ -224,6 +226,8 @@ impl Fixture {
                     revision: 1,
                 }],
                 selected_replacements: vec![],
+                selected_replies: vec![],
+                selected_thread_actions: vec![],
                 summary: Some("Please address this before merge.".into()),
                 event,
             })
@@ -299,6 +303,8 @@ fn event_must_be_chosen_and_confirmed_payload_binds_exact_draft_revision_and_hea
                 revision: 1,
             }],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("Please address this before merge.".into()),
             event: Some(ReviewEvent::RequestChanges),
         })
@@ -333,6 +339,8 @@ fn interrupted_send_becomes_unknown_and_cannot_be_started_again() {
                 revision: 1,
             }],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("A summary".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -396,6 +404,8 @@ fn changed_head_or_permission_after_confirmation_blocks_send_without_starting_jo
                 revision: 1,
             }],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("A summary".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -454,6 +464,8 @@ fn controlled_gh_receives_exact_confirmed_group_and_returns_persisted_review_lin
                 revision: 1,
             }],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("A summary".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -544,6 +556,8 @@ fn controlled_gh_receives_exact_confirmed_group_and_returns_persisted_review_lin
                 revision: 2,
             }],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("A revised summary.".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -574,6 +588,8 @@ fn rejection_is_definitive_but_timeout_after_request_is_unknown_and_not_retryabl
                 revision: 1,
             }],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("Summary".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -624,6 +640,8 @@ fn rejection_is_definitive_but_timeout_after_request_is_unknown_and_not_retryabl
                 revision: 1,
             }],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: Some("Summary updated".into()),
             event: Some(ReviewEvent::Comment),
         })
@@ -743,6 +761,8 @@ fn cli_stage_and_intent_round_trip_preserve_explicit_missing_event() {
                 revision: 1,
             }],
             selected_replacements: vec![],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
             summary: None,
             event: None,
         })

@@ -42,6 +42,10 @@ pub struct ReviewIntent {
     pub selected: Vec<SelectedDraft>,
     #[serde(default)]
     pub selected_replacements: Vec<SelectedDraft>,
+    #[serde(default)]
+    pub selected_replies: Vec<SelectedDraft>,
+    #[serde(default)]
+    pub selected_thread_actions: Vec<SelectedDraft>,
     pub summary: Option<String>,
     /// `None` is a real state; callers must never infer APPROVE.
     pub event: Option<ReviewEvent>,
@@ -191,6 +195,8 @@ impl ReviewPublicationStore {
                 revision: 0,
                 selected: vec![],
                 selected_replacements: vec![],
+                selected_replies: vec![],
+                selected_thread_actions: vec![],
                 summary: None,
                 event: None,
             }),
@@ -212,6 +218,7 @@ impl ReviewPublicationStore {
         let drafts = DraftStore::open(&request.state)?.list(&request.preparation_id)?;
         let replacements =
             DraftStore::open(&request.state)?.list_replacements(&request.preparation_id)?;
+        let discussion_drafts = &drafts;
         if drafts.workspace_revision != request.expected_workspace_revision {
             return Err(ContractError::new(
                 "WORKSPACE_REVISION_STALE",
@@ -259,6 +266,56 @@ impl ReviewPublicationStore {
                 ));
             }
         }
+        for selected in &request.selected_replies {
+            if !ids.insert(selected.id.as_str()) {
+                return Err(invalid(
+                    "Selected draft IDs must be unique across all operations",
+                    "/selected_replies",
+                ));
+            }
+            let Some(draft) = discussion_drafts
+                .reply_drafts
+                .iter()
+                .find(|draft| draft.id == selected.id)
+            else {
+                return Err(invalid(
+                    "Selected reply is no longer available",
+                    "/selected_replies",
+                ));
+            };
+            if draft.revision != selected.revision {
+                return Err(ContractError::new(
+                    "DRAFT_REVISION_STALE",
+                    "A selected reply changed; reload before staging the review",
+                    "/selected_replies",
+                ));
+            }
+        }
+        for selected in &request.selected_thread_actions {
+            if !ids.insert(selected.id.as_str()) {
+                return Err(invalid(
+                    "Selected draft IDs must be unique across all operations",
+                    "/selected_thread_actions",
+                ));
+            }
+            let Some(draft) = discussion_drafts
+                .thread_actions
+                .iter()
+                .find(|draft| draft.id == selected.id)
+            else {
+                return Err(invalid(
+                    "Selected thread action is no longer available",
+                    "/selected_thread_actions",
+                ));
+            };
+            if draft.revision != selected.revision {
+                return Err(ContractError::new(
+                    "DRAFT_REVISION_STALE",
+                    "A selected thread action changed; reload before staging the review",
+                    "/selected_thread_actions",
+                ));
+            }
+        }
         let current = self.intent(&request.preparation_id)?;
         if current.revision != request.expected_intent_revision {
             return Err(ContractError::new(
@@ -273,6 +330,8 @@ impl ReviewPublicationStore {
             revision: next,
             selected: request.selected,
             selected_replacements: request.selected_replacements,
+            selected_replies: request.selected_replies,
+            selected_thread_actions: request.selected_thread_actions,
             summary: request.summary,
             event: request.event,
         };
@@ -647,6 +706,8 @@ pub struct StageReviewRequest {
     pub expected_intent_revision: u64,
     pub selected: Vec<SelectedDraft>,
     pub selected_replacements: Vec<SelectedDraft>,
+    pub selected_replies: Vec<SelectedDraft>,
+    pub selected_thread_actions: Vec<SelectedDraft>,
     pub summary: Option<String>,
     pub event: Option<ReviewEvent>,
 }

@@ -1,11 +1,16 @@
 //! Native product workspace. GitHub acquisition and pinned-source rules stay in `bodh`.
 use bodh::{
-    CodeReplacementSnapshot, DraftSnapshot, DraftStore, GhReviewPublisher, OperationControl,
-    PinnedDiff, PreparationManifest, PreparationStore, PreparedBinding, ReviewEvent, ReviewIntent,
-    ReviewOperation, ReviewPublicationStore, Revision, SelectedDraft, SourceRef,
-    StageReviewRequest, inspect_remote_review_with_gh, read_diff,
+    CodeReplacementSnapshot, DiscussionPlan, DiscussionPublicationStore, DiscussionSelection,
+    DraftSnapshot, DraftStore, GeneratedReviewStore, GhDiscussionPublisher,
+    GhReviewPublisher, OperationControl, PinnedDiff, PreparationManifest, PreparationStore,
+    PreparedBinding, ReviewEvent, ReviewIntent, ReviewOperation, ReviewPublicationStore, Revision,
+    SelectedDraft, SourceRef, StageReviewRequest, inspect_remote_review_with_gh, read_diff,
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
+use bodh_sequence_spike::overview::{
+    CommittedOverviewStatus, CommittedOverviewView, apply_committed_overview_load,
+    committed_matches_context, evidence_file_index, is_significant_assessment,
+};
 use bodh_sequence_spike::preferences::{
     NavigationPreferences as Preferences, RecentReview, WorkspaceTab,
 };
@@ -159,12 +164,17 @@ pub struct Product {
     review_intent: Option<ReviewIntent>,
     review_summary: String,
     review_plan: Option<ReviewOperation>,
+    discussion_plan: Option<DiscussionPlan>,
     review_loading: bool,
     review_summary_focus: FocusHandle,
     freshness_observation: Option<bodh::FreshnessObservation>,
     latest_switch_preview: Option<bodh::LatestSwitchPreview>,
     freshness_loading: bool,
     last_freshness_check: Option<std::time::Instant>,
+    committed_overview: CommittedOverviewView,
+    overview_loading: bool,
+    overview_epoch: Arc<AtomicU64>,
+    pending_overview_source: Option<(usize, SourceRef)>,
 }
 
 impl Product {
@@ -240,12 +250,17 @@ impl Product {
             review_intent: None,
             review_summary: String::new(),
             review_plan: None,
+            discussion_plan: None,
             review_loading: false,
             review_summary_focus: cx.focus_handle(),
             freshness_observation: None,
             latest_switch_preview: None,
             freshness_loading: false,
             last_freshness_check: None,
+            committed_overview: CommittedOverviewView::default(),
+            overview_loading: false,
+            overview_epoch: Arc::new(AtomicU64::new(0)),
+            pending_overview_source: None,
         };
         app.refresh_gh_cli(cx);
         app
@@ -468,6 +483,7 @@ impl Product {
                     Ok((manifest, binding, blocks, drafts, replacements, discussions)) => {
                         this.remember(&manifest, &binding, cx);
                         this.selected_review = Some(binding);
+                        this.refresh_committed_overview(cx);
                         this.description_blocks = blocks;
                         this.draft_snapshot = Some(drafts);
                         this.replacement_snapshot = Some(replacements);
@@ -539,6 +555,80 @@ impl Product {
         let _ = cx;
     }
 
+    fn refresh_committed_overview(&mut self, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            self.committed_overview = CommittedOverviewView::default();
+            self.overview_loading = false;
+            return;
+        };
+        if self
+            .committed_overview
+            .committed
+            .as_ref()
+            .is_some_and(|review| !committed_matches_context(review, &binding.context))
+        {
+            self.committed_overview = CommittedOverviewView::default();
+        }
+        let token = self.overview_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let epoch = self.overview_epoch.clone();
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let expected_context = binding.context.clone();
+        self.overview_loading = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    GeneratedReviewStore::open(Path::new(&state))?.current(&preparation_id)
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if epoch.load(Ordering::Relaxed) != token
+                    || this.selected_review.as_ref().is_none_or(|current| {
+                        current.preparation_id != binding.preparation_id
+                            || current.context != expected_context
+                    })
+                {
+                    return;
+                }
+                this.overview_loading = false;
+                this.committed_overview = apply_committed_overview_load(
+                    &expected_context,
+                    &this.committed_overview,
+                    result,
+                );
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn select_workspace_tab(&mut self, tab: WorkspaceTab, cx: &mut Context<Self>) {
+        self.active_tab = tab;
+        self.prefs.active_tab = Some(tab);
+        self.persist();
+        if matches!(tab, WorkspaceTab::Overview | WorkspaceTab::Findings) {
+            self.refresh_committed_overview(cx);
+        }
+        cx.notify();
+    }
+
+    fn open_overview_evidence(&mut self, source: SourceRef, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.as_ref() else {
+            return;
+        };
+        let Some(index) = evidence_file_index(&binding.changed_files, &source) else {
+            self.error = Some("This evidence source is not part of the pinned change.".into());
+            cx.notify();
+            return;
+        };
+        self.active_tab = WorkspaceTab::Changes;
+        self.prefs.active_tab = Some(WorkspaceTab::Changes);
+        self.pending_overview_source = Some((index, source));
+        self.select_file(index, cx);
+    }
+
     fn resume(&mut self, id: String, cx: &mut Context<Self>) {
         if self.draft_saving
             || self
@@ -604,6 +694,7 @@ impl Product {
                         this.reply_body.clear();
                         this.reply_saving = false;
                         this.selected_review = Some(binding.clone());
+                        this.refresh_committed_overview(cx);
                         this.update_draft_counts(drafts.counts);
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
                         if let Some(saved) = this
@@ -649,6 +740,11 @@ impl Product {
     }
 
     fn select_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        let pending_evidence = self
+            .pending_overview_source
+            .take()
+            .filter(|(pending_index, _)| *pending_index == index)
+            .map(|(_, source)| source);
         let Some(binding) = self.selected_review.clone() else {
             return;
         };
@@ -764,6 +860,9 @@ impl Product {
                         this.diff_error = Some(message.clone());
                         this.source_label = Some(message);
                     }
+                }
+                if let Some(source) = pending_evidence {
+                    this.select_source_line(index, source.revision, source.start_line, cx);
                 }
                 cx.notify();
             });
@@ -1516,17 +1615,23 @@ impl Product {
         };
         match ReviewPublicationStore::open(&self.preparation_db).and_then(|mut store| {
             store.recover_interrupted(&binding.preparation_id)?;
+            let mut discussions = DiscussionPublicationStore::open(&self.preparation_db)?;
+            discussions.recover_interrupted(&binding.preparation_id)?;
             let intent = store.intent(&binding.preparation_id)?;
             let pending = store.pending_operation(&binding.preparation_id)?;
-            Ok::<_, bodh::ContractError>((intent, pending))
+            let discussion = discussions.latest_plan(&binding.preparation_id)?;
+            Ok::<_, bodh::ContractError>((intent, pending, discussion))
         }) {
-            Ok((mut intent, pending)) => {
+            Ok((mut intent, pending, discussion)) => {
                 self.review_plan = pending.clone();
+                self.discussion_plan = discussion.clone();
                 self.review_summary = intent.summary.clone().unwrap_or_default();
                 let mut stale_selection = false;
-                if pending.is_none()
-                    && let Some(snapshot) = self.draft_snapshot.as_ref()
-                {
+                let can_refresh = pending.is_none()
+                    && discussion.as_ref().is_none_or(|p| {
+                        !matches!(p.state.as_str(), "planned" | "sending" | "unknown")
+                    });
+                if can_refresh && let Some(snapshot) = self.draft_snapshot.as_ref() {
                     intent.selected.retain_mut(|selected| {
                         if let Some(draft) =
                             snapshot.drafts.iter().find(|draft| draft.id == selected.id)
@@ -1542,9 +1647,41 @@ impl Product {
                         }
                     });
                 }
-                if pending.is_none()
-                    && let Some(snapshot) = self.replacement_snapshot.as_ref()
-                {
+                if can_refresh && let Some(snapshot) = self.draft_snapshot.as_ref() {
+                    intent.selected_replies.retain_mut(|selected| {
+                        if let Some(draft) = snapshot
+                            .reply_drafts
+                            .iter()
+                            .find(|draft| draft.id == selected.id)
+                        {
+                            if selected.revision != draft.revision {
+                                selected.revision = draft.revision;
+                                stale_selection = true;
+                            }
+                            true
+                        } else {
+                            stale_selection = true;
+                            false
+                        }
+                    });
+                    intent.selected_thread_actions.retain_mut(|selected| {
+                        if let Some(draft) = snapshot
+                            .thread_actions
+                            .iter()
+                            .find(|draft| draft.id == selected.id)
+                        {
+                            if selected.revision != draft.revision {
+                                selected.revision = draft.revision;
+                                stale_selection = true;
+                            }
+                            true
+                        } else {
+                            stale_selection = true;
+                            false
+                        }
+                    });
+                }
+                if can_refresh && let Some(snapshot) = self.replacement_snapshot.as_ref() {
                     intent.selected_replacements.retain_mut(|selected| {
                         if let Some(draft) =
                             snapshot.drafts.iter().find(|draft| draft.id == selected.id)
@@ -1594,6 +1731,8 @@ impl Product {
             expected_intent_revision: intent.revision,
             selected: intent.selected.clone(),
             selected_replacements: intent.selected_replacements.clone(),
+            selected_replies: intent.selected_replies.clone(),
+            selected_thread_actions: intent.selected_thread_actions.clone(),
             summary: if self.review_summary.trim().is_empty() {
                 None
             } else {
@@ -1616,6 +1755,9 @@ impl Product {
             .review_plan
             .as_ref()
             .is_some_and(|plan| matches!(plan.state.as_str(), "planned" | "sending" | "unknown"))
+            || self.discussion_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
         {
             self.status=Some("This operation is already planned or has an uncertain outcome. Reconcile it before changing its drafts.".into());
             cx.notify();
@@ -1645,6 +1787,9 @@ impl Product {
             .review_plan
             .as_ref()
             .is_some_and(|plan| matches!(plan.state.as_str(), "planned" | "sending" | "unknown"))
+            || self.discussion_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
         {
             self.status = Some("This operation is already planned or has an uncertain outcome. Reconcile it before changing its drafts.".into());
             cx.notify();
@@ -1669,11 +1814,84 @@ impl Product {
         cx.notify();
     }
 
+    fn toggle_review_reply(&mut self, id: &str, cx: &mut Context<Self>) {
+        let locked = self
+            .review_plan
+            .as_ref()
+            .is_some_and(|p| matches!(p.state.as_str(), "planned" | "sending" | "unknown"))
+            || self
+                .discussion_plan
+                .as_ref()
+                .is_some_and(|p| matches!(p.state.as_str(), "planned" | "sending" | "unknown"));
+        if locked {
+            self.status=Some("This publication is already planned or uncertain. Reconcile it before changing selected drafts.".into());
+            cx.notify();
+            return;
+        }
+        let Some(intent) = self.review_intent.as_mut() else {
+            return;
+        };
+        if let Some(i) = intent.selected_replies.iter().position(|s| s.id == id) {
+            intent.selected_replies.remove(i);
+        } else if let Some(draft) = self
+            .draft_snapshot
+            .as_ref()
+            .and_then(|s| s.reply_drafts.iter().find(|d| d.id == id))
+        {
+            intent.selected_replies.push(SelectedDraft {
+                id: draft.id.clone(),
+                revision: draft.revision,
+            });
+        }
+        self.save_review_intent();
+        cx.notify();
+    }
+
+    fn toggle_review_thread_action(&mut self, id: &str, cx: &mut Context<Self>) {
+        let locked = self
+            .review_plan
+            .as_ref()
+            .is_some_and(|p| matches!(p.state.as_str(), "planned" | "sending" | "unknown"))
+            || self
+                .discussion_plan
+                .as_ref()
+                .is_some_and(|p| matches!(p.state.as_str(), "planned" | "sending" | "unknown"));
+        if locked {
+            self.status=Some("This publication is already planned or uncertain. Reconcile it before changing selected drafts.".into());
+            cx.notify();
+            return;
+        }
+        let Some(intent) = self.review_intent.as_mut() else {
+            return;
+        };
+        if let Some(i) = intent
+            .selected_thread_actions
+            .iter()
+            .position(|s| s.id == id)
+        {
+            intent.selected_thread_actions.remove(i);
+        } else if let Some(draft) = self
+            .draft_snapshot
+            .as_ref()
+            .and_then(|s| s.thread_actions.iter().find(|d| d.id == id))
+        {
+            intent.selected_thread_actions.push(SelectedDraft {
+                id: draft.id.clone(),
+                revision: draft.revision,
+            });
+        }
+        self.save_review_intent();
+        cx.notify();
+    }
+
     fn choose_review_event(&mut self, event: ReviewEvent, cx: &mut Context<Self>) {
         if self
             .review_plan
             .as_ref()
             .is_some_and(|plan| matches!(plan.state.as_str(), "planned" | "sending" | "unknown"))
+            || self.discussion_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
         {
             self.status=Some("This operation is already planned or has an uncertain outcome. Reconcile it before changing its event.".into());
             cx.notify();
@@ -1691,6 +1909,9 @@ impl Product {
             .review_plan
             .as_ref()
             .is_some_and(|plan| matches!(plan.state.as_str(), "planned" | "sending" | "unknown"))
+            || self.discussion_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
         {
             return;
         }
@@ -1723,17 +1944,135 @@ impl Product {
         };
         self.review_loading = true;
         self.error = None;
-        self.status = Some("Checking the current PR and validating every selected anchor…".into());
+        self.status = Some("Preparing the exact review and discussion operations…".into());
         let token = self.operation_epoch.load(Ordering::Relaxed);
         let state = self.preparation_db.clone();
         let control = OperationControl::with_timeout(Duration::from_secs(30));
         self.active_control = Some(control.clone());
-        cx.spawn(async move |weak,cx| {
-            let result=cx.background_executor().spawn(async move {
-                let remote=inspect_remote_review_with_gh(&binding,Path::new("gh"),&control)?;
-                ReviewPublicationStore::open(&state)?.confirm(&binding.preparation_id,&state,intent.revision,&remote,&control)
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let has_review = !intent.selected.is_empty()
+                        || !intent.selected_replacements.is_empty()
+                        || intent
+                            .summary
+                            .as_deref()
+                            .is_some_and(|s| !s.trim().is_empty());
+                    if has_review && intent.event.is_none() {
+                        return Err(bodh::ContractError::new(
+                            "REVIEW_EVENT_REQUIRED",
+                            "Choose an event for selected inline comments, replacements or summary",
+                            "/event",
+                        ));
+                    }
+                    let review = if has_review {
+                        let remote =
+                            inspect_remote_review_with_gh(&binding, Path::new("gh"), &control)?;
+                        Some(ReviewPublicationStore::open(&state)?.confirm(
+                            &binding.preparation_id,
+                            &state,
+                            intent.revision,
+                            &remote,
+                            &control,
+                        )?)
+                    } else {
+                        None
+                    };
+                    if intent.selected_replies.is_empty()
+                        && intent.selected_thread_actions.is_empty()
+                        && review.is_none()
+                    {
+                        return Err(bodh::ContractError::new(
+                            "PUBLICATION_SELECTION_EMPTY",
+                            "Select at least one review operation, reply or thread action",
+                            "",
+                        ));
+                    }
+                    let discussion = if intent.selected_replies.is_empty()
+                        && intent.selected_thread_actions.is_empty()
+                    {
+                        None
+                    } else {
+                        Some(
+                            DiscussionPublicationStore::open(&state)?.confirm(
+                                &binding.preparation_id,
+                                review.as_ref().map(|p| p.id.as_str()),
+                                &intent
+                                    .selected_replies
+                                    .iter()
+                                    .map(|s| DiscussionSelection {
+                                        id: s.id.clone(),
+                                        revision: s.revision,
+                                    })
+                                    .collect::<Vec<_>>(),
+                                &intent
+                                    .selected_thread_actions
+                                    .iter()
+                                    .map(|s| DiscussionSelection {
+                                        id: s.id.clone(),
+                                        revision: s.revision,
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )?,
+                        )
+                    };
+                    Ok::<_, bodh::ContractError>((review, discussion))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.review_loading = false;
+                this.active_control = None;
+                match result {
+                    Ok((review, discussion)) => {
+                        if let Some(plan) = review {
+                            this.review_plan = Some(plan);
+                        }
+                        if let Some(plan) = discussion {
+                            this.discussion_plan = Some(plan);
+                        }
+                        this.status = Some(
+                            "Exact operation plan saved. Inspect each operation before publishing."
+                                .into(),
+                        );
+                        this.error = None;
+                    }
+                    Err(error) => {
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                        this.status = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn publish_discussion_plan(&mut self, cx: &mut Context<Self>) {
+        let (Some(binding), Some(plan)) =
+            (self.selected_review.clone(), self.discussion_plan.clone())
+        else {
+            return;
+        };
+        self.review_loading = true;
+        self.error = None;
+        self.status = Some("Rechecking thread permissions and state before publishing…".into());
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(60));
+        self.active_control = Some(control.clone());
+        cx.spawn(async move|weak,cx|{
+            let result=cx.background_executor().spawn(async move{
+                let publisher=GhDiscussionPublisher{executable:PathBuf::from("gh"),state:state.clone()};
+                let mut store=DiscussionPublicationStore::open(&state)?;
+                let plan=store.publish(&plan.id,&publisher,&control)?;
+                let snapshot=DraftStore::open(&state)?.list(&binding.preparation_id)?;
+                Ok::<_,bodh::ContractError>((plan,snapshot))
             }).await;
-            let _=weak.update(cx,|this,cx| { if this.operation_epoch.load(Ordering::Relaxed)!=token{return;} this.review_loading=false; this.active_control=None; match result { Ok(plan)=>{this.review_plan=Some(plan);this.status=Some("Review plan saved. Inspect the exact event, summary and comments below before publishing.".into());this.error=None;}, Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;} } cx.notify(); });
+            let _=weak.update(cx,|this,cx|{if this.operation_epoch.load(Ordering::Relaxed)!=token{return;}this.review_loading=false;this.active_control=None;match result{Ok((plan,snapshot))=>{this.discussion_plan=Some(plan.clone());this.update_draft_counts(snapshot.counts.clone());this.draft_snapshot=Some(snapshot);this.status=Some(format!("Discussion publication finished with state {}. Confirmed steps are removed from the unpublished drafts.",plan.state));this.error=None;},Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;}}cx.notify();});
         }).detach();
     }
 
@@ -1966,6 +2305,7 @@ impl Product {
                         this.draft_snapshot = Some(drafts.clone()); this.update_draft_counts(drafts.counts);
                         this.replacement_snapshot = Some(replacements); this.discussion_state = discussions;
                         this.selected_review = Some(binding.clone()); this.remember(&PreparationManifest::from(binding.clone()), &binding, cx);
+                        this.refresh_committed_overview(cx);
                         this.freshness_observation = Some(freshness); this.latest_switch_preview = None;
                         this.draft_editor = None; this.replacement_editor = None; this.reply_body.clear();
                         this.status = Some(format!("Loaded latest PR preparation {}. Previous review work remains on the earlier preparation.", id));
@@ -2706,6 +3046,128 @@ impl Product {
                 );
             }
         }
+        let selected_replies = intent
+            .as_ref()
+            .map(|i| {
+                i.selected_replies
+                    .iter()
+                    .map(|s| s.id.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let selected_actions = intent
+            .as_ref()
+            .map(|i| {
+                i.selected_thread_actions
+                    .iter()
+                    .map(|s| s.id.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let replies = self
+            .draft_snapshot
+            .as_ref()
+            .map(|s| s.reply_drafts.clone())
+            .unwrap_or_default();
+        page = page.child(section_title(
+            "Replies · publish after the grouped review",
+            p,
+        ));
+        if replies.is_empty() {
+            page=page.child(empty_card("No reply drafts saved","Replies are attached to the exact top-level review comment selected in Discussions.",p));
+        }
+        for draft in replies {
+            let id = draft.id.clone();
+            let toggle_id = id.clone();
+            let label = if selected_replies.contains(id.as_str()) {
+                "✓ Selected"
+            } else {
+                "＋ Add reply"
+            };
+            page = page.child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap_3()
+                    .p_3()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.panel))
+                    .child(button(
+                        &format!("review-reply-select-{id}"),
+                        label,
+                        p,
+                        move |this, _, _, cx| this.toggle_review_reply(&toggle_id, cx),
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .font_family("DejaVu Sans Mono")
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .child(format!(
+                                        "Thread {} · top-level comment {}",
+                                        draft.thread_id, draft.root_comment_id
+                                    )),
+                            )
+                            .child(div().child(draft.body)),
+                    ),
+            );
+        }
+        let actions = self
+            .draft_snapshot
+            .as_ref()
+            .map(|s| s.thread_actions.clone())
+            .unwrap_or_default();
+        page = page.child(section_title("Thread actions · resolve or reopen", p));
+        if actions.is_empty() {
+            page=page.child(empty_card("No thread actions staged","Resolve and reopen requests remain local until the current permission and thread state are checked.",p));
+        }
+        for draft in actions {
+            let id = draft.id.clone();
+            let toggle_id = id.clone();
+            let verb = match draft.action {
+                bodh::ThreadAction::Resolve => "Resolve",
+                bodh::ThreadAction::Reopen => "Reopen",
+            };
+            let label = if selected_actions.contains(id.as_str()) {
+                format!("✓ {verb} selected")
+            } else {
+                format!("＋ {verb} thread")
+            };
+            page = page.child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap_3()
+                    .p_3()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.panel))
+                    .child(button(
+                        &format!("review-thread-action-{id}"),
+                        &label,
+                        p,
+                        move |this, _, _, cx| this.toggle_review_thread_action(&toggle_id, cx),
+                        cx,
+                    ))
+                    .child(div().flex_1().child(format!(
+                        "Thread {} · observed {}",
+                        draft.thread_id,
+                        if draft.observed_resolved {
+                            "resolved"
+                        } else {
+                            "open"
+                        }
+                    ))),
+            );
+        }
         page = page.child(section_title("Review event · choose explicitly", p));
         let event = intent.as_ref().and_then(|i| i.event);
         let events = [
@@ -2757,6 +3219,84 @@ impl Product {
                 ),
         );
         page=page.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child("Summary text input: type to append · Backspace removes · Enter starts a new line · Escape clears."));
+        if let Some(plan) = self.discussion_plan.clone() {
+            page = page.child(section_title("Exact replies and thread actions", p));
+            page = page.child(empty_card(
+                &format!("{} operation(s) · {}", plan.steps.len(), plan.state),
+                &format!(
+                    "Plan {} · grouped review {}",
+                    plan.id,
+                    plan.review_operation_id
+                        .as_deref()
+                        .unwrap_or("not selected")
+                ),
+                p,
+            ));
+            for step in &plan.steps {
+                let description = if step.kind == "reply" {
+                    format!(
+                        "Reply to top-level comment {}",
+                        step.root_comment_id.as_deref().unwrap_or("(missing)")
+                    )
+                } else {
+                    format!(
+                        "{} thread",
+                        step.action
+                            .map(|a| format!("{a:?}"))
+                            .unwrap_or_else(|| "Unknown".into())
+                    )
+                };
+                page = page.child(
+                    div()
+                        .p_3()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.raised))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::BOLD)
+                                .child(format!("{} · {}", description, step.state)),
+                        )
+                        .child(
+                            div()
+                                .font_family("DejaVu Sans Mono")
+                                .text_size(px(10.))
+                                .text_color(rgb(p.muted))
+                                .child(format!(
+                                    "Thread {} · draft {} revision {}",
+                                    step.thread_id, step.draft_id, step.draft_revision
+                                )),
+                        )
+                        .child(
+                            step.body
+                                .clone()
+                                .or_else(|| step.failure.clone())
+                                .unwrap_or_default(),
+                        ),
+                );
+            }
+            if plan.state == "planned"
+                && self
+                    .review_plan
+                    .as_ref()
+                    .is_none_or(|review| review.state == "confirmed")
+                && !self.review_loading
+            {
+                page = page.child(button(
+                    "publish-confirmed-discussions",
+                    "Publish replies and thread actions",
+                    p,
+                    |this, _, _, cx| this.publish_discussion_plan(cx),
+                    cx,
+                ));
+            } else if plan.state == "unknown" {
+                page = page.child(empty_card(
+                    "Discussion outcome uncertain",
+                    "Do not resend. Inspect the remote thread before continuing.",
+                    p,
+                ));
+            }
+        }
         if let Some(plan) = self.review_plan.clone() {
             page = page.child(section_title("Exact confirmed plan", p));
             page = page.child(empty_card(
@@ -2840,10 +3380,12 @@ impl Product {
             }
         } else {
             let can_confirm = intent.as_ref().is_some_and(|i| {
-                i.event.is_some()
-                    && (!i.selected.is_empty()
-                        || !i.selected_replacements.is_empty()
-                        || !self.review_summary.trim().is_empty())
+                let has_review = !i.selected.is_empty()
+                    || !i.selected_replacements.is_empty()
+                    || !self.review_summary.trim().is_empty();
+                let has_discussion =
+                    !i.selected_replies.is_empty() || !i.selected_thread_actions.is_empty();
+                (has_review || has_discussion) && (!has_review || i.event.is_some())
             }) && !self.review_loading;
             if can_confirm {
                 page = page.child(button(
@@ -2855,8 +3397,8 @@ impl Product {
                 ));
             } else {
                 page = page.child(empty_card(
-                    "Choose an event",
-                    "Select Comment, Approve or Request Changes explicitly before confirmation.",
+                    "Select operations to publish",
+                    "A grouped review needs an explicit event. Replies and thread actions can be confirmed on their own.",
                     p,
                 ));
             }
@@ -3002,10 +3544,7 @@ impl Product {
                     tab.label(),
                     p,
                     move |this, _, _, cx| {
-                        this.active_tab = tab;
-                        this.prefs.active_tab = Some(tab);
-                        this.persist();
-                        cx.notify();
+                        this.select_workspace_tab(tab, cx);
                     },
                     cx,
                 )
@@ -3020,10 +3559,8 @@ impl Product {
             WorkspaceTab::Changes => self
                 .render_changes(&binding, p, cx, viewport_width, viewport_height)
                 .into_any_element(),
-            WorkspaceTab::Discussions => self.render_discussions(p,cx).into_any_element(),
-            WorkspaceTab::Findings => div().id("findings-empty").flex_1().min_h(px(360.)).p_6().border_1().border_color(rgb(p.border)).bg(rgb(p.panel))
-                .child(div().text_size(px(18.)).font_weight(FontWeight::MEDIUM).child("No findings to show"))
-                .child(div().mt_2().text_color(rgb(p.muted)).child("No generated review result is attached. Findings never start an agent; review the pinned changes manually.")).into_any_element(),
+            WorkspaceTab::Discussions => self.render_discussions(p, cx).into_any_element(),
+            WorkspaceTab::Findings => self.render_findings(&binding, p, cx).into_any_element(),
         };
         page.child(panel)
     }
@@ -3039,8 +3576,269 @@ impl Product {
             .flex()
             .flex_col()
             .gap_4()
+            .flex_1()
+            .min_h_0()
             .overflow_scroll();
-        body = body.child(empty_card("No generated overview", "This prepared review contains pinned code context only. No sequence diagram or analysis has been generated.", p));
+        let current = self
+            .committed_overview
+            .committed
+            .as_ref()
+            .filter(|review| committed_matches_context(review, &binding.context));
+        if self.overview_loading && current.is_none() {
+            body = body.child(empty_card(
+                "Loading committed review",
+                "Reading the last complete result for this pinned preparation.",
+                p,
+            ));
+        }
+        if let Some(error_code) = &self.committed_overview.error_code {
+            body = body.child(empty_card(
+                if current.is_some() {
+                    "Could not refresh generated review"
+                } else {
+                    "Generated review unavailable"
+                },
+                &format!(
+                    "The last successful display is retained when available. State read error: {error_code}."
+                ),
+                p,
+            ));
+        }
+        if let Some(review) = current {
+            let generated = &review.result;
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .p_3()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.panel))
+                    .child(div().flex_1().child(format!(
+                        "Committed review · generation {} · context {}",
+                        review.generation,
+                        short_sha(&generated.context.context_id)
+                    )))
+                    .child(button(
+                        "refresh-committed-review",
+                        if self.overview_loading {
+                            "Refreshing…"
+                        } else {
+                            "Refresh result"
+                        },
+                        p,
+                        |this, _, _, cx| this.refresh_committed_overview(cx),
+                        cx,
+                    )),
+            );
+
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_4()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.panel))
+                    .child(section_title("Implementation summary", p))
+                    .child(generated.overview.implementation_summary.clone()),
+            );
+
+            if generated.overview.key_changes.is_empty() {
+                body = body.child(empty_card(
+                    "No key changes recorded",
+                    "The committed result contains no key-change claims.",
+                    p,
+                ));
+            } else {
+                body = body.child(section_title("Key changes", p));
+                for (change_index, change) in generated.overview.key_changes.iter().enumerate() {
+                    let mut card = div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .p_4()
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .bg(rgb(p.panel))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(change.summary.clone()),
+                        );
+                    for (evidence_index, evidence) in change.evidence.iter().enumerate() {
+                        let source = evidence.source.clone();
+                        card = card.child(
+                            div()
+                                .text_color(rgb(p.muted))
+                                .child(evidence.explanation.clone()),
+                        );
+                        card = card.child(button(
+                            &format!("key-change-evidence-{change_index}-{evidence_index}"),
+                            &format!("Open {}", source_title(&source)),
+                            p,
+                            move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
+                            cx,
+                        ));
+                    }
+                    body = body.child(card);
+                }
+            }
+
+            body = body.child(section_title("Intent assessment", p));
+            if generated.overview.intent_assessments.is_empty() {
+                body = body.child(empty_card(
+                    "No intent assessments recorded",
+                    "The committed result does not assess quoted PR intent.",
+                    p,
+                ));
+            } else {
+                for (assessment_index, assessment) in
+                    generated.overview.intent_assessments.iter().enumerate()
+                {
+                    let concern = is_significant_assessment(&assessment.status);
+                    let mut card = div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .p_4()
+                        .border_1()
+                        .border_color(rgb(if concern { p.accent } else { p.border }))
+                        .bg(rgb(if concern { p.raised } else { p.panel }))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(format!("{:?}", assessment.status)),
+                                )
+                                .child(if concern {
+                                    "Needs reviewer attention"
+                                } else {
+                                    "Aligned"
+                                }),
+                        )
+                        .child(format!(
+                            "Exact PR quote · occurrence {}: “{}”",
+                            assessment.occurrence, assessment.quote
+                        ))
+                        .child(assessment.explanation.clone());
+                    for (evidence_index, evidence) in assessment.evidence.iter().enumerate() {
+                        let source = evidence.source.clone();
+                        card = card.child(
+                            div()
+                                .text_color(rgb(p.muted))
+                                .child(evidence.explanation.clone()),
+                        );
+                        card = card.child(button(
+                            &format!("intent-evidence-{assessment_index}-{evidence_index}"),
+                            &format!("Open {}", source_title(&source)),
+                            p,
+                            move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
+                            cx,
+                        ));
+                    }
+                    if !assessment.finding_ids.is_empty() {
+                        card = card.child(format!(
+                            "Related findings: {}",
+                            assessment.finding_ids.join(", ")
+                        ));
+                    }
+                    body = body.child(card);
+                }
+            }
+
+            body = body.child(section_title("Coverage and checks", p));
+            let mut coverage = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_4()
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.panel));
+            if generated.coverage.examined_areas.is_empty() {
+                coverage = coverage.child("No examined areas were recorded.");
+            } else {
+                coverage = coverage.child(section_title("Examined areas", p));
+                for area in &generated.coverage.examined_areas {
+                    coverage = coverage.child(format!("• {area}"));
+                }
+            }
+            if generated.coverage.checks.is_empty() {
+                coverage = coverage.child("No checks were recorded.");
+            } else {
+                coverage = coverage.child(section_title("Checks", p));
+                for check in &generated.coverage.checks {
+                    coverage = coverage.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .border_l_2()
+                            .border_color(rgb(
+                                if matches!(&check.status, bodh::CheckStatus::Failed) {
+                                    p.accent
+                                } else {
+                                    p.border
+                                },
+                            ))
+                            .pl_3()
+                            .child(format!("{} · {:?}", check.name, check.status))
+                            .child(check.details.clone()),
+                    );
+                }
+            }
+            if !generated.coverage.excluded_areas.is_empty() {
+                coverage = coverage.child(section_title("Excluded areas", p));
+                for excluded in &generated.coverage.excluded_areas {
+                    coverage = coverage.child(format!("{} · {}", excluded.area, excluded.reason));
+                }
+            }
+            if !generated.coverage.limitations.is_empty() {
+                coverage = coverage.child(section_title("Limitations", p));
+                for limitation in &generated.coverage.limitations {
+                    coverage = coverage.child(format!("• {limitation}"));
+                }
+            }
+            body = body.child(coverage);
+        } else {
+            let (title, message) = match self.committed_overview.status {
+                CommittedOverviewStatus::StaleContext => (
+                    "Earlier result hidden",
+                    "A committed result exists for another pinned context and is not shown here.",
+                ),
+                CommittedOverviewStatus::LoadFailed => (
+                    "Generated review unavailable",
+                    "The committed result could not be read. Refresh after the state store is available.",
+                ),
+                CommittedOverviewStatus::Missing | CommittedOverviewStatus::Ready => (
+                    "No generated overview",
+                    "This prepared review contains pinned code context only. No committed analysis is attached.",
+                ),
+            };
+            body = body.child(empty_card(title, message, p));
+            if self.committed_overview.status != CommittedOverviewStatus::LoadFailed {
+                body = body.child(button(
+                    "refresh-missing-committed-review",
+                    if self.overview_loading {
+                        "Loading…"
+                    } else {
+                        "Check for committed result"
+                    },
+                    p,
+                    |this, _, _, cx| this.refresh_committed_overview(cx),
+                    cx,
+                ));
+            }
+        }
+
+        body = body.child(section_title("Original pull request description", p));
         let excerpt = markdown_excerpt(&self.description_blocks, 320);
         body = body.child(
             div()
@@ -3051,7 +3849,7 @@ impl Product {
                 .border_1()
                 .border_color(rgb(p.border))
                 .bg(rgb(p.panel))
-                .child(section_title("Pull request description", p))
+                .child(section_title("Author-provided text", p))
                 .child(
                     div()
                         .mt_2()
@@ -3099,6 +3897,132 @@ impl Product {
                     short_sha(&binding.context.context_id)
                 )),
         )
+    }
+
+    fn render_findings(
+        &self,
+        binding: &PreparedBinding,
+        p: Palette,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut body = div()
+            .id("generated-findings")
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .flex_1()
+            .min_h_0()
+            .overflow_scroll();
+        let current = self
+            .committed_overview
+            .committed
+            .as_ref()
+            .filter(|review| committed_matches_context(review, &binding.context));
+        if self.overview_loading && current.is_none() {
+            body = body.child(empty_card(
+                "Loading committed findings",
+                "Reading the last complete result for this pinned preparation.",
+                p,
+            ));
+        }
+        if let Some(review) = current {
+            body = body.child(section_title("Committed findings", p));
+            if review.result.findings.is_empty() {
+                body = body.child(empty_card(
+                    "No findings recorded",
+                    "This committed review contains no actionable findings.",
+                    p,
+                ));
+            }
+            for (finding_index, finding) in review.result.findings.iter().enumerate() {
+                let mut card = div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_4()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.panel))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(finding.title.clone()),
+                            )
+                            .child(format!("{:?} · {:?}", finding.severity, finding.confidence)),
+                    )
+                    .child(finding.summary.clone())
+                    .child(finding.reason.clone())
+                    .child(finding.impact.clone());
+                for (evidence_index, evidence) in finding.evidence.iter().enumerate() {
+                    let source = evidence.source.clone();
+                    card = card.child(
+                        div()
+                            .text_color(rgb(p.muted))
+                            .child(evidence.explanation.clone()),
+                    );
+                    card = card.child(button(
+                        &format!("finding-evidence-{finding_index}-{evidence_index}"),
+                        &format!("Open {}", source_title(&source)),
+                        p,
+                        move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
+                        cx,
+                    ));
+                }
+                for (location_index, location) in finding.locations.iter().enumerate() {
+                    let source = location.source.clone();
+                    card = card.child(button(
+                        &format!("finding-location-{finding_index}-{location_index}"),
+                        &format!(
+                            "{} source · {}",
+                            if location.primary {
+                                "Primary"
+                            } else {
+                                "Related"
+                            },
+                            source_title(&source)
+                        ),
+                        p,
+                        move |this, _, _, cx| this.open_overview_evidence(source.clone(), cx),
+                        cx,
+                    ));
+                }
+                body = body.child(card);
+            }
+        } else {
+            let (title, message) = match self.committed_overview.status {
+                CommittedOverviewStatus::StaleContext => (
+                    "Earlier result hidden",
+                    "Findings from another pinned context are not shown here.",
+                ),
+                CommittedOverviewStatus::LoadFailed => (
+                    "Generated findings unavailable",
+                    "The committed result could not be read. A prior result remains visible after same-context refresh failures when available.",
+                ),
+                CommittedOverviewStatus::Missing | CommittedOverviewStatus::Ready => (
+                    "No committed findings",
+                    "No complete generated result is attached to this pinned preparation.",
+                ),
+            };
+            body = body.child(empty_card(title, message, p));
+            body = body.child(button(
+                "refresh-committed-findings",
+                if self.overview_loading {
+                    "Refreshing…"
+                } else {
+                    "Refresh result"
+                },
+                p,
+                |this, _, _, cx| this.refresh_committed_overview(cx),
+                cx,
+            ));
+        }
+        body
     }
 
     fn render_discussions(&mut self, p: Palette, cx: &mut Context<Self>) -> impl IntoElement {
