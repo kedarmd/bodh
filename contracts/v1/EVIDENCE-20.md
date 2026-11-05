@@ -16,7 +16,7 @@ This slice exposes the read-only thread observation in a native Discussions tab 
 - `cargo test --locked --test manual_drafts`: passed (4 tests), confirming existing inline draft behavior and shared revisions still work.
 - `cargo test --locked --test discussions`: passed (7 tests), including independently paginated nested replies and partial observations.
 - `cargo check --locked --manifest-path spikes/native-sequence/Cargo.toml`: passed.
-- `CARGO_BUILD_JOBS=2 ./scripts/validate desktop`: passed after merging integration tip `95020bd` (#19); output header records local commit `64e9b4e` and a dirty tree because this validation was run while finalizing the merge commit. Full output is in `VALIDATE-20.log`.
+- `CARGO_BUILD_JOBS=2 ./scripts/validate desktop`: passed on final integration tip `1a95b47` plus the #20 merge; output header records local commit `9f0507d` and a dirty tree because the evidence log was being refreshed. Full output is in `VALIDATE-20.log`.
 - A coordinated interactive trial of this new Discussions tab was not performed in this slice. Native keyboard/focus behavior is implemented using the existing focused key-handling pattern but remains unobserved; no claim of live interaction acceptance is made.
 
 ## Limits
