@@ -223,6 +223,8 @@ pub struct Product {
     overview_epoch: Arc<AtomicU64>,
     finding_triage_snapshot: Option<bodh::FindingTriageSnapshot>,
     finding_triage_loading: bool,
+    finding_triage_loading_context: Option<String>,
+    finding_triage_epoch: Arc<AtomicU64>,
     finding_action_saving: bool,
     finding_feedback_target: Option<String>,
     finding_feedback_body: String,
@@ -368,6 +370,8 @@ impl Product {
             overview_epoch: Arc::new(AtomicU64::new(0)),
             finding_triage_snapshot: None,
             finding_triage_loading: false,
+            finding_triage_loading_context: None,
+            finding_triage_epoch: Arc::new(AtomicU64::new(0)),
             finding_action_saving: false,
             finding_feedback_target: None,
             finding_feedback_body: String::new(),
@@ -879,21 +883,30 @@ impl Product {
         let Some(binding) = self.selected_review.clone() else {
             self.finding_triage_snapshot = None;
             self.finding_triage_loading = false;
+            self.finding_triage_loading_context = None;
+            self.finding_triage_epoch.fetch_add(1, Ordering::Relaxed);
             return;
         };
-        if self.finding_triage_loading
-            || self
-                .finding_triage_snapshot
-                .as_ref()
-                .is_some_and(|snapshot| snapshot.context_id == binding.context.context_id)
+        if self
+            .finding_triage_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.context_id == binding.context.context_id)
+        {
+            return;
+        }
+        self.finding_triage_snapshot = None;
+        if self.finding_triage_loading_context.as_deref()
+            == Some(binding.context.context_id.as_str())
         {
             return;
         }
         let state = self.preparation_db.clone();
         let preparation_id = binding.preparation_id.clone();
         let context_id = binding.context.context_id.clone();
-        let epoch = self.operation_epoch.load(Ordering::Relaxed);
+        let epoch = self.finding_triage_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let triage_epoch = self.finding_triage_epoch.clone();
         self.finding_triage_loading = true;
+        self.finding_triage_loading_context = Some(context_id.clone());
         cx.spawn(async move |weak, cx| {
             let result = cx
                 .background_executor()
@@ -902,15 +915,18 @@ impl Product {
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
-                if this.operation_epoch.load(Ordering::Relaxed) != epoch
-                    || this
-                        .selected_review
-                        .as_ref()
-                        .is_none_or(|current| current.context.context_id != context_id)
-                {
+                if triage_epoch.load(Ordering::Relaxed) != epoch {
                     return;
                 }
                 this.finding_triage_loading = false;
+                this.finding_triage_loading_context = None;
+                if this
+                    .selected_review
+                    .as_ref()
+                    .is_none_or(|current| current.context.context_id != context_id)
+                {
+                    return;
+                }
                 match result {
                     Ok(snapshot) => this.finding_triage_snapshot = Some(snapshot),
                     Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
@@ -10644,6 +10660,15 @@ mod keyboard_focus_tests {
                     product.active_tab,
                     bodh_sequence_spike::preferences::WorkspaceTab::Changes
                 );
+                assert_eq!(
+                    product
+                        .finding_triage_snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.context_id.as_str()),
+                    Some(binding.context.context_id.as_str()),
+                    "restoring the saved file selection must not cancel finding-triage recovery"
+                );
+                assert!(!product.finding_triage_loading);
                 assert_eq!(product.prefs.recent.len(), 1);
             })
             .unwrap();
