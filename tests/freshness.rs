@@ -584,6 +584,43 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
         "keep me"
     );
 
+    // Model a GitHub CLI permission denial after the executable starts. This
+    // distinguishes access loss from a missing local dependency while keeping
+    // the current preparation selected and its populated draft intact.
+    let denied_gh = root.join("denied-gh");
+    std::fs::write(
+        &denied_gh,
+        "#!/bin/sh\necho 'HTTP 403: Resource not accessible' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&denied_gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let denied =
+        refresh_freshness_with_gh(&current, &state, &OperationControl::default(), &denied_gh)
+            .unwrap();
+    assert_eq!(denied.status, FreshnessStatus::Unknown);
+    assert_eq!(denied.error_code.as_deref(), Some("AUTH_ACCESS"));
+    assert_eq!(
+        PreparationStore::open(&state)
+            .unwrap()
+            .load(&current.preparation_id)
+            .unwrap()
+            .context,
+        current.context
+    );
+    assert_eq!(
+        bodh::protected_work_snapshot(&state, &current).unwrap(),
+        before
+    );
+    assert_eq!(
+        bodh::DraftStore::open(&state)
+            .unwrap()
+            .list(&current.preparation_id)
+            .unwrap()
+            .drafts[0]
+            .body,
+        "keep me"
+    );
+
     let cancelled = OperationControl::default();
     cancelled.cancel();
     let error = bodh::prepare_latest_candidate_with_gh(
