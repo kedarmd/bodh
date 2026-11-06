@@ -6,6 +6,7 @@ use rusqlite::Connection;
 use std::{
     os::unix::fs::PermissionsExt,
     path::Path,
+    process::Command,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -594,6 +595,68 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
     )
     .unwrap();
     std::fs::set_permissions(&denied_gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // Use a real checkout and matching remote so latest-candidate preparation
+    // reaches the controlled GitHub API denial rather than failing locally.
+    let checkout = root.join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let init = Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&checkout)
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+    let remote = Command::new("git")
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widget.git",
+        ])
+        .current_dir(&checkout)
+        .output()
+        .unwrap();
+    assert!(remote.status.success());
+    Connection::open(&state)
+        .unwrap()
+        .execute(
+            "UPDATE preparations SET checkout=?1 WHERE preparation_id=?2",
+            rusqlite::params![checkout.to_string_lossy(), current.preparation_id],
+        )
+        .unwrap();
+    let current = PreparationStore::open(&state)
+        .unwrap()
+        .load(&current.preparation_id)
+        .unwrap();
+    let acquisition_error = bodh::prepare_latest_candidate_with_gh(
+        &current.preparation_id,
+        &state,
+        &OperationControl::default(),
+        &denied_gh,
+    )
+    .unwrap_err();
+    assert_eq!(acquisition_error.code, "AUTH_ACCESS");
+    assert_eq!(
+        PreparationStore::open(&state)
+            .unwrap()
+            .load(&current.preparation_id)
+            .unwrap()
+            .context,
+        current.context
+    );
+    assert_eq!(
+        bodh::protected_work_snapshot(&state, &current).unwrap(),
+        before
+    );
+    assert_eq!(
+        bodh::DraftStore::open(&state)
+            .unwrap()
+            .list(&current.preparation_id)
+            .unwrap()
+            .drafts[0]
+            .body,
+        "keep me"
+    );
     let denied =
         refresh_freshness_with_gh(&current, &state, &OperationControl::default(), &denied_gh)
             .unwrap();
