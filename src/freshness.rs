@@ -488,6 +488,8 @@ fn validate_switch_pair(
 fn ensure_switch_tables(state: &Path) -> Result<(), ContractError> {
     drop(DraftStore::open(state)?);
     drop(ReviewPublicationStore::open(state)?);
+    drop(crate::FindingTriageStore::open(state)?);
+    drop(crate::DiscussionPublicationStore::open(state)?);
     let db = open_db(state)?;
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS latest_switch_approvals(
@@ -590,6 +592,74 @@ fn protected_work_in(
         &[&pr.host, &pr.owner, &pr.repository, &number, &context],
     )?;
 
+    // Finding decisions can be independent of a comment/replacement draft:
+    // manual feedback and deferred/dismissed/staged status must survive a
+    // context switch just like the generated suggestion text.
+    let mut statement = db
+        .prepare(
+            "SELECT finding_id,disposition,selected_suggestion_id,manual_feedback,revision
+         FROM finding_triage_entries WHERE context_id=?1 ORDER BY finding_id",
+        )
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map([context], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })
+        .map_err(db_error)?;
+    for row in rows {
+        let (id, disposition, suggestion, feedback, revision) = row.map_err(db_error)?;
+        add("finding_triage", &id);
+        add("finding_triage_disposition", &disposition);
+        add(
+            "finding_triage_suggestion",
+            suggestion.as_deref().unwrap_or(""),
+        );
+        add("finding_triage_feedback", feedback.as_deref().unwrap_or(""));
+        add("finding_triage_revision", &revision.to_string());
+        pending_draft_count = pending_draft_count.saturating_add(1);
+    }
+    let mut statement = db.prepare(
+        "SELECT finding_id,suggestion_id,body,source_json,original_text,replacement,draft_id,revision
+         FROM finding_alternative_edits WHERE context_id=?1 ORDER BY finding_id,suggestion_id",
+    ).map_err(db_error)?;
+    let rows = statement
+        .query_map([context], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, i64>(7)?,
+            ))
+        })
+        .map_err(db_error)?;
+    for row in rows {
+        let (finding, suggestion, body, source, original, replacement, draft, revision) =
+            row.map_err(db_error)?;
+        add("finding_alternative", &format!("{finding}:{suggestion}"));
+        for (tag, value) in [
+            ("body", body),
+            ("source", source),
+            ("original", original.unwrap_or_default()),
+            ("replacement", replacement.unwrap_or_default()),
+            ("draft", draft),
+        ] {
+            add(&format!("finding_alternative_{tag}"), &value);
+        }
+        add("finding_alternative_revision", &revision.to_string());
+        // The underlying comment/replacement is counted above; don't inflate
+        // the visible draft count for this metadata row.
+    }
+
     let intent: Option<(i64, String)> = db
         .query_row(
             "SELECT revision,intent_json FROM review_intents WHERE preparation_id=?1",
@@ -643,9 +713,33 @@ fn protected_work_in(
 
     let mut unresolved_count = 0_u64;
     let mut statement = db
-        .prepare("SELECT operation_id,state,fingerprint FROM review_operations WHERE preparation_id=?1 AND state IN ('planned','sending','unknown') ORDER BY operation_id")
+        .prepare("SELECT operation_id,state,fingerprint,payload_json FROM review_operations WHERE preparation_id=?1 AND state!='confirmed' ORDER BY operation_id")
         .map_err(db_error)?;
     let rows = statement
+        .query_map([&prepared.preparation_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(db_error)?;
+    for row in rows {
+        let (id, status, fingerprint, payload) = row.map_err(db_error)?;
+        add("publication_operation", &id);
+        add("publication_status", &status);
+        add("publication_fingerprint", &fingerprint);
+        add("publication_payload", &payload);
+        unresolved_count = unresolved_count.saturating_add(1);
+    }
+    let mut statement = db
+        .prepare(
+            "SELECT plan_id,state,fingerprint FROM discussion_publication_plans
+         WHERE preparation_id=?1 AND state!='confirmed' ORDER BY plan_id",
+        )
+        .map_err(db_error)?;
+    let plans = statement
         .query_map([&prepared.preparation_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -654,11 +748,65 @@ fn protected_work_in(
             ))
         })
         .map_err(db_error)?;
-    for row in rows {
-        let (id, status, fingerprint) = row.map_err(db_error)?;
-        add("publication_operation", &id);
-        add("publication_status", &status);
-        add("publication_fingerprint", &fingerprint);
+    for plan in plans {
+        let (id, state, fingerprint) = plan.map_err(db_error)?;
+        add("discussion_plan", &id);
+        add("discussion_plan_state", &state);
+        add("discussion_plan_fingerprint", &fingerprint);
+        let mut steps = db.prepare(
+            "SELECT step_id,ordinal,kind,draft_id,draft_revision,thread_id,root_comment_id,body,action,state,remote_id,failure
+             FROM discussion_publication_steps WHERE plan_id=?1 ORDER BY ordinal",
+        ).map_err(db_error)?;
+        let rows = steps
+            .query_map([&id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                ))
+            })
+            .map_err(db_error)?;
+        for row in rows {
+            let (
+                step,
+                ordinal,
+                kind,
+                draft,
+                revision,
+                thread,
+                root,
+                body,
+                action,
+                status,
+                remote,
+                failure,
+            ) = row.map_err(db_error)?;
+            for (tag, value) in [
+                ("step", step),
+                ("ordinal", ordinal.to_string()),
+                ("kind", kind),
+                ("draft", draft),
+                ("revision", revision.to_string()),
+                ("thread", thread),
+                ("root", root.unwrap_or_default()),
+                ("body", body.unwrap_or_default()),
+                ("action", action.unwrap_or_default()),
+                ("state", status),
+                ("remote", remote.unwrap_or_default()),
+                ("failure", failure.unwrap_or_default()),
+            ] {
+                add(&format!("discussion_{tag}"), &value);
+            }
+        }
         unresolved_count = unresolved_count.saturating_add(1);
     }
     let fingerprint = format!("v1-{:x}", digest.finalize());
