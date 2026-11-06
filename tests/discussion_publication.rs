@@ -255,6 +255,91 @@ fn independent_outcomes_confirm_only_accepted_steps_and_keep_reply_payload_exact
 }
 
 #[test]
+fn reply_only_and_thread_only_plans_confirm_only_real_selected_operations() {
+    let (reply_root, reply_state, reply_prep) = fixture();
+    let (_, reply_id, unselected_action_id) = seed_work(&reply_state, &reply_prep);
+    let reply_intent = stage_intent(&reply_state, &reply_prep, &[&reply_id], &[]);
+    let mut reply_store = DiscussionPublicationStore::open(&reply_state).unwrap();
+    let reply_plan = reply_store
+        .confirm(
+            &reply_prep,
+            reply_intent,
+            None,
+            &[DiscussionSelection {
+                id: reply_id.clone(),
+                revision: 1,
+            }],
+            &[],
+        )
+        .unwrap();
+    assert_eq!(reply_plan.review_operation_id, None);
+    assert_eq!(reply_plan.steps.len(), 1);
+    assert_eq!(reply_plan.steps[0].kind, "reply");
+    assert_eq!(reply_plan.steps[0].draft_id, reply_id);
+    assert_ne!(reply_plan.steps[0].draft_id, unselected_action_id);
+    let reply_sender = publisher(
+        false,
+        true,
+        true,
+        vec![DiscussionSendOutcome::Confirmed {
+            remote_id: Some("reply-comment-456".into()),
+        }],
+    );
+    let sent_reply = reply_store
+        .publish(&reply_plan.id, &reply_sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(sent_reply.state, "confirmed");
+    assert_eq!(
+        reply_sender.calls.lock().unwrap().as_slice(),
+        ["reply:123:first reply"]
+    );
+    let _ = std::fs::remove_dir_all(reply_root);
+
+    let (action_root, action_state, action_prep) = fixture();
+    let (_, unselected_reply_id, action_id) = seed_work(&action_state, &action_prep);
+    let action_intent = stage_intent(&action_state, &action_prep, &[], &[&action_id]);
+    let mut action_store = DiscussionPublicationStore::open(&action_state).unwrap();
+    let action_plan = action_store
+        .confirm(
+            &action_prep,
+            action_intent,
+            None,
+            &[],
+            &[DiscussionSelection {
+                id: action_id.clone(),
+                revision: 1,
+            }],
+        )
+        .unwrap();
+    assert_eq!(action_plan.review_operation_id, None);
+    assert_eq!(action_plan.steps.len(), 1);
+    assert_eq!(action_plan.steps[0].kind, "thread_action");
+    assert_eq!(action_plan.steps[0].draft_id, action_id);
+    assert_ne!(action_plan.steps[0].draft_id, unselected_reply_id);
+    let action_sender = publisher(
+        false,
+        true,
+        true,
+        vec![DiscussionSendOutcome::Confirmed {
+            remote_id: Some("thread-node-1".into()),
+        }],
+    );
+    let sent_action = action_store
+        .publish(
+            &action_plan.id,
+            &action_sender,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(sent_action.state, "confirmed");
+    assert_eq!(
+        action_sender.calls.lock().unwrap().as_slice(),
+        ["action:thread-node-1:Resolve"]
+    );
+    let _ = std::fs::remove_dir_all(action_root);
+}
+
+#[test]
 fn permission_loss_and_already_achieved_action_send_nothing_and_never_claim_publication() {
     let (root, state, prep) = fixture();
     let (_, reply_id, action_id) = seed_work(&state, &prep);
