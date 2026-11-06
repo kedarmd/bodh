@@ -45,6 +45,10 @@ fn bind_focus_traversal(cx: &mut App) {
     ]);
 }
 
+fn keyboard_tab_stop(element: Stateful<Div>) -> Stateful<Div> {
+    element.tab_index(0)
+}
+
 const CANVAS_DARK: u32 = 0x16191e;
 const PANEL_DARK: u32 = 0x1d2128;
 const RAISED_DARK: u32 = 0x252a33;
@@ -7568,80 +7572,83 @@ impl Product {
                         let file_index = *file_index;
                         let label = label.clone();
                         let owner = owner.clone();
-                        div()
-                            .id(file_index)
-                            .h(px(48.))
-                            .min_h(px(48.))
-                            .w_full()
-                            .px_2()
-                            .flex()
-                            .flex_col()
-                            .justify_center()
-                            .gap_0()
-                            .border_1()
-                            .border_color(rgb(if current_file == Some(file_index) {
-                                p.accent
-                            } else {
-                                p.border
-                            }))
-                            .bg(rgb(if current_file == Some(file_index) {
-                                p.raised
-                            } else {
-                                p.panel
-                            }))
-                            .text_color(rgb(if current_file == Some(file_index) {
-                                p.text
-                            } else {
-                                p.muted
-                            }))
-                            .cursor_pointer()
-                            .child(
-                                div()
-                                    .h_full()
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .justify_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .text_size(px(12.))
-                                                    .truncate()
-                                                    .child(label.name.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .text_size(px(10.))
-                                                    .text_color(rgb(p.muted))
-                                                    .child(label.status.clone()),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .min_w_0()
-                                            .text_size(px(10.))
-                                            .text_color(rgb(p.muted))
-                                            .truncate()
-                                            .child(label.directory.clone()),
-                                    ),
-                            )
-                            .on_click(move |_, window, app| {
-                                let _ = owner.update(app, |this, cx| {
-                                    window.focus(&this.focus);
-                                    this.select_file(file_index, cx);
-                                });
-                            })
+                        keyboard_tab_stop(
+                            div()
+                                .id(file_index)
+                                .h(px(48.))
+                                .min_h(px(48.))
+                                .w_full()
+                                .px_2()
+                                .flex()
+                                .flex_col()
+                                .justify_center()
+                                .gap_0()
+                                .border_1()
+                                .border_color(rgb(if current_file == Some(file_index) {
+                                    p.accent
+                                } else {
+                                    p.border
+                                }))
+                                .focus(|style| style.border_color(rgb(p.accent)))
+                                .bg(rgb(if current_file == Some(file_index) {
+                                    p.raised
+                                } else {
+                                    p.panel
+                                }))
+                                .text_color(rgb(if current_file == Some(file_index) {
+                                    p.text
+                                } else {
+                                    p.muted
+                                }))
+                                .cursor_pointer()
+                                .child(
+                                    div()
+                                        .h_full()
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .justify_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .text_size(px(12.))
+                                                        .truncate()
+                                                        .child(label.name.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .text_size(px(10.))
+                                                        .text_color(rgb(p.muted))
+                                                        .child(label.status.clone()),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .min_w_0()
+                                                .text_size(px(10.))
+                                                .text_color(rgb(p.muted))
+                                                .truncate()
+                                                .child(label.directory.clone()),
+                                        ),
+                                ),
+                        )
+                        .on_click(move |_, window, app| {
+                            let _ = owner.update(app, |this, cx| {
+                                window.focus(&this.focus);
+                                this.select_file(file_index, cx);
+                            });
+                        })
                     })
                     .collect::<Vec<_>>()
             },
@@ -8693,17 +8700,19 @@ fn link_button(
     action: impl Fn(&mut Product, &ClickEvent, &mut Window, &mut Context<Product>) + 'static,
     cx: &mut Context<Product>,
 ) -> Stateful<Div> {
-    div()
-        .id(ElementId::Name(SharedString::from(id.to_owned())))
-        .px_0()
-        .py_0()
-        .border_0()
-        .bg(transparent_black())
-        .text_color(rgb(p.accent))
-        .cursor_pointer()
-        .focus(|style| style.text_color(rgb(p.accent)))
-        .child(label.to_owned())
-        .on_click(cx.listener(action))
+    keyboard_tab_stop(
+        div()
+            .id(ElementId::Name(SharedString::from(id.to_owned())))
+            .px_0()
+            .py_0()
+            .border_0()
+            .bg(transparent_black())
+            .text_color(rgb(p.accent))
+            .cursor_pointer()
+            .focus(|style| style.underline())
+            .child(label.to_owned()),
+    )
+    .on_click(cx.listener(action))
 }
 
 fn severity_color(severity: &bodh::Severity, p: Palette) -> u32 {
@@ -9048,12 +9057,17 @@ fn render_unified_diff_row(
         .child(content);
     if let Some((revision, line)) = row_source(row, fallback) {
         let owner = owner.clone();
-        element = element.cursor_pointer().on_click(move |_, window, app| {
-            let _ = owner.update(app, |this, cx| {
-                window.focus(&this.focus);
-                this.select_source_line(file_index, revision, line, cx);
+        element = keyboard_tab_stop(element)
+            .focus(|style| style.border_color(rgb(p.accent)))
+            .border_1()
+            .border_color(rgb(background))
+            .cursor_pointer()
+            .on_click(move |_, window, app| {
+                let _ = owner.update(app, |this, cx| {
+                    window.focus(&this.focus);
+                    this.select_source_line(file_index, revision, line, cx);
+                });
             });
-        });
     }
     element
 }
@@ -9156,12 +9170,17 @@ fn render_split_cell(
         )
     {
         let owner = owner.clone();
-        element = element.cursor_pointer().on_click(move |_, window, app| {
-            let _ = owner.update(app, |this, cx| {
-                window.focus(&this.focus);
-                this.select_source_line(file_index, revision, line, cx);
+        element = keyboard_tab_stop(element)
+            .focus(|style| style.border_color(rgb(p.accent)))
+            .border_1()
+            .border_color(rgb(background))
+            .cursor_pointer()
+            .on_click(move |_, window, app| {
+                let _ = owner.update(app, |this, cx| {
+                    window.focus(&this.focus);
+                    this.select_source_line(file_index, revision, line, cx);
+                });
             });
-        });
     }
     element
 }
@@ -9240,19 +9259,20 @@ fn button(
     action: impl Fn(&mut Product, &ClickEvent, &mut Window, &mut Context<Product>) + 'static,
     cx: &mut Context<Product>,
 ) -> Stateful<Div> {
-    div()
-        .id(ElementId::Name(SharedString::from(id.to_owned())))
-        .px_3()
-        .py_2()
-        .border_1()
-        .border_color(rgb(p.border))
-        .bg(rgb(p.panel))
-        .text_color(rgb(p.text))
-        .cursor_pointer()
-        .focus(|style| style.border_color(rgb(p.accent)))
-        .tab_index(0)
-        .child(label.to_owned())
-        .on_click(cx.listener(action))
+    keyboard_tab_stop(
+        div()
+            .id(ElementId::Name(SharedString::from(id.to_owned())))
+            .px_3()
+            .py_2()
+            .border_1()
+            .border_color(rgb(p.border))
+            .bg(rgb(p.panel))
+            .text_color(rgb(p.text))
+            .cursor_pointer()
+            .focus(|style| style.border_color(rgb(p.accent)))
+            .child(label.to_owned()),
+    )
+    .on_click(cx.listener(action))
 }
 
 fn publication_state_label(state: &str) -> &str {
@@ -9929,7 +9949,7 @@ mod nested_scroll_tests {
 
 #[cfg(test)]
 mod keyboard_focus_tests {
-    use super::{FocusNext, FocusPrevious, bind_focus_traversal};
+    use super::{FocusNext, FocusPrevious, bind_focus_traversal, keyboard_tab_stop};
     use gpui::{
         AppContext, Context, FocusHandle, InteractiveElement, IntoElement, ParentElement, Render,
         Styled, TestAppContext, Window, div,
@@ -9939,6 +9959,8 @@ mod keyboard_focus_tests {
         root: FocusHandle,
         first: FocusHandle,
         second: FocusHandle,
+        third: FocusHandle,
+        fourth: FocusHandle,
     }
 
     impl Render for FocusTraversalProbe {
@@ -9948,22 +9970,36 @@ mod keyboard_focus_tests {
                 .track_focus(&self.root)
                 .on_action(cx.listener(|_, _: &FocusNext, window, _| window.focus_next()))
                 .on_action(cx.listener(|_, _: &FocusPrevious, window, _| window.focus_prev()))
-                .child(
+                .child(keyboard_tab_stop(
                     div()
-                        .id("first-control")
-                        .tab_index(0)
+                        .id("button-control")
                         .focus(|style| style.border_color(gpui::rgb(0x1e6867)))
                         .track_focus(&self.first)
-                        .child("First"),
-                )
-                .child(
+                        .child("Button action"),
+                ))
+                .child(keyboard_tab_stop(
                     div()
-                        .id("second-control")
-                        .tab_index(0)
-                        .focus(|style| style.border_color(gpui::rgb(0x1e6867)))
+                        .id("link-control")
+                        .focus(|style| style.underline())
                         .track_focus(&self.second)
-                        .child("Second"),
-                )
+                        .child("Link action"),
+                ))
+                .child(keyboard_tab_stop(
+                    div()
+                        .id("file-row-control")
+                        .border_1()
+                        .focus(|style| style.border_color(gpui::rgb(0x1e6867)))
+                        .track_focus(&self.third)
+                        .child("Changed file row"),
+                ))
+                .child(keyboard_tab_stop(
+                    div()
+                        .id("diff-row-control")
+                        .border_1()
+                        .focus(|style| style.border_color(gpui::rgb(0x1e6867)))
+                        .track_focus(&self.fourth)
+                        .child("Selectable diff row"),
+                ))
         }
     }
 
@@ -9975,6 +10011,8 @@ mod keyboard_focus_tests {
                     root: cx.focus_handle(),
                     first: cx.focus_handle().tab_index(0).tab_stop(true),
                     second: cx.focus_handle().tab_index(0).tab_stop(true),
+                    third: cx.focus_handle().tab_index(0).tab_stop(true),
+                    fourth: cx.focus_handle().tab_index(0).tab_stop(true),
                 })
             })
             .unwrap()
@@ -9998,7 +10036,30 @@ mod keyboard_focus_tests {
         cx.dispatch_keystroke(*window, gpui::Keystroke::parse("tab").unwrap());
         window
             .update(cx, |probe, window, _| {
-                assert!(probe.second.is_focused(window), "Tab should advance focus");
+                assert!(
+                    probe.second.is_focused(window),
+                    "Tab should reach link actions"
+                );
+            })
+            .unwrap();
+
+        cx.dispatch_keystroke(*window, gpui::Keystroke::parse("tab").unwrap());
+        window
+            .update(cx, |probe, window, _| {
+                assert!(
+                    probe.third.is_focused(window),
+                    "Tab should reach changed-file rows"
+                );
+            })
+            .unwrap();
+
+        cx.dispatch_keystroke(*window, gpui::Keystroke::parse("tab").unwrap());
+        window
+            .update(cx, |probe, window, _| {
+                assert!(
+                    probe.fourth.is_focused(window),
+                    "Tab should reach diff rows"
+                );
             })
             .unwrap();
 
@@ -10006,8 +10067,8 @@ mod keyboard_focus_tests {
         window
             .update(cx, |probe, window, _| {
                 assert!(
-                    probe.first.is_focused(window),
-                    "Shift-Tab should reverse focus"
+                    probe.third.is_focused(window),
+                    "Shift-Tab should reverse through diff rows"
                 );
             })
             .unwrap();

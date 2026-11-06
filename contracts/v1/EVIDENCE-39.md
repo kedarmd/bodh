@@ -37,3 +37,7 @@ No crash or process exit occurred. The source selection, themes, diff modes, and
 ### Scope and qualification limit
 
 This product-mode trial concentrated on the #39 Changes workflow. It did not inspect Home/repository navigation, Overview, Findings, or Finish Review in the same run, as requested by the general native-trial procedure in `TESTING.md`. Those surfaces have separate evidence in other ticket records, but this run does not establish a cross-surface product qualification. The user's acceptance applies to the corrected Changes result above.
+
+### Follow-up observation during #16 native trial — 2026-11-06
+
+While reviewing saved `kedarmd/kmdot #103` at a 947×1020 Bodh window, the user reported that the changed-file entries feel too close to the panel border, with too much gap between entries. The target-window capture is [issue-39-changes-spacing-feedback-2026-11-06.png](../../spikes/native-sequence/evidence/issue-39-changes-spacing-feedback-2026-11-06.png). Current source uses a 48 px row minimum, 8 px horizontal row inset (`px_2`), 4 px list gap (`gap_1`), 8 px filename/directory gap (`gap_2`), and 8 px outer panel padding (`p_2`). This records the concern for a visual follow-up; no spacing change has been made or accepted.
