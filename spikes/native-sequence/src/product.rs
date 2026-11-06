@@ -3609,7 +3609,7 @@ impl Product {
         cx.notify();
     }
 
-    fn workspace_key(&mut self, event: &KeyDownEvent, window: &Window, cx: &mut Context<Self>) {
+    fn workspace_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.review_summary_focus.is_focused(window) {
             self.review_summary_key(event, cx);
             return;
@@ -3647,6 +3647,7 @@ impl Product {
                         self.selected_pr
                             .or_else(|| rows.first().map(|pr| pr.number)),
                     ) {
+                        window.focus(&self.focus);
                         self.prepare(path, number, cx);
                     }
                 }
@@ -4034,7 +4035,10 @@ impl Product {
                     &format!("recent-{}", review.preparation_id),
                     &label,
                     p,
-                    move |this, _, _, cx| this.resume(id.clone(), cx),
+                    move |this, _, window, cx| {
+                        window.focus(&this.focus);
+                        this.resume(id.clone(), cx);
+                    },
                     cx,
                 ));
             }
@@ -4165,8 +4169,9 @@ impl Product {
                             &format!("open-pr-{number}"),
                             "Open review",
                             p,
-                            move |this, _, _, cx| {
+                            move |this, _, window, cx| {
                                 this.selected_pr = Some(number);
+                                window.focus(&this.focus);
                                 this.prepare(path.clone(), number, cx);
                             },
                             cx,
@@ -10069,6 +10074,19 @@ mod keyboard_focus_tests {
                 assert!(
                     probe.third.is_focused(window),
                     "Shift-Tab should reverse through diff rows"
+                );
+            })
+            .unwrap();
+
+        window
+            .update(cx, |probe, window, _| window.focus(&probe.root))
+            .unwrap();
+        cx.dispatch_keystroke(*window, gpui::Keystroke::parse("tab").unwrap());
+        window
+            .update(cx, |probe, window, _| {
+                assert!(
+                    probe.first.is_focused(window),
+                    "Tab traversal should resume after focus returns to the workspace root"
                 );
             })
             .unwrap();
