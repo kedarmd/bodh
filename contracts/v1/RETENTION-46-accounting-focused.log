@@ -1,0 +1,16 @@
+   Compiling bodh v0.1.0 (/tmp/bodh-issue-46-retention)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.65s
+     Running unittests src/lib.rs (/home/kedarmd/dev/bodh/target/debug/deps/bodh-a16c0c225b334b2a)
+
+running 8 tests
+test retention::tests::byte_estimator_uses_utf8_storage_length_not_character_count ... ok
+test retention::tests::concurrent_resume_pin_and_prune_never_leave_a_pin_to_deleted_preparation ... ok
+test retention::tests::consumed_replacement_approval_tombstone_survives_until_expiry ... ok
+test retention::tests::byte_budget_evicts_orphan_cache_but_protects_orphan_generated_and_draft_payloads ... ok
+test retention::tests::reports_protected_per_repository_floor_and_enforces_byte_budget_on_lru ... ok
+test retention::tests::prunes_lru_candidates_with_count_budget_and_keeps_current_active_and_draft ... ok
+test retention::tests::publication_recovery_and_failed_cleanup_keep_source_state_atomic ... ok
+test retention::tests::repeated_prepare_discussion_publication_restart_cycles_stay_bounded_and_reload_recovery ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.57s
+

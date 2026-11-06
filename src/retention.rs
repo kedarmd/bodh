@@ -329,11 +329,7 @@ fn prune_in_transaction(
         .filter(|i| !i.preparation && i.protected)
         .map(|i| i.bytes)
         .sum::<u64>();
-    let bytes_before = items
-        .iter()
-        .map(|i| i.bytes)
-        .sum::<u64>()
-        .saturating_add(orphan_bytes);
+    let bytes_before = items.iter().map(|i| i.bytes).sum::<u64>();
     items.sort_by(|a, b| a.created.cmp(&b.created).then(a.id.cmp(&b.id)));
     let mut keep = std::collections::HashSet::new();
     let mut repo_counts = std::collections::HashMap::<(String, String, String), usize>::new();
@@ -1038,6 +1034,9 @@ mod tests {
             1
         );
         assert!(report.unassociated_protected_bytes > 0);
+        assert_eq!(report.estimated_bytes_before, 13_263);
+        assert_eq!(report.estimated_bytes_after, 190);
+        assert_eq!(report.deleted_bytes, 13_073);
         assert!(report.protected_over_budget_bytes > 0);
         assert!(report.protected_over_budget_per_repository_bytes > 0);
         let _ = std::fs::remove_file(&path);
