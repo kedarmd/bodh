@@ -1,8 +1,9 @@
 use bodh::{
     DiscussionPublicationStore, DiscussionPublisher, DiscussionReconciliationOutcome,
     DiscussionSelection, DiscussionSendOutcome, DraftStore, OperationControl, PrIdentity,
-    PreparationStore, ReviewContext, ReviewPublicationStore, SelectedDraft, StageReviewRequest,
-    ThreadAction, ThreadState, acquire_discussions_with_gh,
+    PreparationStore, RemoteReviewState, ReviewContext, ReviewEvent, ReviewPublicationStore,
+    ReviewPublisher, SelectedDraft, SendOutcome, StageReviewRequest, ThreadAction, ThreadState,
+    acquire_discussions_with_gh,
 };
 use rusqlite::{Connection, params};
 use std::{
@@ -136,6 +137,172 @@ fn publisher(
         reconciliations: Arc::new(Mutex::new(Vec::new())),
         calls: Arc::new(Mutex::new(Vec::new())),
     }
+}
+
+fn controlled_publisher(
+    events: Arc<Mutex<Vec<String>>>,
+    outcomes: Vec<DiscussionSendOutcome>,
+) -> ControlledPublisher {
+    ControlledPublisher {
+        state: ThreadState {
+            pull_request_open: true,
+            head_sha: "b".repeat(40),
+            base_sha: "a".repeat(40),
+            resolved: false,
+            can_reply: true,
+            can_resolve: true,
+            can_reopen: true,
+        },
+        outcomes: Arc::new(Mutex::new(outcomes)),
+        reconciliations: Arc::new(Mutex::new(Vec::new())),
+        calls: events,
+    }
+}
+
+struct OrderedReviewPublisher {
+    events: Arc<Mutex<Vec<String>>>,
+    outcome: SendOutcome,
+}
+
+impl ReviewPublisher for OrderedReviewPublisher {
+    fn publish(&self, _: &bodh::ReviewPayload, _: &OperationControl) -> SendOutcome {
+        self.events.lock().unwrap().push("grouped-review".into());
+        self.outcome.clone()
+    }
+}
+
+fn grouped_fixture() -> (PathBuf, PathBuf, String, RemoteReviewState) {
+    use std::process::Command;
+
+    let root = std::env::temp_dir().join(format!(
+        "bodh-grouped-discussion-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let repo = root.join("repo");
+    let state = root.join("state.sqlite");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+            .env("GIT_COMMITTER_NAME", "Fixture")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "-b", "main"]);
+    std::fs::write(repo.join("src.rs"), "fn value() {\n    1\n}\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "base"]);
+    let base_sha = git(&["rev-parse", "HEAD"]);
+    std::fs::write(repo.join("src.rs"), "fn value() {\n    2\n}\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "head"]);
+    let head_sha = git(&["rev-parse", "HEAD"]);
+    let context = ReviewContext {
+        pr: PrIdentity {
+            host: "github.com".into(),
+            owner: "acme".into(),
+            repository: "widget".into(),
+            number: 7,
+        },
+        context_id: "grouped-discussion-context".into(),
+        base_sha: base_sha.clone(),
+        head_sha: head_sha.clone(),
+        merge_base_sha: base_sha.clone(),
+    };
+    let binding = PreparationStore::open(&state)
+        .unwrap()
+        .save(&context, repo.to_str().unwrap(), "PR", None, &[])
+        .unwrap();
+    let gh = root.join("gh");
+    std::fs::write(
+        &gh,
+        r##"#!/bin/sh
+case "$*" in
+  *node\(id:*) printf '%s' '{"data":{"node":{"comments":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"c1"},"nodes":[{"id":"123","databaseId":123,"body":"root text","replyTo":null}]}}}}' ;;
+  *) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"t1"},"nodes":[{"id":"thread-node-1","path":"src.rs","line":2,"originalLine":2,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":true,"comments":{"totalCount":1}}]}}}}}' ;;
+esac
+"##,
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&gh).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&gh, permissions).unwrap();
+    let binding = PreparationStore::open(&state)
+        .unwrap()
+        .load(&binding.preparation_id)
+        .unwrap();
+    acquire_discussions_with_gh(&binding, &state, &OperationControl::default(), &gh).unwrap();
+    let remote = RemoteReviewState {
+        pull_request_id: "PR_node".into(),
+        head_sha,
+        base_sha,
+        state: "OPEN".into(),
+        viewer_permission: "WRITE".into(),
+    };
+    (root, state, binding.preparation_id, remote)
+}
+
+fn stage_grouped_intent(state: &Path, prep: &str) -> (String, String, u64) {
+    let mut drafts = DraftStore::open(state).unwrap();
+    let snapshot = drafts.list(prep).unwrap();
+    let reply = drafts
+        .save_reply(
+            prep,
+            None,
+            "thread-node-1",
+            "123",
+            "first reply",
+            snapshot.workspace_revision,
+            0,
+        )
+        .unwrap();
+    let snapshot = drafts.list(prep).unwrap();
+    let action = drafts
+        .stage_thread_action(
+            prep,
+            None,
+            "thread-node-1",
+            ThreadAction::Resolve,
+            snapshot.workspace_revision,
+            0,
+        )
+        .unwrap();
+    let mut store = ReviewPublicationStore::open(state).unwrap();
+    let intent = store
+        .stage(StageReviewRequest {
+            state: state.to_path_buf(),
+            preparation_id: prep.into(),
+            expected_workspace_revision: action.workspace_revision,
+            expected_intent_revision: store.intent(prep).unwrap().revision,
+            selected: vec![],
+            selected_replacements: vec![],
+            selected_replies: vec![SelectedDraft {
+                id: reply.reply.id.clone(),
+                revision: reply.reply.revision,
+            }],
+            selected_thread_actions: vec![SelectedDraft {
+                id: action.action.id.clone(),
+                revision: action.action.revision,
+            }],
+            summary: Some("Review summary".into()),
+            event: Some(ReviewEvent::Comment),
+        })
+        .unwrap();
+    (reply.reply.id, action.action.id, intent.revision)
 }
 fn seed_work(state: &Path, prep: &str) -> (u64, String, String) {
     let mut drafts = DraftStore::open(state).unwrap();
@@ -465,6 +632,228 @@ fn interrupted_sending_step_becomes_unknown_and_cannot_be_retried() {
     assert_eq!(error.code, "DISCUSSION_SEND_NOT_ALLOWED");
     assert!(sender.calls.lock().unwrap().is_empty());
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn grouped_review_is_confirmed_before_dependent_operations_and_order_survives_reopen() {
+    let (root, state, prep, remote) = grouped_fixture();
+    let (reply_id, action_id, intent_revision) = stage_grouped_intent(&state, &prep);
+    let mut review_store = ReviewPublicationStore::open(&state).unwrap();
+    let review = review_store
+        .confirm(
+            &prep,
+            &state,
+            intent_revision,
+            &remote,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let mut discussion_store = DiscussionPublicationStore::open(&state).unwrap();
+    let plan = discussion_store
+        .confirm(
+            &prep,
+            intent_revision,
+            Some(&review.id),
+            &[DiscussionSelection {
+                id: reply_id.clone(),
+                revision: 1,
+            }],
+            &[DiscussionSelection {
+                id: action_id.clone(),
+                revision: 1,
+            }],
+        )
+        .unwrap();
+    assert_eq!(
+        plan.review_operation_id.as_deref(),
+        Some(review.id.as_str())
+    );
+    assert_eq!(
+        plan.steps
+            .iter()
+            .map(|step| step.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["reply", "thread_action"]
+    );
+    assert_eq!(plan.steps[0].draft_id, reply_id);
+    assert_eq!(plan.steps[1].draft_id, action_id);
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let premature_sender = controlled_publisher(events.clone(), vec![]);
+    assert_eq!(
+        discussion_store
+            .publish(&plan.id, &premature_sender, &OperationControl::default())
+            .unwrap_err()
+            .code,
+        "REVIEW_NOT_CONFIRMED"
+    );
+    assert!(events.lock().unwrap().is_empty());
+    assert_eq!(discussion_store.plan(&plan.id).unwrap().state, "planned");
+
+    let review_sender = OrderedReviewPublisher {
+        events: events.clone(),
+        outcome: SendOutcome::Confirmed {
+            remote_id: "review-1".into(),
+            url: Some("https://example.invalid/review/1".into()),
+        },
+    };
+    let published_review = review_store
+        .publish_confirmed(
+            &review.id,
+            &remote,
+            &review_sender,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(published_review.state, "confirmed");
+
+    let mut sender = controlled_publisher(
+        events.clone(),
+        vec![
+            DiscussionSendOutcome::Confirmed {
+                remote_id: Some("reply-1".into()),
+            },
+            DiscussionSendOutcome::Confirmed {
+                remote_id: Some("thread-node-1".into()),
+            },
+        ],
+    );
+    sender.state.head_sha = remote.head_sha.clone();
+    sender.state.base_sha = remote.base_sha.clone();
+    let published_discussion = discussion_store
+        .publish(&plan.id, &sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(
+        published_discussion.state,
+        "confirmed",
+        "steps: {:?}; events: {:?}",
+        published_discussion.steps,
+        events.lock().unwrap()
+    );
+    assert_eq!(
+        events.lock().unwrap().as_slice(),
+        [
+            "grouped-review",
+            "reply:123:first reply",
+            "action:thread-node-1:Resolve"
+        ]
+    );
+
+    drop(discussion_store);
+    let resumed = DiscussionPublicationStore::open(&state)
+        .unwrap()
+        .plan(&plan.id)
+        .unwrap();
+    assert_eq!(resumed.state, "confirmed");
+    assert_eq!(
+        resumed
+            .steps
+            .iter()
+            .map(|step| step.state.as_str())
+            .collect::<Vec<_>>(),
+        vec!["confirmed", "confirmed"]
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn rejected_or_uncertain_grouped_review_keeps_dependent_steps_unsent_after_restart() {
+    for (outcome, review_state, plan_state) in [
+        (
+            SendOutcome::Rejected {
+                message: "permission denied".into(),
+            },
+            "failed",
+            "failed",
+        ),
+        (
+            SendOutcome::Uncertain {
+                message: "timed out after request".into(),
+            },
+            "unknown",
+            "unknown",
+        ),
+    ] {
+        let (root, state, prep, remote) = grouped_fixture();
+        let (reply_id, action_id, intent_revision) = stage_grouped_intent(&state, &prep);
+        let mut review_store = ReviewPublicationStore::open(&state).unwrap();
+        let review = review_store
+            .confirm(
+                &prep,
+                &state,
+                intent_revision,
+                &remote,
+                &OperationControl::default(),
+            )
+            .unwrap();
+        let mut discussion_store = DiscussionPublicationStore::open(&state).unwrap();
+        let plan = discussion_store
+            .confirm(
+                &prep,
+                intent_revision,
+                Some(&review.id),
+                &[DiscussionSelection {
+                    id: reply_id,
+                    revision: 1,
+                }],
+                &[DiscussionSelection {
+                    id: action_id,
+                    revision: 1,
+                }],
+            )
+            .unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let review_sender = OrderedReviewPublisher {
+            events: events.clone(),
+            outcome,
+        };
+        let failed_review = review_store
+            .publish_confirmed(
+                &review.id,
+                &remote,
+                &review_sender,
+                &OperationControl::default(),
+            )
+            .unwrap();
+        assert_eq!(failed_review.state, review_state);
+
+        let sender = controlled_publisher(events.clone(), vec![]);
+        let dependent = discussion_store
+            .publish(&plan.id, &sender, &OperationControl::default())
+            .unwrap();
+        assert_eq!(dependent.state, plan_state);
+        assert_eq!(
+            dependent
+                .steps
+                .iter()
+                .map(|step| step.state.as_str())
+                .collect::<Vec<_>>(),
+            vec!["unsent", "unsent"]
+        );
+        assert_eq!(events.lock().unwrap().as_slice(), ["grouped-review"]);
+
+        drop(discussion_store);
+        let mut resumed = DiscussionPublicationStore::open(&state).unwrap();
+        let recovered = resumed.plan(&plan.id).unwrap();
+        assert_eq!(recovered.state, plan_state);
+        assert_eq!(
+            recovered
+                .steps
+                .iter()
+                .map(|step| step.state.as_str())
+                .collect::<Vec<_>>(),
+            vec!["unsent", "unsent"]
+        );
+        assert_eq!(
+            resumed
+                .publish(&plan.id, &sender, &OperationControl::default())
+                .unwrap_err()
+                .code,
+            "DISCUSSION_SEND_NOT_ALLOWED"
+        );
+        assert_eq!(events.lock().unwrap().as_slice(), ["grouped-review"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 #[test]
