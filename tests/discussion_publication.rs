@@ -1,8 +1,8 @@
 use bodh::{
-    DiscussionPublicationStore, DiscussionPublisher, DiscussionSelection, DiscussionSendOutcome,
-    DraftStore, OperationControl, PrIdentity, PreparationStore, ReviewContext,
-    ReviewPublicationStore, SelectedDraft, StageReviewRequest, ThreadAction, ThreadState,
-    acquire_discussions_with_gh,
+    DiscussionPublicationStore, DiscussionPublisher, DiscussionReconciliationOutcome,
+    DiscussionSelection, DiscussionSendOutcome, DraftStore, OperationControl, PrIdentity,
+    PreparationStore, ReviewContext, ReviewPublicationStore, SelectedDraft, StageReviewRequest,
+    ThreadAction, ThreadState, acquire_discussions_with_gh,
 };
 use rusqlite::{Connection, params};
 use std::{
@@ -67,6 +67,7 @@ esac
 struct ControlledPublisher {
     state: ThreadState,
     outcomes: Arc<Mutex<Vec<DiscussionSendOutcome>>>,
+    reconciliations: Arc<Mutex<Vec<DiscussionReconciliationOutcome>>>,
     calls: Arc<Mutex<Vec<String>>>,
 }
 impl DiscussionPublisher for ControlledPublisher {
@@ -104,6 +105,16 @@ impl DiscussionPublisher for ControlledPublisher {
             .push(format!("action:{thread}:{action:?}"));
         self.outcomes.lock().unwrap().remove(0)
     }
+
+    fn reconcile_unknown(
+        &self,
+        _: &str,
+        _: &bodh::DiscussionStep,
+        _: i64,
+        _: &OperationControl,
+    ) -> Result<DiscussionReconciliationOutcome, bodh::ContractError> {
+        Ok(self.reconciliations.lock().unwrap().remove(0))
+    }
 }
 fn publisher(
     resolved: bool,
@@ -122,6 +133,7 @@ fn publisher(
             can_reopen: true,
         },
         outcomes: Arc::new(Mutex::new(outcomes)),
+        reconciliations: Arc::new(Mutex::new(Vec::new())),
         calls: Arc::new(Mutex::new(Vec::new())),
     }
 }
@@ -452,5 +464,185 @@ fn interrupted_sending_step_becomes_unknown_and_cannot_be_retried() {
         .unwrap_err();
     assert_eq!(error.code, "DISCUSSION_SEND_NOT_ALLOWED");
     assert!(sender.calls.lock().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn unique_read_only_reply_match_confirms_only_the_exact_unknown_step() {
+    let (root, state, prep) = fixture();
+    let (_, reply_id, _) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[]);
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    let plan = store
+        .confirm(
+            &prep,
+            intent_revision,
+            None,
+            &[DiscussionSelection {
+                id: reply_id.clone(),
+                revision: 1,
+            }],
+            &[],
+        )
+        .unwrap();
+    let sender = publisher(
+        false,
+        true,
+        true,
+        vec![DiscussionSendOutcome::Uncertain {
+            message: "connection lost after request".into(),
+        }],
+    );
+    let sent = store
+        .publish(&plan.id, &sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(sent.state, "unknown");
+    assert!(sent.steps[0].attempt_started_at.is_some());
+    sender
+        .reconciliations
+        .lock()
+        .unwrap()
+        .push(DiscussionReconciliationOutcome::Confirmed {
+            remote_id: "456".into(),
+        });
+
+    let reconciled = store
+        .reconcile_unknown(&plan.id, &sender, &OperationControl::default())
+        .unwrap();
+
+    assert_eq!(reconciled.state, "confirmed");
+    assert_eq!(reconciled.steps[0].state, "confirmed");
+    assert_eq!(reconciled.steps[0].remote_id.as_deref(), Some("456"));
+    let conn = Connection::open(&state).unwrap();
+    let published: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM discussion_published_replies WHERE draft_id=?1",
+            [reply_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(published, 1);
+    assert!(
+        sender
+            .calls
+            .lock()
+            .unwrap()
+            .as_slice()
+            .eq(&["reply:123:first reply"])
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn desired_thread_state_is_recorded_as_already_achieved_not_published_by_reviewer() {
+    let (root, state, prep) = fixture();
+    let (_, _, action_id) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[], &[&action_id]);
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    let plan = store
+        .confirm(
+            &prep,
+            intent_revision,
+            None,
+            &[],
+            &[DiscussionSelection {
+                id: action_id.clone(),
+                revision: 1,
+            }],
+        )
+        .unwrap();
+    let sender = publisher(
+        false,
+        true,
+        true,
+        vec![DiscussionSendOutcome::Uncertain {
+            message: "connection lost after request".into(),
+        }],
+    );
+    let sent = store
+        .publish(&plan.id, &sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(sent.steps[0].state, "unknown");
+    sender
+        .reconciliations
+        .lock()
+        .unwrap()
+        .push(DiscussionReconciliationOutcome::AlreadyAchieved);
+
+    let reconciled = store
+        .reconcile_unknown(&plan.id, &sender, &OperationControl::default())
+        .unwrap();
+
+    assert_eq!(reconciled.state, "partial");
+    assert_eq!(reconciled.steps[0].state, "already_achieved");
+    assert!(reconciled.steps[0].remote_id.is_none());
+    let conn = Connection::open(&state).unwrap();
+    let published: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM discussion_published_thread_actions WHERE draft_id=?1",
+            [action_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(published, 0);
+    assert_eq!(
+        sender.calls.lock().unwrap().as_slice(),
+        ["action:thread-node-1:Resolve"]
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn ambiguous_or_unavailable_read_only_evidence_keeps_the_step_unknown() {
+    let (root, state, prep) = fixture();
+    let (_, reply_id, _) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[]);
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    let plan = store
+        .confirm(
+            &prep,
+            intent_revision,
+            None,
+            &[DiscussionSelection {
+                id: reply_id,
+                revision: 1,
+            }],
+            &[],
+        )
+        .unwrap();
+    let sender = publisher(
+        false,
+        true,
+        true,
+        vec![DiscussionSendOutcome::Uncertain {
+            message: "connection lost after request".into(),
+        }],
+    );
+    store
+        .publish(&plan.id, &sender, &OperationControl::default())
+        .unwrap();
+    sender
+        .reconciliations
+        .lock()
+        .unwrap()
+        .push(DiscussionReconciliationOutcome::Unknown {
+            message:
+                "Two matching comments were observed; authorship cannot be established uniquely"
+                    .into(),
+        });
+
+    let reconciled = store
+        .reconcile_unknown(&plan.id, &sender, &OperationControl::default())
+        .unwrap();
+
+    assert_eq!(reconciled.state, "unknown");
+    assert_eq!(reconciled.steps[0].state, "unknown");
+    assert!(
+        reconciled.steps[0]
+            .failure
+            .as_deref()
+            .unwrap()
+            .contains("cannot be established uniquely")
+    );
     let _ = std::fs::remove_dir_all(root);
 }

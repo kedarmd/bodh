@@ -34,6 +34,8 @@ pub struct DiscussionStep {
     pub state: String,
     pub remote_id: Option<String>,
     pub failure: Option<String>,
+    #[serde(default)]
+    pub attempt_started_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,6 +71,13 @@ pub enum DiscussionSendOutcome {
     Uncertain { message: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiscussionReconciliationOutcome {
+    Confirmed { remote_id: String },
+    AlreadyAchieved,
+    Unknown { message: String },
+}
+
 /// The transport exposes fresh observations separately from writes. Tests can
 /// supply deterministic implementations and never touch GitHub.
 pub trait DiscussionPublisher {
@@ -92,6 +101,17 @@ pub trait DiscussionPublisher {
         action: ThreadAction,
         control: &OperationControl,
     ) -> DiscussionSendOutcome;
+    fn reconcile_unknown(
+        &self,
+        _preparation_id: &str,
+        _step: &DiscussionStep,
+        _attempt_started_at_ms: i64,
+        _control: &OperationControl,
+    ) -> Result<DiscussionReconciliationOutcome, ContractError> {
+        Ok(DiscussionReconciliationOutcome::Unknown {
+            message: "Read-only reconciliation is unavailable".into(),
+        })
+    }
 }
 
 /// GitHub CLI transport. All inspections are read-only; write methods are only
@@ -282,6 +302,150 @@ impl DiscussionPublisher for GhDiscussionPublisher {
             Err(error) => classify_write_error(error),
         }
     }
+
+    fn reconcile_unknown(
+        &self,
+        preparation_id: &str,
+        step: &DiscussionStep,
+        attempt_started_at_ms: i64,
+        control: &OperationControl,
+    ) -> Result<DiscussionReconciliationOutcome, ContractError> {
+        let binding = PreparationStore::open(&self.state)?.load(preparation_id)?;
+        let fresh = self.inspect(preparation_id, &step.thread_id, control)?;
+        if !fresh.pull_request_open
+            || fresh.head_sha != binding.context.head_sha
+            || fresh.base_sha != binding.context.base_sha
+        {
+            return Ok(unknown(
+                "PR head, base, or open state changed after the send attempt",
+            ));
+        }
+        if step.kind == "thread_action" {
+            let achieved = matches!(
+                (step.action, fresh.resolved),
+                (Some(ThreadAction::Resolve), true) | (Some(ThreadAction::Reopen), false)
+            );
+            return Ok(if achieved {
+                DiscussionReconciliationOutcome::AlreadyAchieved
+            } else {
+                unknown("Desired thread state is not observable")
+            });
+        }
+        let query = "query($id:ID!){viewer{login} node(id:$id){... on PullRequestReviewThread{comments(first:100){pageInfo{hasNextPage} nodes{id databaseId:fullDatabaseId body createdAt author{login} replyTo{id databaseId:fullDatabaseId}}}}}}";
+        let scope = crate::discussion_acquisition::GraphQlScope {
+            host: &binding.context.pr.host,
+            owner: &binding.context.pr.owner,
+            repository: &binding.context.pr.repository,
+            number: binding.context.pr.number,
+            thread_id: Some(&step.thread_id),
+            after: None,
+        };
+        let value =
+            crate::discussion_acquisition::gh_graphql(&self.executable, query, scope, control)?;
+        if value
+            .get("errors")
+            .and_then(Value::as_array)
+            .is_some_and(|e| !e.is_empty())
+        {
+            return Ok(unknown("GitHub returned incomplete reply evidence"));
+        }
+        let viewer = value.pointer("data.viewer.login").and_then(Value::as_str);
+        let thread = value.pointer("data.node");
+        let comments = thread.and_then(|v| v.pointer("comments"));
+        if viewer.is_none()
+            || thread.is_none_or(Value::is_null)
+            || comments
+                .and_then(|v| v.pointer("pageInfo.hasNextPage"))
+                .and_then(Value::as_bool)
+                != Some(false)
+        {
+            return Ok(unknown("Reply evidence is unavailable or incomplete"));
+        }
+        let root = step.root_comment_id.as_deref().unwrap_or("");
+        let body = step.body.as_deref().unwrap_or("");
+        let matches = comments
+            .and_then(|v| v.get("nodes"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|comment| {
+                comment
+                    .get("author")
+                    .and_then(|v| v.get("login"))
+                    .and_then(Value::as_str)
+                    == viewer
+                    && comment.get("body").and_then(Value::as_str) == Some(body)
+                    && comment
+                        .pointer("replyTo.databaseId")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|id| id.to_string() == root)
+                    && comment
+                        .get("createdAt")
+                        .and_then(Value::as_str)
+                        .and_then(iso_utc_millis)
+                        .is_some_and(|created| created >= attempt_started_at_ms)
+                    && comment
+                        .get("databaseId")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|id| id > 0)
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Ok(unknown(
+                "No unique authored exact reply matches the send attempt",
+            ));
+        }
+        let id = matches[0]
+            .get("databaseId")
+            .and_then(Value::as_i64)
+            .ok_or_else(remote_invalid)?;
+        Ok(DiscussionReconciliationOutcome::Confirmed {
+            remote_id: id.to_string(),
+        })
+    }
+}
+
+fn unknown(message: &str) -> DiscussionReconciliationOutcome {
+    DiscussionReconciliationOutcome::Unknown {
+        message: message.into(),
+    }
+}
+
+fn iso_utc_millis(value: &str) -> Option<i64> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 20
+        || bytes.get(4) != Some(&b'-')
+        || bytes.get(7) != Some(&b'-')
+        || bytes.get(10) != Some(&b'T')
+        || bytes.get(13) != Some(&b':')
+        || bytes.get(16) != Some(&b':')
+        || !value.ends_with('Z')
+    {
+        return None;
+    }
+    let number = |a: usize, b: usize| value.get(a..b)?.parse::<i64>().ok();
+    let (y, m, d) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
+    let (hh, mm, ss) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) || hh > 23 || mm > 59 || ss > 60 {
+        return None;
+    }
+    let year = y - i64::from(m <= 2);
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    let fraction = value
+        .split_once('.')
+        .and_then(|(_, tail)| tail.strip_suffix('Z'))
+        .unwrap_or("");
+    let mut ms = 0i64;
+    for (i, c) in fraction.chars().take(3).enumerate() {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        ms += c.to_digit(10)? as i64 * [100, 10, 1][i];
+    }
+    Some((((days * 24 + hh) * 60 + mm) * 60 + ss) * 1000 + ms)
 }
 
 fn classify_write_error(error: ContractError) -> DiscussionSendOutcome {
@@ -336,6 +500,22 @@ impl DiscussionPublicationStore {
                 context_id TEXT NOT NULL, draft_id TEXT NOT NULL, draft_revision INTEGER NOT NULL, step_id TEXT NOT NULL,
                 PRIMARY KEY(plan_id,draft_id,draft_revision));")
             .map_err(db_error)?;
+        let has_attempt: bool = db
+            .prepare("PRAGMA table_info(discussion_publication_steps)")
+            .map_err(db_error)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(db_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)?
+            .iter()
+            .any(|name| name == "attempt_started_at");
+        if !has_attempt {
+            db.execute(
+                "ALTER TABLE discussion_publication_steps ADD COLUMN attempt_started_at INTEGER",
+                [],
+            )
+            .map_err(db_error)?;
+        }
         Ok(Self {
             db,
             path: path.to_path_buf(),
@@ -507,7 +687,7 @@ impl DiscussionPublicationStore {
         else {
             return Err(invalid("Discussion plan not found", "/id"));
         };
-        let mut q=self.db.prepare("SELECT step_id,ordinal,kind,draft_id,draft_revision,thread_id,root_comment_id,body,action,observed_resolved,state,remote_id,failure FROM discussion_publication_steps WHERE plan_id=?1 ORDER BY ordinal").map_err(db_error)?;
+        let mut q=self.db.prepare("SELECT step_id,ordinal,kind,draft_id,draft_revision,thread_id,root_comment_id,body,action,observed_resolved,state,remote_id,failure,attempt_started_at FROM discussion_publication_steps WHERE plan_id=?1 ORDER BY ordinal").map_err(db_error)?;
         let rows = q
             .query_map([id], |r| {
                 Ok((
@@ -524,6 +704,7 @@ impl DiscussionPublicationStore {
                     r.get::<_, String>(10)?,
                     r.get::<_, Option<String>>(11)?,
                     r.get::<_, Option<String>>(12)?,
+                    r.get::<_, Option<i64>>(13)?,
                 ))
             })
             .map_err(db_error)?;
@@ -543,6 +724,7 @@ impl DiscussionPublicationStore {
                 state,
                 remote_id,
                 failure,
+                attempt_started_at,
             ) = row.map_err(db_error)?;
             steps.push(DiscussionStep {
                 id,
@@ -564,6 +746,7 @@ impl DiscussionPublicationStore {
                 state,
                 remote_id,
                 failure,
+                attempt_started_at,
             });
         }
         Ok(DiscussionPlan {
@@ -736,6 +919,79 @@ impl DiscussionPublicationStore {
         self.plan(plan_id)
     }
 
+    /// Reconciles unknown sends using read-only observations. It never retries a
+    /// mutation; missing timestamps and unavailable evidence remain unknown.
+    pub fn reconcile_unknown(
+        &mut self,
+        plan_id: &str,
+        publisher: &dyn DiscussionPublisher,
+        control: &OperationControl,
+    ) -> Result<DiscussionPlan, ContractError> {
+        let plan = self.plan(plan_id)?;
+        if plan.state != "unknown" {
+            return Err(ContractError::new(
+                "DISCUSSION_RECONCILE_NOT_ALLOWED",
+                "Only an unknown discussion plan can be reconciled",
+                "",
+            ));
+        }
+        for step in &plan.steps {
+            if step.state != "unknown" {
+                continue;
+            }
+            let Some(attempt_at) = step.attempt_started_at else {
+                continue;
+            };
+            let observation = match control.check() {
+                Ok(()) => {
+                    publisher.reconcile_unknown(&plan.preparation_id, step, attempt_at, control)
+                }
+                Err(error) => Err(error),
+            };
+            match observation {
+                Ok(DiscussionReconciliationOutcome::Confirmed { remote_id })
+                    if step.kind == "reply" =>
+                {
+                    self.confirm_reconciled_step(&plan, step, Some(&remote_id))?
+                }
+                Ok(DiscussionReconciliationOutcome::AlreadyAchieved)
+                    if step.kind == "thread_action" =>
+                {
+                    self.db.execute("UPDATE discussion_publication_steps SET state='already_achieved',remote_id=NULL,failure='Desired thread state is present; attribution to this reviewer is unknown',updated_at=?1 WHERE plan_id=?2 AND step_id=?3 AND state='unknown'", params![now_ms(), plan_id, step.id]).map_err(db_error)?;
+                }
+                Ok(DiscussionReconciliationOutcome::Unknown { message }) => {
+                    self.db.execute("UPDATE discussion_publication_steps SET failure=?1,updated_at=?2 WHERE plan_id=?3 AND step_id=?4 AND state='unknown'", params![bound(&message), now_ms(), plan_id, step.id]).map_err(db_error)?;
+                }
+                Ok(_) => {
+                    self.db.execute("UPDATE discussion_publication_steps SET failure='Read-only evidence did not establish an attributable outcome',updated_at=?1 WHERE plan_id=?2 AND step_id=?3 AND state='unknown'", params![now_ms(), plan_id, step.id]).map_err(db_error)?;
+                }
+                Err(error) => {
+                    self.db.execute("UPDATE discussion_publication_steps SET failure=?1,updated_at=?2 WHERE plan_id=?3 AND step_id=?4 AND state='unknown'", params![bound(&error.message), now_ms(), plan_id, step.id]).map_err(db_error)?;
+                }
+            }
+        }
+        self.recompute_plan(plan_id)?;
+        self.plan(plan_id)
+    }
+
+    fn confirm_reconciled_step(
+        &mut self,
+        plan: &DiscussionPlan,
+        step: &DiscussionStep,
+        remote: Option<&str>,
+    ) -> Result<(), ContractError> {
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let changed = tx.execute("UPDATE discussion_publication_steps SET state='confirmed',remote_id=?1,failure=NULL,updated_at=?2 WHERE plan_id=?3 AND step_id=?4 AND state='unknown' AND kind='reply'", params![remote, now_ms(), plan.id, step.id]).map_err(db_error)?;
+        if changed == 1 {
+            tx.execute("INSERT OR IGNORE INTO discussion_published_replies(plan_id,preparation_id,context_id,draft_id,draft_revision,step_id) VALUES(?1,?2,?3,?4,?5,?6)", params![plan.id, plan.preparation_id, plan.context_id, step.draft_id, i64::try_from(step.draft_revision).map_err(|_| state_error())?, step.id]).map_err(db_error)?;
+        }
+        tx.commit().map_err(db_error)?;
+        Ok(())
+    }
+
     fn begin_step(&mut self, plan: &str, step: &DiscussionStep) -> Result<bool, ContractError> {
         let tx = self
             .db
@@ -780,7 +1036,7 @@ impl DiscussionPublicationStore {
         if already_marked {
             return Err(stale());
         }
-        let changed=tx.execute("UPDATE discussion_publication_steps SET state='sending',updated_at=?1 WHERE plan_id=?2 AND step_id=?3 AND state='planned'",params![now_ms(),plan,step.id]).map_err(db_error)?;
+        let changed=tx.execute("UPDATE discussion_publication_steps SET state='sending',attempt_started_at=?1,updated_at=?1 WHERE plan_id=?2 AND step_id=?3 AND state='planned'",params![now_ms(),plan,step.id]).map_err(db_error)?;
         if changed == 1 {
             tx.execute(
                 "UPDATE discussion_publication_plans SET updated_at=?1 WHERE plan_id=?2",
