@@ -9954,11 +9954,14 @@ mod nested_scroll_tests {
 
 #[cfg(test)]
 mod keyboard_focus_tests {
-    use super::{FocusNext, FocusPrevious, bind_focus_traversal, keyboard_tab_stop};
-    use gpui::{
-        AppContext, Context, FocusHandle, InteractiveElement, IntoElement, ParentElement, Render,
-        Styled, TestAppContext, Window, div,
+    use super::{
+        FocusNext, FocusPrevious, Product, Screen, bind_focus_traversal, keyboard_tab_stop,
     };
+    use gpui::{
+        AppContext, Context, FocusHandle, InteractiveElement, IntoElement, KeyUpEvent,
+        ParentElement, Render, Styled, TestAppContext, VisualTestContext, Window, div,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct FocusTraversalProbe {
         root: FocusHandle,
@@ -10090,5 +10093,44 @@ mod keyboard_focus_tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn home_button_activates_after_tab_focus(cx: &mut TestAppContext) {
+        let root = std::env::temp_dir().join(format!(
+            "bodh-keyboard-button-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let prefs_path = root.join("preferences.json");
+        let preparation_db = root.join("preparation.sqlite");
+        let window = cx.update(|cx| {
+            bind_focus_traversal(cx);
+            cx.open_window(Default::default(), |window, cx| {
+                cx.new(|cx| {
+                    let mut product = Product::new(prefs_path, preparation_db, None, None, cx);
+                    product.screen = Screen::Repository;
+                    window.focus(&product.focus);
+                    product
+                })
+            })
+            .unwrap()
+        });
+
+        cx.simulate_keystrokes(*window, "tab tab enter");
+        let mut visual = VisualTestContext::from_window(*window, cx);
+        visual.simulate_event(KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        });
+
+        window
+            .update(cx, |product, _, _| {
+                assert_eq!(product.screen, Screen::Home);
+            })
+            .unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -51,6 +51,10 @@ These observations establish interaction with the listed screens in the stated d
 - This run confirms the updated app launches and these navigation states remain reachable; it does not establish the visual focus treatment on the added link/file/diff controls. The process was deliberately stopped after the trial; its runner records status 143, not a crash. The prior Tab/Shift-Tab acceptance remains limited to the Home/Light controls and the user's general confirmation that selectable controls were traversed.
 - No remote review/comment/publication action was performed. #16's keyboard criterion and overall native qualification remain open until the newly added row/link focus states and the other unchecked acceptance criteria are directly verified.
 
+## User acceptance — 2026-11-06
+
+- The user accepted the tested native #16 scope on the current Changes screen, including the visible keyboard-focus treatment. The product-UI acceptance criterion is checked on GitHub. This acceptance covers the reviewed scope; the separately reported changed-file spacing concern remains in #39.
+
 ## Current-head repository/navigation trial — 2026-11-06
 
 - A second `./scripts/validate gui` run built commit `18aeaca187e99d6deb4c253688faba0fa1e135b8`; see [VALIDATE-16-gui-qualification-2026-11-06.log](VALIDATE-16-gui-qualification-2026-11-06.log). The source was clean at that commit; the runner labels the checkout dirty only because the pre-existing untracked `contracts/v1/GUI-GH-PREFLIGHT.log` remains in the working tree.
