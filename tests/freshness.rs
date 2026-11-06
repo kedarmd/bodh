@@ -428,6 +428,14 @@ fn load_latest_switch_keeps_every_draft_attached_to_the_old_preparation() {
             .collect::<Vec<_>>(),
         ["action-1"]
     );
+    let old_replacements = bodh::DraftStore::open(&state)
+        .unwrap()
+        .list_replacements(&current.preparation_id)
+        .unwrap();
+    assert_eq!(old_replacements.drafts.len(), 1);
+    assert_eq!(old_replacements.drafts[0].id, "replacement-1");
+    assert_eq!(old_replacements.drafts[0].original_text, "old");
+    assert_eq!(old_replacements.drafts[0].replacement, "new");
     let new_drafts = bodh::DraftStore::open(&state)
         .unwrap()
         .list(&selected.preparation_id)
@@ -436,6 +444,14 @@ fn load_latest_switch_keeps_every_draft_attached_to_the_old_preparation() {
         new_drafts.drafts.is_empty()
             && new_drafts.reply_drafts.is_empty()
             && new_drafts.thread_actions.is_empty()
+    );
+    assert!(
+        bodh::DraftStore::open(&state)
+            .unwrap()
+            .list_replacements(&selected.preparation_id)
+            .unwrap()
+            .drafts
+            .is_empty()
     );
     let triage = bodh::FindingTriageStore::open(&state)
         .unwrap()
@@ -528,6 +544,15 @@ fn concurrent_draft_edit_rejects_load_latest_and_retains_both_preparations() {
 #[test]
 fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
     let (root, state, current) = fixture();
+    drop(bodh::DraftStore::open(&state).unwrap());
+    let db = Connection::open(&state).unwrap();
+    db.execute(
+        "INSERT INTO manual_text_drafts(draft_id,context_id,host,owner,repository,number,body,source_json,provenance_json,revision,created_at,updated_at) VALUES('survive-failed-acquire',?1,?2,?3,?4,?5,'keep me',?6,?7,1,1,1)",
+        rusqlite::params![current.context.context_id,current.context.pr.host,current.context.pr.owner,current.context.pr.repository,i64::try_from(current.context.pr.number).unwrap(),serde_json::json!({"path":"src/lib.rs","revision":"head","start_line":1,"end_line":1}).to_string(),serde_json::json!({"preparation_id":current.preparation_id,"context_id":current.context.context_id,"base_sha":current.context.base_sha,"head_sha":current.context.head_sha,"merge_base_sha":current.context.merge_base_sha}).to_string()],
+    ).unwrap();
+    drop(db);
+    let before = bodh::protected_work_snapshot(&state, &current).unwrap();
+    assert_eq!(before.unpublished_draft_count, 1);
     let missing_gh = root.join("missing-gh");
     let error = bodh::prepare_latest_candidate_with_gh(
         &current.preparation_id,
@@ -546,10 +571,17 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
         current.context
     );
     assert_eq!(
-        bodh::protected_work_snapshot(&state, &current)
+        bodh::protected_work_snapshot(&state, &current).unwrap(),
+        before
+    );
+    assert_eq!(
+        bodh::DraftStore::open(&state)
             .unwrap()
-            .unpublished_draft_count,
-        0
+            .list(&current.preparation_id)
+            .unwrap()
+            .drafts[0]
+            .body,
+        "keep me"
     );
 
     let cancelled = OperationControl::default();
@@ -569,6 +601,10 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
             .unwrap()
             .context,
         current.context
+    );
+    assert_eq!(
+        bodh::protected_work_snapshot(&state, &current).unwrap(),
+        before
     );
     let _ = std::fs::remove_dir_all(root);
 }
