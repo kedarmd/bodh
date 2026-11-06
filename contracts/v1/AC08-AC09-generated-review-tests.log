@@ -1,0 +1,27 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/generated_review.rs (target/debug/deps/generated_review-38e3ef3fbb35d5f5)
+
+running 21 tests
+test a_newer_preparation_makes_an_older_candidate_stale ... ok
+test cli_rejects_invalid_full_result_without_writing ... ok
+test a_sql_failure_rolls_back_generation_and_result_as_one_transaction ... ok
+test cli_replacement_authorization_requires_a_terminal ... ok
+test a_failed_replacement_keeps_the_previous_complete_result_and_generation ... ok
+test a_staged_grouped_review_intent_blocks_changed_results ... ok
+test an_unpublished_replacement_blocks_changed_results ... ok
+test cli_validate_then_commit_reports_complete_validation_and_persists_result ... ok
+test declined_replacement_approval_does_not_change_result_or_work ... ok
+test an_explicit_replacement_approval_is_bound_to_the_candidate_and_clears_only_its_drafts ... ok
+test cli_failed_validation_correction_rounds_preserve_committed_result_and_drafts ... ok
+test independent_manual_finding_feedback_is_persisted_without_publication ... ok
+test stale_generation_and_invalid_result_leave_the_current_review_untouched ... ok
+test finding_triage_is_bound_to_a_committed_finding_and_survives_reopen ... ok
+test replacement_approval_expires_when_a_protected_draft_revision_changes ... ok
+test replacement_keeps_only_compact_prior_concern_text_and_exact_source_metadata ... ok
+test unresolved_publication_payload_blocks_replacement_authorization ... ok
+test replacement_approval_is_one_use_and_rejects_a_different_candidate ... ok
+test validation_is_read_only_and_commit_is_generation_checked_with_exact_retry_noop ... ok
+test generated_import_follow_up_publication_restart_and_failed_prune_cycles ... ok
+test switching_a_finding_alternative_preserves_other_edits_and_unstaging_keeps_drafts ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s

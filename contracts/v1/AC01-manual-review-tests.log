@@ -1,0 +1,15 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/manual_review.rs (target/debug/deps/manual_review-df3152faafc00c56)
+
+running 9 tests
+test github_suggestion_markdown_is_built_from_structured_replacement_text ... ok
+test remote_preflight_uses_json_fields_and_retains_current_permission_observation ... ok
+test cli_stage_and_intent_round_trip_preserve_explicit_missing_event ... ok
+test event_must_be_chosen_and_confirmed_payload_binds_exact_draft_revision_and_head ... ok
+test interrupted_send_becomes_unknown_and_cannot_be_started_again ... ok
+test changed_head_or_permission_after_confirmation_blocks_send_without_starting_journal ... ok
+test controlled_gh_receives_exact_confirmed_group_and_returns_persisted_review_link ... ok
+test confirmed_replacement_publishes_exact_suggestion_and_only_then_removes_draft ... ok
+test rejection_is_definitive_but_timeout_after_request_is_unknown_and_not_retryable ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s

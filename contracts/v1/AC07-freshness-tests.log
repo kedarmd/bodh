@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/freshness.rs (target/debug/deps/freshness-6537b451900b4393)
+
+running 11 tests
+test base_movement_and_branch_renames_are_reported_separately ... ok
+test observing_a_new_head_reports_staleness_without_changing_the_pinned_review ... ok
+test unavailable_metadata_is_unknown_and_keeps_the_pinned_binding ... ok
+Initialized empty Git repository in /tmp/bodh-freshness-3311209-2/checkout/.git/
+test review_intent_revision_is_part_of_the_load_latest_protection_fingerprint ... ok
+test unresolved_discussion_payload_is_part_of_load_latest_protection ... ok
+test load_latest_approval_expires_on_any_new_review_intent_revision ... ok
+test concurrent_draft_edit_rejects_load_latest_and_retains_both_preparations ... ok
+test load_latest_approval_is_one_use_and_returns_the_complete_candidate ... ok
+test finding_feedback_is_part_of_load_latest_protection ... ok
+test load_latest_switch_keeps_every_draft_attached_to_the_old_preparation ... ok
+test failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s

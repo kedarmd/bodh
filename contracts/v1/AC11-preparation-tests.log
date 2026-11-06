@@ -1,0 +1,13 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/preparation.rs (target/debug/deps/preparation-98dd68de3af0d7d9)
+
+running 7 tests
+test concurrent_first_open_serializes_the_initial_schema_migration ... ok
+test repeated_preparations_keep_distinct_ids_and_generation_bindings_after_reopen ... ok
+test failed_legacy_migration_keeps_existing_workspace_data_intact ... ok
+test concurrent_workspace_store_open_serializes_feature_migrations ... ok
+test migration_lock_contention_waits_without_losing_a_saved_preparation ... ok
+test acquires_missing_fork_head_from_the_explicit_fork_ref_without_touching_checkout_state ... ok
+test prepares_ordinary_pr_from_pinned_local_commits_without_touching_checkout ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s

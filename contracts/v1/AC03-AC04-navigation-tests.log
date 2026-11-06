@@ -1,0 +1,14 @@
+    Finished `test` profile [unoptimized] target(s) in 1.13s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/navigation.rs (spikes/native-sequence/target/debug/deps/navigation-5453806b85412449)
+
+running 6 tests
+test alternatives_share_one_conditional_frame ... ok
+test long_participant_and_interaction_labels_expand_their_scene_rows ... ok
+test self_call_on_the_last_participant_stays_inside_the_scrollable_scene ... ok
+test clicking_an_interaction_resolves_its_exact_immutable_source ... ok
+test viewport_culling_keeps_partial_rows_and_original_source_identity ... ok
+test every_visible_hit_resolves_in_order_across_conditionals_and_stress_layouts ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s

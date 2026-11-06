@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/discussion_drafts.rs (target/debug/deps/discussion_drafts-87e6a1a4391ce37b)
+
+running 5 tests
+test shared_version_two_migration_repairs_tables_from_independent_ticket_orderings ... ok
+test cli_reply_and_action_commands_return_revision_checked_json_without_remote_writes ... ok
+test confirmed_discussion_marker_hides_only_its_exact_draft_revision ... ok
+test reply_and_thread_intent_persist_as_distinct_unpublished_work ... ok
+test stale_revision_and_remote_permission_loss_reject_without_mutating_pending_work ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s

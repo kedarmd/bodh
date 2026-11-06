@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/pinned_diff.rs (target/debug/deps/pinned_diff-7bb62701fa5e85e5)
+
+running 3 tests
+test pinned_diff_rejects_paths_outside_the_prepared_change ... ok
+test pinned_diff_truncates_at_a_complete_utf8_line_boundary ... ok
+test pinned_diff_is_path_scoped_literal_and_leaves_checkout_unchanged ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s

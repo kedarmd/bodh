@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s
+     Running tests/manual_drafts.rs (target/debug/deps/manual_drafts-d91f351bc1fae2d1)
+
+running 15 tests
+test code_replacement_accepts_inclusive_multiline_head_range_and_preserves_final_newline ... ok
+test edited_renames_are_eligible_by_head_path_and_binary_spans_are_rejected ... ok
+test code_replacement_drafts_validate_exact_head_spans_and_keep_checkout_unchanged ... ok
+test code_replacements_reject_deleted_head_files_and_malformed_spans ... ok
+test concurrent_workspace_and_draft_revisions_reject_stale_writes_without_losing_text ... ok
+test cli_save_list_and_discard_use_json_envelopes_without_publishing ... ok
+test readable_unchanged_source_cannot_become_an_inline_comment_draft ... ok
+test code_replacements_reject_old_side_changed_source_and_stale_concurrent_saves ... ok
+test replacement_source_round_trips_crlf_and_missing_final_newline_exactly ... ok
+test replacement_cli_uses_separate_list_and_save_envelopes ... ok
+test saved_comment_draft_reopens_with_pinned_provenance_and_revision ... ok
+test renamed_file_relocation_uses_the_new_path_and_exact_eligible_lines ... ok
+test changed_and_ambiguous_anchor_text_is_never_auto_relocated ... ok
+test moved_exact_anchor_is_proposed_and_requires_explicit_reattachment ... ok
+test replacement_anchor_repair_captures_new_exact_text_and_preserves_the_original ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
