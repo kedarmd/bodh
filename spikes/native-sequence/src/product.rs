@@ -1788,8 +1788,19 @@ impl Product {
             cx.notify();
             return;
         }
-        let Some(original) = self.source_text.clone() else {
+        let Some(display) = self.source_display_ref.as_ref() else {
             self.status = Some("Load the pinned head source before drafting a replacement.".into());
+            cx.notify();
+            return;
+        };
+        let Some(original) = self
+            .source_text
+            .as_deref()
+            .and_then(|text| source_excerpt_for_anchor(&source, display, text))
+        else {
+            self.status = Some(
+                "Reload the pinned head source so the selected replacement range is exact.".into(),
+            );
             cx.notify();
             return;
         };
@@ -2723,13 +2734,17 @@ impl Product {
             "escape" => {
                 self.review_summary.clear();
             }
-            key if key.chars().count() == 1
-                && !event.keystroke.modifiers.control
-                && !event.keystroke.modifiers.platform =>
-            {
-                self.review_summary.push_str(key)
+            key => {
+                let Some(text) = bodh_sequence_spike::repository_input::typed_text(
+                    key,
+                    event.keystroke.key_char.as_deref(),
+                    event.keystroke.modifiers.control,
+                    event.keystroke.modifiers.platform,
+                ) else {
+                    return;
+                };
+                self.review_summary.push_str(text);
             }
-            _ => return,
         }
         self.save_review_intent();
         cx.notify();
@@ -3655,13 +3670,17 @@ impl Product {
                 self.search.pop();
             }
             "escape" => self.search.clear(),
-            _ if key.chars().count() == 1
-                && !event.keystroke.modifiers.control
-                && !event.keystroke.modifiers.platform =>
-            {
-                self.search.push_str(key)
+            _ => {
+                let Some(text) = bodh_sequence_spike::repository_input::typed_text(
+                    key,
+                    event.keystroke.key_char.as_deref(),
+                    event.keystroke.modifiers.control,
+                    event.keystroke.modifiers.platform,
+                ) else {
+                    return;
+                };
+                self.search.push_str(text);
             }
-            _ => return,
         }
         cx.notify();
     }
@@ -6626,10 +6645,19 @@ impl Product {
                                     "enter" => this.finding_alternative_edit_body.push('\n'),
                                     "space" => this.finding_alternative_edit_body.push(' '),
                                     "a" if command => this.finding_alternative_edit_body.clear(),
-                                    text if text.chars().count() == 1 && !command => {
-                                        this.finding_alternative_edit_body.push_str(text)
+                                    _ => {
+                                        let Some(text) =
+                                            bodh_sequence_spike::repository_input::typed_text(
+                                                key,
+                                                event.keystroke.key_char.as_deref(),
+                                                event.keystroke.modifiers.control,
+                                                event.keystroke.modifiers.platform,
+                                            )
+                                        else {
+                                            return;
+                                        };
+                                        this.finding_alternative_edit_body.push_str(text);
                                     }
-                                    _ => return,
                                 }
                                 cx.notify();
                             })),
@@ -6680,10 +6708,18 @@ impl Product {
                                             "a" if command => {
                                                 this.finding_alternative_edit_replacement.clear()
                                             }
-                                            text if text.chars().count() == 1 && !command => this
-                                                .finding_alternative_edit_replacement
-                                                .push_str(text),
-                                            _ => return,
+                                            _ => {
+                                                let Some(text) = bodh_sequence_spike::repository_input::typed_text(
+                                                    key,
+                                                    event.keystroke.key_char.as_deref(),
+                                                    event.keystroke.modifiers.control,
+                                                    event.keystroke.modifiers.platform,
+                                                ) else {
+                                                    return;
+                                                };
+                                                this.finding_alternative_edit_replacement
+                                                    .push_str(text);
+                                            }
                                         }
                                         cx.notify();
                                     },
@@ -6873,10 +6909,19 @@ impl Product {
                                 "enter" => this.finding_feedback_body.push('\n'),
                                 "space" => this.finding_feedback_body.push(' '),
                                 "a" if command => this.finding_feedback_body.clear(),
-                                text if text.chars().count() == 1 && !command => {
-                                    this.finding_feedback_body.push_str(text)
+                                _ => {
+                                    let Some(text) =
+                                        bodh_sequence_spike::repository_input::typed_text(
+                                            key,
+                                            event.keystroke.key_char.as_deref(),
+                                            event.keystroke.modifiers.control,
+                                            event.keystroke.modifiers.platform,
+                                        )
+                                    else {
+                                        return;
+                                    };
+                                    this.finding_feedback_body.push_str(text);
                                 }
-                                _ => return,
                             }
                             cx.notify();
                         })),
@@ -7533,10 +7578,19 @@ impl Product {
                                 "tab" => this.reply_body.push_str("    "),
                                 "space" => this.reply_body.push(' '),
                                 "a" if command => {}
-                                text if text.chars().count() == 1 && !command => {
-                                    this.reply_body.push_str(text)
+                                _ => {
+                                    let Some(text) =
+                                        bodh_sequence_spike::repository_input::typed_text(
+                                            key,
+                                            event.keystroke.key_char.as_deref(),
+                                            event.keystroke.modifiers.control,
+                                            event.keystroke.modifiers.platform,
+                                        )
+                                    else {
+                                        return;
+                                    };
+                                    this.reply_body.push_str(text);
                                 }
-                                _ => return,
                             }
                             cx.notify();
                         })),
@@ -8017,13 +8071,17 @@ impl Product {
                                 this.file_search.pop();
                             }
                             "escape" => this.file_search.clear(),
-                            key if key.chars().count() == 1
-                                && !event.keystroke.modifiers.control
-                                && !event.keystroke.modifiers.platform =>
-                            {
-                                this.file_search.push_str(key)
+                            key => {
+                                let Some(text) = bodh_sequence_spike::repository_input::typed_text(
+                                    key,
+                                    event.keystroke.key_char.as_deref(),
+                                    event.keystroke.modifiers.control,
+                                    event.keystroke.modifiers.platform,
+                                ) else {
+                                    return;
+                                };
+                                this.file_search.push_str(text);
                             }
-                            _ => return,
                         }
                         this.file_scroll
                             .0
@@ -8660,10 +8718,17 @@ impl Product {
                             "tab" => editor.insert_text("    "),
                             "space" => editor.insert_text(" "),
                             "a" if command => editor.select_all(),
-                            text if text.chars().count() == 1 && !command => {
-                                editor.insert_text(text)
+                            _ => {
+                                let Some(text) = bodh_sequence_spike::repository_input::typed_text(
+                                    key,
+                                    event.keystroke.key_char.as_deref(),
+                                    event.keystroke.modifiers.control,
+                                    event.keystroke.modifiers.platform,
+                                ) else {
+                                    return;
+                                };
+                                editor.insert_text(text);
                             }
-                            _ => return,
                         }
                         cx.notify();
                     })),
@@ -8767,10 +8832,17 @@ impl Product {
                             "tab" => editor.insert_text("    "),
                             "space" => editor.insert_text(" "),
                             "a" if command => editor.select_all(),
-                            text if text.chars().count() == 1 && !command => {
-                                editor.insert_text(text)
+                            _ => {
+                                let Some(text) = bodh_sequence_spike::repository_input::typed_text(
+                                    key,
+                                    event.keystroke.key_char.as_deref(),
+                                    event.keystroke.modifiers.control,
+                                    event.keystroke.modifiers.platform,
+                                ) else {
+                                    return;
+                                };
+                                editor.insert_text(text);
                             }
-                            _ => return,
                         }
                         cx.notify();
                     })),
@@ -9519,6 +9591,73 @@ fn source_context_range(anchor: &SourceRef, context_lines: u32) -> SourceRef {
         revision: anchor.revision,
         start_line: anchor.start_line.saturating_sub(context_lines).max(1),
         end_line: anchor.end_line.saturating_add(context_lines),
+    }
+}
+
+fn source_excerpt_for_anchor(
+    anchor: &SourceRef,
+    display: &SourceRef,
+    text: &str,
+) -> Option<String> {
+    if anchor.path != display.path
+        || anchor.revision != display.revision
+        || anchor.start_line < display.start_line
+        || anchor.end_line > display.end_line
+        || anchor.end_line < anchor.start_line
+    {
+        return None;
+    }
+    let start = usize::try_from(anchor.start_line - display.start_line).ok()?;
+    let end = usize::try_from(anchor.end_line - display.start_line + 1).ok()?;
+    let lines = text.split_inclusive('\n').collect::<Vec<_>>();
+    (end <= lines.len()).then(|| lines[start..end].concat())
+}
+
+#[cfg(test)]
+mod source_excerpt_for_anchor_tests {
+    use super::source_excerpt_for_anchor;
+    use bodh::{Revision, SourceRef};
+
+    #[test]
+    fn replacement_original_is_only_the_selected_line_from_a_wider_excerpt() {
+        let display = SourceRef {
+            path: "src/lib.rs".into(),
+            revision: Revision::Head,
+            start_line: 1,
+            end_line: 3,
+        };
+        let anchor = SourceRef {
+            path: "src/lib.rs".into(),
+            revision: Revision::Head,
+            start_line: 2,
+            end_line: 2,
+        };
+
+        assert_eq!(
+            source_excerpt_for_anchor(&anchor, &display, "one\r\nTARGET;\r\nthree"),
+            Some("TARGET;\r\n".into())
+        );
+    }
+
+    #[test]
+    fn replacement_original_rejects_a_range_outside_the_loaded_source_identity() {
+        let display = SourceRef {
+            path: "src/lib.rs".into(),
+            revision: Revision::Head,
+            start_line: 1,
+            end_line: 3,
+        };
+        let anchor = SourceRef {
+            path: "src/lib.rs".into(),
+            revision: Revision::Base,
+            start_line: 2,
+            end_line: 2,
+        };
+
+        assert_eq!(
+            source_excerpt_for_anchor(&anchor, &display, "one\nTARGET;\nthree"),
+            None
+        );
     }
 }
 
