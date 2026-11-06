@@ -331,6 +331,11 @@ impl DiscussionPublisher for GhDiscussionPublisher {
                 unknown("Desired thread state is not observable")
             });
         }
+        if !fresh.can_reply {
+            return Ok(unknown(
+                "Current account cannot reply to this thread; outcome remains unknown",
+            ));
+        }
         let query = "query($id:ID!){viewer{login} node(id:$id){... on PullRequestReviewThread{comments(first:100){pageInfo{hasNextPage} nodes{id databaseId:fullDatabaseId body createdAt author{login} replyTo{id databaseId:fullDatabaseId}}}}}}";
         let scope = crate::discussion_acquisition::GraphQlScope {
             host: &binding.context.pr.host,
@@ -349,13 +354,13 @@ impl DiscussionPublisher for GhDiscussionPublisher {
         {
             return Ok(unknown("GitHub returned incomplete reply evidence"));
         }
-        let viewer = value.pointer("data.viewer.login").and_then(Value::as_str);
-        let thread = value.pointer("data.node");
-        let comments = thread.and_then(|v| v.pointer("comments"));
+        let viewer = value.pointer("/data/viewer/login").and_then(Value::as_str);
+        let thread = value.pointer("/data/node");
+        let comments = thread.and_then(|v| v.pointer("/comments"));
         if viewer.is_none()
             || thread.is_none_or(Value::is_null)
             || comments
-                .and_then(|v| v.pointer("pageInfo.hasNextPage"))
+                .and_then(|v| v.pointer("/pageInfo/hasNextPage"))
                 .and_then(Value::as_bool)
                 != Some(false)
         {
@@ -376,14 +381,17 @@ impl DiscussionPublisher for GhDiscussionPublisher {
                     == viewer
                     && comment.get("body").and_then(Value::as_str) == Some(body)
                     && comment
-                        .pointer("replyTo.databaseId")
+                        .pointer("/replyTo/databaseId")
                         .and_then(Value::as_i64)
                         .is_some_and(|id| id.to_string() == root)
                     && comment
                         .get("createdAt")
                         .and_then(Value::as_str)
                         .and_then(iso_utc_millis)
-                        .is_some_and(|created| created >= attempt_started_at_ms)
+                        .is_some_and(|created| {
+                            created >= attempt_started_at_ms
+                                && created <= now_ms().saturating_add(30_000)
+                        })
                     && comment
                         .get("databaseId")
                         .and_then(Value::as_i64)

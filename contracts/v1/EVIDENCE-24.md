@@ -12,8 +12,12 @@ The latest full desktop validation at integration `d1a0627` passed; see [VALIDAT
 - `tests/discussion_publication.rs::independent_outcomes_confirm_only_accepted_steps_and_keep_reply_payload_exact`
 - `tests/generated_review.rs::unresolved_publication_payload_blocks_replacement_authorization`
 
-## Not implemented or not verified
+## Implemented child slices and remaining gaps
 
-There is no read-only remote reconciliation command/service that compares an unknown operation against account, PR, body/location, IDs and attempt time. Ambiguous remote matches therefore remain unknown for reviewer inspection; the application does not claim to reconcile them automatically. The full grouped-review/replacement/reply/thread-action timeout, acknowledgment-crash, partial-success, restart and manual-reconciliation matrix has not been run. No live write or remote reconciliation was performed.
+- [#42](EVIDENCE-42.md) adds read-only grouped-review reconciliation and controlled exact-match, no-match, duplicate, wrong-actor/repository, incomplete-pagination and unavailable-response fixtures. Its fixture covers a normal right-side inline comment; the native recovery UI is not qualified.
+- [#43](EVIDENCE-43.md) adds read-only reply/thread reconciliation, exact authenticated reply matching, no false attribution for already-achieved thread state, permission/head/unavailable safeguards, and controlled restart/ambiguity fixtures. The reader fails closed beyond the first 100 comments instead of paginating.
+- [#40](EVIDENCE-40.md) verifies grouped-review ordering and dependent-operation halt after rejection/unknown; [#41](EVIDENCE-41.md) verifies reply-only and thread-action-only plan confirmation.
 
-All five #24 acceptance items remain open until read-only reconciliation and the complete recovery matrix are implemented and tested.
+The complete #24 user flow remains partial. The resumed native workspace does not yet provide the complete confirmed/failed/unknown/unsent/retry state experience in [#44](https://github.com/kedarmd/bodh/issues/44). The complete crash/timeout/acknowledgment/partial-success matrix across grouped review, replacement suggestions, replies and thread actions has not been run. There was no live GitHub write or native GUI recovery trial. In particular, endpoint-specific race behavior and the full integration across confirmed links, safe retry, result replacement and restart remain unqualified.
+
+Keep #24 open until those UI and integrated recovery criteria are verified. Reconciliation is now implemented for grouped reviews and discussion writes; it should no longer be described as entirely absent.
