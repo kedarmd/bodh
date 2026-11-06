@@ -7535,6 +7535,7 @@ impl Product {
                         div()
                             .id(file_index)
                             .h(px(48.))
+                            .min_h(px(48.))
                             .w_full()
                             .px_2()
                             .flex()
@@ -7542,7 +7543,11 @@ impl Product {
                             .justify_center()
                             .gap_0()
                             .border_1()
-                            .border_color(rgb(p.border))
+                            .border_color(rgb(if current_file == Some(file_index) {
+                                p.accent
+                            } else {
+                                p.border
+                            }))
                             .bg(rgb(if current_file == Some(file_index) {
                                 p.raised
                             } else {
@@ -7556,34 +7561,44 @@ impl Product {
                             .cursor_pointer()
                             .child(
                                 div()
+                                    .h_full()
                                     .flex()
+                                    .flex_col()
                                     .items_center()
-                                    .justify_between()
+                                    .justify_center()
                                     .gap_2()
                                     .child(
                                         div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_size(px(12.))
-                                            .truncate()
-                                            .child(label.name.clone()),
+                                            .w_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_size(px(12.))
+                                                    .truncate()
+                                                    .child(label.name.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_size(px(10.))
+                                                    .text_color(rgb(p.muted))
+                                                    .child(label.status.clone()),
+                                            ),
                                     )
                                     .child(
                                         div()
-                                            .flex_shrink_0()
+                                            .w_full()
+                                            .min_w_0()
                                             .text_size(px(10.))
                                             .text_color(rgb(p.muted))
-                                            .child(label.status.clone()),
+                                            .truncate()
+                                            .child(label.directory.clone()),
                                     ),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .min_w_0()
-                                    .text_size(px(10.))
-                                    .text_color(rgb(p.muted))
-                                    .truncate()
-                                    .child(label.directory.clone()),
                             )
                             .on_click(move |_, window, app| {
                                 let _ = owner.update(app, |this, cx| {
@@ -7777,6 +7792,7 @@ impl Product {
                             .collect::<Vec<_>>()
                     },
                 )
+                .w_full()
             } else {
                 let rows = self.diff_rows.clone();
                 let fallback = self.source_revision;
@@ -7800,6 +7816,7 @@ impl Product {
                             .collect::<Vec<_>>()
                     },
                 )
+                .w_full()
             }
             .track_scroll(self.diff_scroll.clone())
             .on_scroll_wheel(cx.listener(|this, event, _, cx| {
@@ -7870,7 +7887,7 @@ impl Product {
                         p.border
                     }))
                     .bg(rgb(if self.source_revision == revision {
-                        p.raised
+                        p.selection
                     } else {
                         p.panel
                     }))
@@ -7884,10 +7901,19 @@ impl Product {
         }
         if self.source_ref.is_some() {
             let draft_editor_open = self.draft_editor.is_some();
+            let draft_button_label = if draft_editor_open {
+                let side = match self.source_revision {
+                    Revision::Base => "Base",
+                    Revision::Head => "Head",
+                };
+                format!("Draft comment · {side}")
+            } else {
+                "Draft comment".to_owned()
+            };
             source_toolbar = source_toolbar.child(
                 button(
                     "new-inline-comment-draft",
-                    "Draft comment",
+                    &draft_button_label,
                     p,
                     |this, _, _, cx| this.begin_text_draft(cx),
                     cx,
@@ -7897,7 +7923,12 @@ impl Product {
                 } else {
                     p.border
                 }))
-                .bg(rgb(if draft_editor_open { p.raised } else { p.panel })),
+                .bg(rgb(if draft_editor_open {
+                    p.selection
+                } else {
+                    p.panel
+                }))
+                .text_color(rgb(if draft_editor_open { p.text } else { p.muted })),
             );
             if self
                 .source_ref
