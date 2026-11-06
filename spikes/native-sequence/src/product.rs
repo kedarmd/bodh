@@ -36,6 +36,15 @@ use std::{
     time::Duration,
 };
 
+actions!(product, [FocusNext, FocusPrevious]);
+
+fn bind_focus_traversal(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("tab", FocusNext, None),
+        KeyBinding::new("shift-tab", FocusPrevious, None),
+    ]);
+}
+
 const CANVAS_DARK: u32 = 0x16191e;
 const PANEL_DARK: u32 = 0x1d2128;
 const RAISED_DARK: u32 = 0x252a33;
@@ -294,8 +303,8 @@ impl Product {
             operation_epoch: Arc::new(AtomicU64::new(0)),
             active_control: None,
             focus: cx.focus_handle(),
-            search_focus: cx.focus_handle(),
-            file_search_focus: cx.focus_handle(),
+            search_focus: cx.focus_handle().tab_stop(true),
+            file_search_focus: cx.focus_handle().tab_stop(true),
             file_scroll: UniformListScrollHandle::new(),
             diff_scroll: UniformListScrollHandle::new(),
             source_scroll: ScrollHandle::new(),
@@ -316,7 +325,7 @@ impl Product {
             replacement_editor: None,
             draft_saving: false,
             draft_epoch: Arc::new(AtomicU64::new(0)),
-            draft_focus: cx.focus_handle(),
+            draft_focus: cx.focus_handle().tab_stop(true),
             discussion_state: serde_json::json!({"available":false,"threads":[]}),
             discussion_loading: false,
             discussion_expanded: false,
@@ -326,7 +335,7 @@ impl Product {
             reply_draft_id: None,
             reply_draft_revision: 0,
             reply_body: String::new(),
-            reply_focus: cx.focus_handle(),
+            reply_focus: cx.focus_handle().tab_stop(true),
             reply_saving: false,
             dragging_pane: false,
             review_intent: None,
@@ -336,7 +345,7 @@ impl Product {
             review_history: Vec::new(),
             discussion_history: Vec::new(),
             review_loading: false,
-            review_summary_focus: cx.focus_handle(),
+            review_summary_focus: cx.focus_handle().tab_stop(true),
             freshness_observation: None,
             latest_switch_preview: None,
             freshness_loading: false,
@@ -352,7 +361,7 @@ impl Product {
             finding_action_saving: false,
             finding_feedback_target: None,
             finding_feedback_body: String::new(),
-            finding_feedback_focus: cx.focus_handle(),
+            finding_feedback_focus: cx.focus_handle().tab_stop(true),
             focused_discussion_thread: None,
             pending_overview_source: None,
             diagram_views: Vec::new(),
@@ -3719,6 +3728,8 @@ impl Render for Product {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.workspace_key(event, window, cx)
             }))
+            .on_action(cx.listener(|_, _: &FocusNext, window, _| window.focus_next()))
+            .on_action(cx.listener(|_, _: &FocusPrevious, window, _| window.focus_prev()))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 if this.dragging_pane && event.pressed_button == Some(MouseButton::Left) {
                     let width = f32::from(window.viewport_size().width);
@@ -9239,6 +9250,7 @@ fn button(
         .text_color(rgb(p.text))
         .cursor_pointer()
         .focus(|style| style.border_color(rgb(p.accent)))
+        .tab_index(0)
         .child(label.to_owned())
         .on_click(cx.listener(action))
 }
@@ -9744,6 +9756,7 @@ fn short_sha(value: &str) -> &str {
 }
 
 pub fn open_product(cx: &mut App, repo: Option<String>, pr: Option<u64>) {
+    bind_focus_traversal(cx);
     let (prefs, database) = state_paths();
     let initial_repo = repo.clone();
     let initial_pr = pr;
@@ -9911,5 +9924,92 @@ mod nested_scroll_tests {
             Pixels::ZERO,
             "overview scrolls outside diagram"
         );
+    }
+}
+
+#[cfg(test)]
+mod keyboard_focus_tests {
+    use super::{FocusNext, FocusPrevious, bind_focus_traversal};
+    use gpui::{
+        AppContext, Context, FocusHandle, InteractiveElement, IntoElement, ParentElement, Render,
+        Styled, TestAppContext, Window, div,
+    };
+
+    struct FocusTraversalProbe {
+        root: FocusHandle,
+        first: FocusHandle,
+        second: FocusHandle,
+    }
+
+    impl Render for FocusTraversalProbe {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("focus-probe")
+                .track_focus(&self.root)
+                .on_action(cx.listener(|_, _: &FocusNext, window, _| window.focus_next()))
+                .on_action(cx.listener(|_, _: &FocusPrevious, window, _| window.focus_prev()))
+                .child(
+                    div()
+                        .id("first-control")
+                        .tab_index(0)
+                        .focus(|style| style.border_color(gpui::rgb(0x1e6867)))
+                        .track_focus(&self.first)
+                        .child("First"),
+                )
+                .child(
+                    div()
+                        .id("second-control")
+                        .tab_index(0)
+                        .focus(|style| style.border_color(gpui::rgb(0x1e6867)))
+                        .track_focus(&self.second)
+                        .child("Second"),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn tab_and_shift_tab_move_focus_between_visible_controls(cx: &mut TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| FocusTraversalProbe {
+                    root: cx.focus_handle(),
+                    first: cx.focus_handle().tab_index(0).tab_stop(true),
+                    second: cx.focus_handle().tab_index(0).tab_stop(true),
+                })
+            })
+            .unwrap()
+        });
+        cx.update(bind_focus_traversal);
+        window
+            .update(cx, |probe, window, _| window.focus(&probe.root))
+            .unwrap();
+
+        cx.dispatch_keystroke(*window, gpui::Keystroke::parse("tab").unwrap());
+        window
+            .update(cx, |probe, window, _| {
+                assert!(
+                    probe.first.is_focused(window),
+                    "Tab should focus the first control"
+                );
+                assert!(!probe.second.is_focused(window));
+            })
+            .unwrap();
+
+        cx.dispatch_keystroke(*window, gpui::Keystroke::parse("tab").unwrap());
+        window
+            .update(cx, |probe, window, _| {
+                assert!(probe.second.is_focused(window), "Tab should advance focus");
+            })
+            .unwrap();
+
+        cx.dispatch_keystroke(*window, gpui::Keystroke::parse("shift-tab").unwrap());
+        window
+            .update(cx, |probe, window, _| {
+                assert!(
+                    probe.first.is_focused(window),
+                    "Shift-Tab should reverse focus"
+                );
+            })
+            .unwrap();
     }
 }
