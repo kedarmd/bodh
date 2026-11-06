@@ -1,0 +1,41 @@
+Validation mode: gui
+Revision: 317ac8324b64b769d883a329460a203c4e1bda75
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh/target
+Spike Cargo target: /home/kedarmd/dev/bodh/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 26.80s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `spikes/native-sequence/target/release/bodh-sequence-spike`
+Validation mode: gui
+Revision: 317ac8324b64b769d883a329460a203c4e1bda75
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh/target
+Spike Cargo target: /home/kedarmd/dev/bodh/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+    Finished `release` profile [optimized] target(s) in 0.68s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `spikes/native-sequence/target/release/bodh-sequence-spike`
+Validation mode: gui
+Revision: 317ac8324b64b769d883a329460a203c4e1bda75
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh/target
+Spike Cargo target: /home/kedarmd/dev/bodh/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 27.67s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `spikes/native-sequence/target/release/bodh-sequence-spike`

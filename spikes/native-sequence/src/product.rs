@@ -7871,11 +7871,13 @@ impl Product {
                         p,
                         move |this, _, _, cx| {
                             let index = this.selected_file.unwrap_or(0);
-                            let line = this
-                                .source_ref
-                                .as_ref()
-                                .map(|source| source.start_line)
-                                .unwrap_or(1);
+                            let line = this.source_ref.as_ref().map_or(1, |source| {
+                                if source.revision == revision {
+                                    source.start_line
+                                } else {
+                                    source_switch_line(&this.diff_rows, source, revision)
+                                }
+                            });
                             this.select_source_line(index, revision, line, cx);
                         },
                         cx,
@@ -8854,6 +8856,123 @@ fn row_source(row: &DiffLine, fallback: Revision) -> Option<(Revision, u32)> {
     }
 }
 
+fn source_switch_line(rows: &[DiffLine], source: &SourceRef, target: Revision) -> u32 {
+    let target_change = |row: &&DiffLine| match target {
+        Revision::Base => row.kind == DiffLineKind::Deletion,
+        Revision::Head => row.kind == DiffLineKind::Addition,
+    };
+    let target_line = |row: &DiffLine| match target {
+        Revision::Base => row.old_line,
+        Revision::Head => row.new_line,
+    };
+
+    // The initial source preview covers the whole first hunk. Switching sides
+    // should land on that hunk's changed line, not its first context line.
+    if source.start_line < source.end_line
+        && let Some(line) = rows
+            .iter()
+            .filter(target_change)
+            .filter_map(&target_line)
+            .find(|line| (source.start_line..=source.end_line).contains(line))
+    {
+        return line;
+    }
+
+    // Keep an explicitly selected context row paired across Base and Head.
+    if let Some(line) = rows
+        .iter()
+        .find(|row| match source.revision {
+            Revision::Base => row.old_line == Some(source.start_line),
+            Revision::Head => row.new_line == Some(source.start_line),
+        })
+        .and_then(target_line)
+    {
+        return line;
+    }
+
+    // Added/deleted rows have no line on the opposite side. Select the closest
+    // changed row there, which preserves the reviewer's focus within the hunk.
+    rows.iter()
+        .filter(target_change)
+        .filter_map(target_line)
+        .min_by_key(|line| line.abs_diff(source.start_line))
+        .unwrap_or(source.start_line)
+}
+
+#[cfg(test)]
+mod source_switch_line_tests {
+    use super::{DiffLineKind, diff_rows, source_switch_line};
+    use bodh::{Revision, SourceRef};
+
+    const PATCH: &str = concat!(
+        "diff --git a/config-install.sh b/config-install.sh\n",
+        "index 1..2 100644\n",
+        "--- a/config-install.sh\n",
+        "+++ b/config-install.sh\n",
+        "@@ -40,7 +40,7 @@ APPS=(\n",
+        "  \"system\"\n",
+        " )\n",
+        " \n",
+        "-DEFAULT_THEME=\"tokyonight\"\n",
+        "+DEFAULT_THEME=\"catppuccin\"\n",
+        " \n",
+        " # --- Mode selection ---\n",
+        " # Usage: ./config-install.sh\n",
+    );
+
+    #[test]
+    fn switching_the_initial_hunk_preview_targets_the_changed_base_line() {
+        let rows = diff_rows(PATCH);
+        let source = SourceRef {
+            path: "config-install.sh".into(),
+            revision: Revision::Head,
+            start_line: 40,
+            end_line: 46,
+        };
+
+        assert_eq!(source_switch_line(&rows, &source, Revision::Base), 43);
+    }
+
+    #[test]
+    fn switching_a_context_line_keeps_its_corresponding_line() {
+        let rows = diff_rows(PATCH);
+        let source = SourceRef {
+            path: "config-install.sh".into(),
+            revision: Revision::Head,
+            start_line: 40,
+            end_line: 40,
+        };
+
+        assert_eq!(source_switch_line(&rows, &source, Revision::Base), 40);
+    }
+
+    #[test]
+    fn switching_an_added_line_maps_to_the_deleted_counterpart() {
+        let rows = diff_rows(PATCH);
+        let source = SourceRef {
+            path: "config-install.sh".into(),
+            revision: Revision::Head,
+            start_line: 43,
+            end_line: 43,
+        };
+
+        assert_eq!(source_switch_line(&rows, &source, Revision::Base), 43);
+    }
+
+    #[test]
+    fn patch_parser_represents_the_theme_change_as_base_and_head_rows() {
+        let rows = diff_rows(PATCH);
+        assert!(
+            rows.iter()
+                .any(|row| { row.kind == DiffLineKind::Deletion && row.old_line == Some(43) })
+        );
+        assert!(
+            rows.iter()
+                .any(|row| { row.kind == DiffLineKind::Addition && row.new_line == Some(43) })
+        );
+    }
+}
+
 fn render_unified_diff_row(
     index: usize,
     row: &DiffLine,
@@ -9612,7 +9731,7 @@ pub fn open_product(cx: &mut App, repo: Option<String>, pr: Option<u64>) {
                 title: Some("Bodh · Review workspace".into()),
                 ..Default::default()
             }),
-            window_min_size: Some(size(px(760.), px(560.))),
+            window_min_size: Some(size(px(760.), px(480.))),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
                 size(px(1280.), px(820.)),
