@@ -67,6 +67,7 @@ fn fetches_outer_threads_and_each_nested_reply_connection_and_survives_restart()
     let gh = fake_gh(
         &root,
         r#"case "$*" in
+  *repos/acme/widget/pulls/17/comments*) printf '%s' '[{"id":101,"in_reply_to_id":null,"path":"src/a.rs","original_path":"src/a.rs","side":"RIGHT","start_side":null,"original_side":"LEFT","original_start_side":null,"line":3,"start_line":null,"original_line":2,"original_start_line":null,"commit_id":"head","original_commit_id":"base","user":{"login":"alice"},"author_association":"CONTRIBUTOR"},{"id":102,"in_reply_to_id":101,"path":"src/a.rs","original_path":"src/a.rs","side":"RIGHT","start_side":null,"original_side":"LEFT","original_start_side":null,"line":3,"start_line":null,"original_line":2,"original_start_line":null,"commit_id":"head","original_commit_id":"base","user":{"login":"bob"},"author_association":"MEMBER"}]' ;;
   *node\(id:*thread-1*after=reply-2*) printf '%s' '{"data":{"node":{"comments":{"totalCount":2,"pageInfo":{"hasNextPage":false,"endCursor":"reply-2"},"nodes":[{"id":"comment-2","databaseId":"102","body":"reply two","replyTo":{"databaseId":"101"}}]}}}}' ;;
   *node\(id:*thread-1*) printf '%s' '{"data":{"node":{"comments":{"totalCount":2,"pageInfo":{"hasNextPage":true,"endCursor":"reply-2"},"nodes":[{"id":"comment-1","databaseId":"101","body":"root","replyTo":null}]}}}}' ;;
   *node\(id:*thread-2*) printf '%s' '{"data":{"node":{"comments":{"totalCount":0,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}' ;;
@@ -75,7 +76,7 @@ fn fetches_outer_threads_and_each_nested_reply_connection_and_survives_restart()
 esac"#,
     );
     let result = run_gh(&binding, &state, &gh);
-    assert_eq!(result["complete"], true);
+    assert_eq!(result["complete"], true, "{result}");
     assert_eq!(result["expected_thread_count"], 2);
     assert_eq!(result["fetched_thread_count"], 2);
     assert_eq!(result["threads"].as_array().unwrap().len(), 2);
@@ -97,7 +98,7 @@ esac"#,
     );
     assert_eq!(
         result["threads"][0]["original_side_availability"],
-        "not_exposed_by_graphql"
+        "available_from_rest"
     );
     let summary = latest_discussion_summary(&state, &binding.preparation_id).unwrap();
     assert_eq!(summary["expected_comment_count"], 2);
@@ -369,5 +370,257 @@ esac"#,
         2
     );
     assert_eq!(result["page_count"], 3);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn joins_graphql_discussion_identity_to_rest_current_and_original_locations() {
+    let (root, state, binding) = fixture();
+    let gh = fake_gh(
+        &root,
+        r#"case "$*" in
+  *repos/acme/widget/pulls/17/comments*) printf '%s' '[{"id":101,"pull_request_review_id":800,"in_reply_to_id":null,"path":"new/src/a.rs","original_path":"old/src/a.rs","side":"RIGHT","start_side":"RIGHT","original_side":"LEFT","original_start_side":"LEFT","line":12,"start_line":10,"original_line":8,"original_start_line":6,"commit_id":"head-oid","original_commit_id":"base-oid","user":{"login":"alice"},"author_association":"CONTRIBUTOR"},{"id":102,"pull_request_review_id":800,"in_reply_to_id":101,"path":"new/src/a.rs","original_path":"old/src/a.rs","side":"RIGHT","start_side":"RIGHT","original_side":"LEFT","original_start_side":"LEFT","line":12,"start_line":10,"original_line":8,"original_start_line":6,"commit_id":"head-oid","original_commit_id":"base-oid","user":{"login":"bob"},"author_association":"MEMBER"}]' ;;
+  *node\(id:*fullDatabaseId*originalCommit*outdated*) printf '%s' '{"data":{"node":{"comments":{"totalCount":2,"pageInfo":{"hasNextPage":false,"endCursor":"reply-1"},"nodes":[{"id":"COMMENT_NODE_101","databaseId":"101","fullDatabaseId":"101","body":"root","createdAt":"2026-01-01T00:00:00Z","author":{"login":"alice"},"authorAssociation":"CONTRIBUTOR","path":"new/src/a.rs","line":12,"originalLine":8,"startLine":10,"originalStartLine":6,"originalCommit":{"oid":"base-oid"},"outdated":false,"replyTo":null,"viewerCanUpdate":true,"viewerCanDelete":false,"viewerCanReact":true,"viewerDidAuthor":false},{"id":"COMMENT_NODE_102","databaseId":"102","fullDatabaseId":"102","body":"reply","createdAt":"2026-01-02T00:00:00Z","author":{"login":"bob"},"authorAssociation":"MEMBER","path":"new/src/a.rs","line":12,"originalLine":8,"startLine":10,"originalStartLine":6,"originalCommit":{"oid":"base-oid"},"outdated":false,"replyTo":{"id":"COMMENT_NODE_101","databaseId":"101","fullDatabaseId":"101"},"viewerCanUpdate":false,"viewerCanDelete":false,"viewerCanReact":true,"viewerDidAuthor":true}]}}}}' ;;
+  *reviewThreads\(first*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"outer-1"},"nodes":[{"id":"THREAD_NODE_1","path":"new/src/a.rs","line":12,"originalLine":8,"diffSide":"RIGHT","startLine":10,"originalStartLine":6,"startDiffSide":"RIGHT","isResolved":true,"isOutdated":false,"viewerCanReply":true,"viewerCanResolve":false,"viewerCanUnresolve":true,"resolvedBy":{"login":"resolver"},"comments":{"totalCount":2}}]}}}}}' ;;
+  *) echo 'required discussion metadata fields were not requested' >&2; exit 2 ;;
+esac"#,
+    );
+
+    let result = run_gh(&binding, &state, &gh);
+    assert_eq!(result["complete"], true);
+    let thread = &result["threads"][0];
+    assert_eq!(thread["id"], "THREAD_NODE_1");
+    assert_eq!(thread["resolvedBy"]["login"], "resolver");
+    assert_eq!(thread["viewerCanResolve"], false);
+    assert_eq!(thread["viewerCanUnresolve"], true);
+    assert_eq!(thread["rest_location"]["path"], "new/src/a.rs");
+    assert_eq!(thread["rest_location"]["original_path"], "old/src/a.rs");
+    assert_eq!(thread["rest_location"]["side"], "RIGHT");
+    assert_eq!(thread["rest_location"]["original_side"], "LEFT");
+    assert_eq!(thread["rest_location"]["line"], 12);
+    assert_eq!(thread["rest_location"]["original_line"], 8);
+
+    let comments = thread["comments"].as_array().unwrap();
+    assert_eq!(comments[0]["id"], "COMMENT_NODE_101");
+    assert_eq!(comments[0]["fullDatabaseId"], "101");
+    assert_eq!(comments[0]["author"]["login"], "alice");
+    assert_eq!(comments[0]["authorAssociation"], "CONTRIBUTOR");
+    assert_eq!(comments[0]["replyTo"], serde_json::Value::Null);
+    assert_eq!(comments[0]["rest_location"]["original_side"], "LEFT");
+    assert_eq!(comments[1]["id"], "COMMENT_NODE_102");
+    assert_eq!(comments[1]["databaseId"], "102");
+    assert_eq!(comments[1]["replyTo"]["id"], "COMMENT_NODE_101");
+    assert_eq!(comments[1]["replyTo"]["databaseId"], "101");
+    assert_eq!(comments[1]["rest_location"]["in_reply_to_id"], "101");
+    assert_eq!(comments[1]["viewerDidAuthor"], true);
+    assert_eq!(comments[1]["outdated"], false);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn paginates_rest_review_comments_and_keeps_graphql_thread_complete() {
+    let (root, state, binding) = fixture();
+    let mut page = Vec::new();
+    page.push(serde_json::json!({
+        "id": 101,
+        "pull_request_review_id": 800,
+        "in_reply_to_id": null,
+        "path": "src/a.rs",
+        "original_path": "src/a.rs",
+        "side": "RIGHT",
+        "start_side": null,
+        "original_side": "LEFT",
+        "original_start_side": null,
+        "line": 12,
+        "start_line": null,
+        "original_line": 8,
+        "original_start_line": null,
+        "commit_id": "head-oid",
+        "original_commit_id": "base-oid",
+        "user": {"login":"alice"},
+        "author_association": "CONTRIBUTOR"
+    }));
+    for id in 102..=200 {
+        page.push(serde_json::json!({"id":id,"in_reply_to_id":null,"user":{"login":"other"}}));
+    }
+    let page = serde_json::to_string(&page).unwrap();
+    let comments_response = serde_json::to_string(&serde_json::json!({
+        "data": {"node": {"comments": {
+            "totalCount": 1,
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [{"id":"COMMENT_NODE_101","fullDatabaseId":"101","databaseId":"101","author":{"login":"alice"},"authorAssociation":"CONTRIBUTOR","replyTo":null}]
+        }}}
+    })).unwrap();
+    let threads_response = serde_json::to_string(&serde_json::json!({
+        "data": {"repository": {"pullRequest": {"reviewThreads": {
+            "totalCount": 1,
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [{"id":"THREAD_NODE_1","path":"src/a.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":true,"comments":{"totalCount":1}}]
+        }}}}
+    })).unwrap();
+    let script = format!(
+        r#"case "$*" in
+  *repos/acme/widget/pulls/17/comments*-F\ page=1*) printf '%s' '{page}' ;;
+  *repos/acme/widget/pulls/17/comments*-F\ page=2*) printf '%s' '[]' ;;
+  *node\(id:*fullDatabaseId*originalCommit*outdated*) printf '%s' '{comments_response}' ;;
+  *) printf '%s' '{threads_response}' ;;
+esac"#
+    );
+    let gh = fake_gh(&root, &script);
+    let result = run_gh(&binding, &state, &gh);
+    assert_eq!(result["complete"], true, "{result}");
+    assert_eq!(result["page_count"], 4);
+    assert_eq!(
+        result["threads"][0]["comments"][0]["rest_location"]["original_side"],
+        "LEFT"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn rest_permission_failure_keeps_graphql_pages_and_marks_original_sides_unavailable() {
+    let (root, state, binding) = fixture();
+    let gh = fake_gh(
+        &root,
+        r#"case "$*" in
+  *repos/acme/widget/pulls/17/comments*) echo 'HTTP 403 permission denied' >&2; exit 1 ;;
+  *node\(id:*fullDatabaseId*originalCommit*outdated*) printf '%s' '{"data":{"node":{"comments":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"COMMENT_NODE_101","fullDatabaseId":"101","databaseId":"101","author":{"login":"alice"},"replyTo":null}]}}}}' ;;
+  *reviewThreads\(first*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"THREAD_NODE_1","path":"src/a.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":true,"comments":{"totalCount":1}}]}}}}}' ;;
+  *) exit 2 ;;
+esac"#,
+    );
+    let result = run_gh(&binding, &state, &gh);
+    assert_eq!(result["complete"], false);
+    assert_eq!(result["incomplete_connection"], "rest_comments");
+    assert_eq!(result["incomplete_cause"], "AUTH_ACCESS");
+    assert_eq!(
+        result["threads"][0]["comments"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        result["threads"][0]["comments"][0]["rest_location"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        result["original_side_availability"],
+        "partial_or_unavailable"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn mismatched_rest_reply_identity_marks_the_join_incomplete() {
+    let (root, state, binding) = fixture();
+    let gh = fake_gh(
+        &root,
+        r#"case "$*" in
+  *repos/acme/widget/pulls/17/comments*) printf '%s' '[{"id":101,"in_reply_to_id":999,"path":"src/a.rs","side":"RIGHT","original_side":"LEFT","line":12,"original_line":8,"user":{"login":"mallory"}}]' ;;
+  *node\(id:*fullDatabaseId*originalCommit*outdated*) printf '%s' '{"data":{"node":{"comments":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"COMMENT_NODE_101","fullDatabaseId":"101","databaseId":"101","author":{"login":"alice"},"replyTo":null}]}}}}' ;;
+  *reviewThreads\(first*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"THREAD_NODE_1","path":"src/a.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":true,"comments":{"totalCount":1}}]}}}}}' ;;
+  *) exit 2 ;;
+esac"#,
+    );
+    let result = run_gh(&binding, &state, &gh);
+    assert_eq!(result["complete"], false);
+    assert_eq!(
+        result["incomplete_connection"],
+        "rest_comments:THREAD_NODE_1"
+    );
+    assert_eq!(result["incomplete_cause"], "REST_GRAPHQL_COMMENT_MISMATCH");
+    assert_eq!(
+        result["threads"][0]["comments"][0]["rest_metadata_error"],
+        "REST_GRAPHQL_COMMENT_MISMATCH"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn duplicate_rest_comment_ids_make_the_enrichment_incomplete() {
+    let (root, state, binding) = fixture();
+    let gh = fake_gh(
+        &root,
+        r#"case "$*" in
+  *repos/acme/widget/pulls/17/comments*) printf '%s' '[{"id":101,"in_reply_to_id":null,"path":"src/a.rs","side":"RIGHT","original_side":"LEFT"},{"id":101,"in_reply_to_id":null,"path":"src/a.rs","side":"RIGHT","original_side":"LEFT"}]' ;;
+  *node\(id:*fullDatabaseId*originalCommit*outdated*) printf '%s' '{"data":{"node":{"comments":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"COMMENT_NODE_101","fullDatabaseId":"101","databaseId":"101","replyTo":null}]}}}}' ;;
+  *) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"THREAD_NODE_1","path":"src/a.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":true,"comments":{"totalCount":1}}]}}}}}' ;;
+esac"#,
+    );
+    let result = run_gh(&binding, &state, &gh);
+    assert_eq!(result["complete"], false);
+    assert_eq!(result["incomplete_connection"], "rest_comments");
+    assert_eq!(result["incomplete_cause"], "REST_COMMENT_DUPLICATE");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn missing_rest_comment_match_marks_only_the_rest_join_incomplete() {
+    let (root, state, binding) = fixture();
+    let gh = fake_gh(
+        &root,
+        r#"case "$*" in
+  *repos/acme/widget/pulls/17/comments*) printf '%s' '[]' ;;
+  *node\(id:*fullDatabaseId*originalCommit*outdated*) printf '%s' '{"data":{"node":{"comments":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"COMMENT_NODE_101","fullDatabaseId":"101","databaseId":"101","author":{"login":"alice"},"replyTo":null}]}}}}' ;;
+  *) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"THREAD_NODE_1","path":"src/a.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":true,"comments":{"totalCount":1}}]}}}}}' ;;
+esac"#,
+    );
+    let result = run_gh(&binding, &state, &gh);
+    assert_eq!(result["complete"], false);
+    assert_eq!(
+        result["incomplete_connection"],
+        "rest_comments:THREAD_NODE_1"
+    );
+    assert_eq!(result["incomplete_cause"], "REST_COMMENT_NOT_FOUND");
+    assert_eq!(
+        result["threads"][0]["comments"][0]["rest_location"],
+        serde_json::Value::Null
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn later_rest_page_permission_failure_keeps_the_enrichment_page() {
+    let (root, state, binding) = fixture();
+    let mut page = vec![serde_json::json!({
+        "id":101,"pull_request_review_id":800,"in_reply_to_id":null,
+        "path":"src/a.rs","original_path":"src/a.rs","side":"RIGHT","original_side":"LEFT",
+        "line":12,"original_line":8,"user":{"login":"alice"},"author_association":"CONTRIBUTOR"
+    })];
+    for id in 102..=200 {
+        page.push(serde_json::json!({"id":id,"in_reply_to_id":null}));
+    }
+    let page = serde_json::to_string(&page).unwrap();
+    let comments_response = serde_json::to_string(&serde_json::json!({
+        "data": {"node": {"comments": {
+            "totalCount": 1,
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [{"id":"COMMENT_NODE_101","fullDatabaseId":"101","databaseId":"101","author":{"login":"alice"},"authorAssociation":"CONTRIBUTOR","replyTo":null}]
+        }}}
+    })).unwrap();
+    let threads_response = serde_json::to_string(&serde_json::json!({
+        "data": {"repository": {"pullRequest": {"reviewThreads": {
+            "totalCount": 1,
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [{"id":"THREAD_NODE_1","path":"src/a.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":true,"comments":{"totalCount":1}}]
+        }}}}
+    })).unwrap();
+    let script = format!(
+        r#"case "$*" in
+  *repos/acme/widget/pulls/17/comments*-F\ page=1*) printf '%s' '{page}' ;;
+  *repos/acme/widget/pulls/17/comments*-F\ page=2*) echo 'HTTP 403 permission denied' >&2; exit 1 ;;
+  *node\(id:*fullDatabaseId*originalCommit*outdated*) printf '%s' '{comments_response}' ;;
+  *) printf '%s' '{threads_response}' ;;
+esac"#
+    );
+    let gh = fake_gh(&root, &script);
+    let result = run_gh(&binding, &state, &gh);
+    assert_eq!(result["complete"], false);
+    assert_eq!(result["incomplete_connection"], "rest_comments");
+    assert_eq!(result["incomplete_cause"], "AUTH_ACCESS");
+    assert_eq!(result["page_count"], 3);
+    assert_eq!(
+        result["threads"][0]["comments"][0]["rest_location"]["original_side"],
+        "LEFT"
+    );
     let _ = std::fs::remove_dir_all(root);
 }

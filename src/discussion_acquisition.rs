@@ -3,7 +3,7 @@ use crate::{ContractError, OperationControl, PreparedBinding};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::Read,
     os::unix::process::CommandExt,
     path::Path,
@@ -57,6 +57,7 @@ pub fn acquire_discussions_with_gh(
     let mut outer_complete = false;
     let mut failure: Option<(String, String)> = None;
     let mut thread_ordinals = Vec::new();
+    let mut saw_comment_nodes = false;
 
     for page_no in 0..MAX_PAGES {
         if let Err(error) = control.check() {
@@ -256,6 +257,7 @@ pub fn acquire_discussions_with_gh(
                 comments_failure = Some("DISCUSSION_LIMIT_EXCEEDED".into());
             }
             for node in &page.nodes {
+                saw_comment_nodes = true;
                 let Some(id) = node.get("id").and_then(Value::as_str) else {
                     comments_failure.get_or_insert_with(|| "NULL_COMMENT_NODE".into());
                     continue;
@@ -312,6 +314,99 @@ pub fn acquire_discussions_with_gh(
             });
         }
     }
+
+    // GraphQL supplies stable node/reply IDs, viewer permissions, and current
+    // thread state. The REST review-comment resource additionally supplies the
+    // original path and diff sides, which GraphQL does not expose. Acquire it
+    // read-only and persist each page before asking for the next one.
+    if saw_comment_nodes {
+        let mut rest_ids = HashSet::new();
+        for page_no in 0..MAX_PAGES {
+            if let Err(error) = control.check() {
+                failure.get_or_insert_with(|| ("rest_comments".into(), error.code));
+                break;
+            }
+            let response = match gh_rest_comments(
+                gh,
+                GraphQlScope {
+                    host: &binding.context.pr.host,
+                    owner: &binding.context.pr.owner,
+                    repository: &binding.context.pr.repository,
+                    number: binding.context.pr.number,
+                    thread_id: None,
+                    after: None,
+                },
+                page_no + 1,
+                control,
+            ) {
+                Ok(response) => response,
+                Err(error) => {
+                    failure.get_or_insert_with(|| ("rest_comments".into(), error.code));
+                    break;
+                }
+            };
+            observation_bytes = observation_bytes
+                .saturating_add(serde_json::to_vec(&response).map_err(json_error)?.len());
+            if observation_bytes > MAX_OBSERVATION_BYTES {
+                failure.get_or_insert_with(|| {
+                    ("rest_comments".into(), "DISCUSSION_LIMIT_EXCEEDED".into())
+                });
+                break;
+            }
+            let Some(nodes) = response.as_array() else {
+                failure.get_or_insert_with(|| {
+                    ("rest_comments".into(), "REST_RESPONSE_INVALID".into())
+                });
+                break;
+            };
+            if nodes.len() > PAGE_SIZE {
+                failure.get_or_insert_with(|| {
+                    ("rest_comments".into(), "REST_RESPONSE_INVALID".into())
+                });
+                break;
+            }
+            let mut invalid_page = false;
+            for node in nodes {
+                let Some(id) = rest_numeric_id(node.get("id")) else {
+                    failure.get_or_insert_with(|| {
+                        ("rest_comments".into(), "REST_COMMENT_ID_MISSING".into())
+                    });
+                    invalid_page = true;
+                    continue;
+                };
+                if !rest_ids.insert(id) {
+                    failure.get_or_insert_with(|| {
+                        ("rest_comments".into(), "REST_COMMENT_DUPLICATE".into())
+                    });
+                    invalid_page = true;
+                }
+            }
+            let has_next = nodes.len() == PAGE_SIZE;
+            store.save_page(
+                &run_id,
+                "rest_comments",
+                "",
+                page_no,
+                Some(&(page_no + 1).to_string()),
+                &ParsedPage {
+                    total_count: None,
+                    end_cursor: has_next.then(|| (page_no + 2).to_string()),
+                    has_next_page: has_next,
+                    nodes: nodes.clone(),
+                },
+            )?;
+            if invalid_page || failure.is_some() {
+                break;
+            }
+            if !has_next {
+                break;
+            }
+            if page_no + 1 == MAX_PAGES {
+                failure
+                    .get_or_insert_with(|| ("rest_comments".into(), "PAGE_LIMIT_EXCEEDED".into()));
+            }
+        }
+    }
     let every_thread_complete = completed_threads.len() == seen_threads.len();
     let complete = outer_complete && every_thread_complete && failure.is_none();
     store.finish_run(
@@ -364,7 +459,7 @@ pub fn latest_discussion_summary(
         "incomplete_cause": result["incomplete_cause"],
         "count_changed": result["count_changed"],
         "observation_consistency": "moving_non_atomic",
-        "original_side_availability": "not_exposed_by_graphql"
+        "original_side_availability": result["original_side_availability"]
     }))
 }
 
@@ -435,8 +530,75 @@ fn outer_query() -> String {
 
 fn comments_query() -> String {
     format!(
-        "query($id:ID!,$after:String){{node(id:$id){{... on PullRequestReviewThread{{comments(first:{PAGE_SIZE},after:$after){{totalCount pageInfo{{hasNextPage endCursor}} nodes{{id databaseId:fullDatabaseId body createdAt updatedAt author{{login}} authorAssociation path line originalLine startLine originalStartLine replyTo{{id databaseId:fullDatabaseId}} viewerCanUpdate viewerCanDelete viewerCanReact viewerDidAuthor}}}}}}}}}}"
+        "query($id:ID!,$after:String){{node(id:$id){{... on PullRequestReviewThread{{comments(first:{PAGE_SIZE},after:$after){{totalCount pageInfo{{hasNextPage endCursor}} nodes{{id fullDatabaseId databaseId:fullDatabaseId body createdAt updatedAt author{{login}} authorAssociation path line originalLine startLine originalStartLine originalCommit{{oid}} outdated replyTo{{id fullDatabaseId databaseId:fullDatabaseId}} viewerCanUpdate viewerCanDelete viewerCanReact viewerDidAuthor}}}}}}}}}}"
     )
+}
+
+fn gh_rest_comments(
+    gh: &Path,
+    scope: GraphQlScope<'_>,
+    page: usize,
+    control: &OperationControl,
+) -> Result<Value, ContractError> {
+    let endpoint = format!(
+        "repos/{}/{}/pulls/{}/comments",
+        scope.owner, scope.repository, scope.number
+    );
+    let args = vec![
+        "api".to_owned(),
+        "--hostname".to_owned(),
+        scope.host.to_owned(),
+        endpoint,
+        "-F".to_owned(),
+        format!("per_page={PAGE_SIZE}"),
+        "-F".to_owned(),
+        format!("page={page}"),
+    ];
+    let bytes = run_process(gh, &args, control)?;
+    serde_json::from_slice(&bytes).map_err(|_| {
+        ContractError::new(
+            "REST_RESPONSE_INVALID",
+            "GitHub returned invalid REST review-comment JSON",
+            "",
+        )
+    })
+}
+
+fn rest_numeric_id(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(value) if !value.is_empty() => Some(value.clone()),
+        Value::Number(value) => value.as_u64().map(|value| value.to_string()),
+        _ => None,
+    }
+}
+
+fn rest_location(comment: &Value) -> Value {
+    json!({
+        "id": rest_numeric_id(comment.get("id")),
+        "pull_request_review_id": rest_numeric_id(comment.get("pull_request_review_id")),
+        "in_reply_to_id": rest_numeric_id(comment.get("in_reply_to_id")),
+        "path": comment.get("path"),
+        "original_path": comment.get("original_path"),
+        "side": comment.get("side"),
+        "start_side": comment.get("start_side"),
+        "original_side": comment.get("original_side"),
+        "original_start_side": comment.get("original_start_side"),
+        "line": comment.get("line"),
+        "start_line": comment.get("start_line"),
+        "original_line": comment.get("original_line"),
+        "original_start_line": comment.get("original_start_line"),
+        "commit_id": comment.get("commit_id"),
+        "original_commit_id": comment.get("original_commit_id"),
+        "position": comment.get("position"),
+        "original_position": comment.get("original_position"),
+        "user": comment.get("user"),
+        "author_association": comment.get("author_association"),
+    })
+}
+
+fn field_disagrees(left: Option<&Value>, right: Option<&Value>) -> bool {
+    left.zip(right)
+        .is_some_and(|(left, right)| !left.is_null() && !right.is_null() && left != right)
 }
 
 pub(crate) struct GraphQlScope<'a> {
@@ -752,7 +914,7 @@ impl DiscussionStore {
         match run {
             Some(id) => self.load(&id),
             None => Ok(
-                json!({"available":false,"complete":false,"expected_thread_count":null,"fetched_thread_count":0,"threads_complete":false,"threads":[],"incomplete_connection":"threads","incomplete_cause":"NOT_FETCHED","count_changed":false,"page_count":0,"observation_consistency":"moving_non_atomic","original_side_availability":"not_exposed_by_graphql"}),
+                json!({"available":false,"complete":false,"expected_thread_count":null,"fetched_thread_count":0,"threads_complete":false,"threads":[],"incomplete_connection":"threads","incomplete_cause":"NOT_FETCHED","count_changed":false,"page_count":0,"observation_consistency":"moving_non_atomic","original_side_availability":"not_applicable_not_fetched"}),
             ),
         }
     }
@@ -787,6 +949,30 @@ impl DiscussionStore {
                 ))
             })
             .map_err(db_error)?;
+        let mut rest_comments = HashMap::new();
+        let mut duplicate_rest_ids = HashSet::new();
+        let mut rest_pages = self.db.prepare("SELECT nodes_json FROM discussion_pages WHERE run_id=?1 AND connection_name='rest_comments' ORDER BY page_no").map_err(db_error)?;
+        let rest_rows = rest_pages
+            .query_map([run_id], |r| r.get::<_, String>(0))
+            .map_err(db_error)?;
+        for page in rest_rows {
+            let nodes: Vec<Value> =
+                serde_json::from_str(&page.map_err(db_error)?).map_err(json_error)?;
+            for node in nodes {
+                if let Some(id) = rest_numeric_id(node.get("id"))
+                    && rest_comments.insert(id.clone(), node).is_some()
+                {
+                    duplicate_rest_ids.insert(id);
+                }
+            }
+        }
+        let mut metadata_complete = duplicate_rest_ids.is_empty();
+        let mut metadata_failure: Option<(String, String)> = duplicate_rest_ids
+            .iter()
+            .next()
+            .map(|_| ("rest_comments".into(), "REST_COMMENT_DUPLICATE".into()));
+        let mut original_sides_available = true;
+        let mut has_comment_nodes = false;
         let mut threads = Vec::new();
         for row in rows {
             let (
@@ -811,6 +997,131 @@ impl DiscussionStore {
                 let nodes: Vec<Value> = serde_json::from_str(&page).map_err(json_error)?;
                 comments.extend(nodes);
             }
+            has_comment_nodes |= !comments.is_empty();
+            let mut root_location = None;
+            for comment in &mut comments {
+                let Some(numeric_id) = rest_numeric_id(
+                    comment
+                        .get("fullDatabaseId")
+                        .or_else(|| comment.get("databaseId")),
+                ) else {
+                    metadata_complete = false;
+                    metadata_failure.get_or_insert_with(|| {
+                        (
+                            format!("rest_comments:{_node_id}"),
+                            "REST_COMMENT_ID_MISSING".into(),
+                        )
+                    });
+                    original_sides_available = false;
+                    comment["rest_location"] = Value::Null;
+                    comment["rest_metadata_error"] = json!("REST_COMMENT_ID_MISSING");
+                    continue;
+                };
+                let Some(rest) = rest_comments.get(&numeric_id) else {
+                    metadata_complete = false;
+                    metadata_failure.get_or_insert_with(|| {
+                        (
+                            format!("rest_comments:{_node_id}"),
+                            "REST_COMMENT_NOT_FOUND".into(),
+                        )
+                    });
+                    original_sides_available = false;
+                    comment["rest_location"] = Value::Null;
+                    comment["rest_metadata_error"] = json!("REST_COMMENT_NOT_FOUND");
+                    continue;
+                };
+                let rest_reply_id = rest_numeric_id(rest.get("in_reply_to_id"));
+                let graphql_reply_id =
+                    comment
+                        .get("replyTo")
+                        .and_then(Value::as_object)
+                        .and_then(|reply| {
+                            rest_numeric_id(
+                                reply
+                                    .get("fullDatabaseId")
+                                    .or_else(|| reply.get("databaseId")),
+                            )
+                        });
+                let reply_shape_mismatch = comment.get("replyTo").is_some_and(|value| {
+                    if value.is_null() {
+                        rest_reply_id.is_some()
+                    } else {
+                        graphql_reply_id != rest_reply_id
+                    }
+                });
+                let author_mismatch = comment
+                    .pointer("/author/login")
+                    .and_then(Value::as_str)
+                    .zip(rest.pointer("/user/login").and_then(Value::as_str))
+                    .is_some_and(|(graphql, rest)| graphql != rest);
+                let association_mismatch = field_disagrees(
+                    comment.get("authorAssociation"),
+                    rest.get("author_association"),
+                );
+                let comment_location_mismatch = [
+                    ("path", "path"),
+                    ("line", "line"),
+                    ("startLine", "start_line"),
+                    ("originalLine", "original_line"),
+                    ("originalStartLine", "original_start_line"),
+                ]
+                .into_iter()
+                .any(|(graphql, rest_key)| {
+                    field_disagrees(comment.get(graphql), rest.get(rest_key))
+                });
+                if reply_shape_mismatch
+                    || author_mismatch
+                    || association_mismatch
+                    || comment_location_mismatch
+                {
+                    metadata_complete = false;
+                    metadata_failure.get_or_insert_with(|| {
+                        (
+                            format!("rest_comments:{_node_id}"),
+                            "REST_GRAPHQL_COMMENT_MISMATCH".into(),
+                        )
+                    });
+                    comment["rest_metadata_error"] = json!("REST_GRAPHQL_COMMENT_MISMATCH");
+                    original_sides_available = false;
+                }
+                let location = rest_location(rest);
+                original_sides_available &= location
+                    .get("original_side")
+                    .is_some_and(|value| value.is_string());
+                if comment.get("replyTo").is_none_or(Value::is_null) {
+                    root_location = Some(location.clone());
+                }
+                comment["rest_location"] = location;
+                if comment.get("rest_metadata_error").is_none() {
+                    comment["rest_metadata_error"] = Value::Null;
+                }
+            }
+            if let Some(location) = &root_location {
+                let thread_location_mismatch = [
+                    ("path", "path"),
+                    ("line", "line"),
+                    ("diffSide", "side"),
+                    ("startLine", "start_line"),
+                    ("startDiffSide", "start_side"),
+                    ("originalLine", "original_line"),
+                    ("originalStartLine", "original_start_line"),
+                ]
+                .into_iter()
+                .any(|(graphql, rest_key)| {
+                    field_disagrees(thread.get(graphql), location.get(rest_key))
+                });
+                if thread_location_mismatch {
+                    metadata_complete = false;
+                    metadata_failure.get_or_insert_with(|| {
+                        (
+                            format!("rest_comments:{_node_id}"),
+                            "REST_GRAPHQL_THREAD_MISMATCH".into(),
+                        )
+                    });
+                    original_sides_available = false;
+                    thread["rest_metadata_error"] = json!("REST_GRAPHQL_THREAD_MISMATCH");
+                }
+            }
             if let Some(object) = thread.as_object_mut() {
                 object.insert("comments".into(), Value::Array(comments));
                 object.insert(
@@ -823,11 +1134,15 @@ impl DiscussionStore {
                     "comments_incomplete_cause".into(),
                     cause.map(Value::String).unwrap_or(Value::Null),
                 );
-                object.insert("originalDiffSide".into(), Value::Null);
-                object.insert("originalStartDiffSide".into(), Value::Null);
+                let has_root_location = root_location.is_some();
+                object.insert("rest_location".into(), root_location.unwrap_or(Value::Null));
                 object.insert(
                     "original_side_availability".into(),
-                    Value::String("not_exposed_by_graphql".into()),
+                    Value::String(if has_root_location {
+                        "available_from_rest".into()
+                    } else {
+                        "unavailable".into()
+                    }),
                 );
             }
             threads.push(thread);
@@ -850,8 +1165,22 @@ impl DiscussionStore {
         if !threads_complete {
             expected_comments = None;
         }
+        let incomplete_connection = incomplete_connection.or_else(|| {
+            metadata_failure
+                .as_ref()
+                .map(|(connection, _)| connection.clone())
+        });
+        let incomplete_cause =
+            incomplete_cause.or_else(|| metadata_failure.as_ref().map(|(_, cause)| cause.clone()));
+        let original_side_availability = if !has_comment_nodes {
+            "not_applicable_no_comments"
+        } else if original_sides_available && metadata_complete {
+            "available_from_rest"
+        } else {
+            "partial_or_unavailable"
+        };
         Ok(
-            json!({"available":true,"complete":complete && !count_changed,"expected_thread_count":expected,"fetched_thread_count":fetched,"expected_comment_count":expected_comments,"fetched_comment_count":fetched_comments,"threads_complete":threads_complete,"threads":threads,"incomplete_connection":incomplete_connection,"incomplete_cause":incomplete_cause,"count_changed":count_changed,"page_count":pages.len(),"observation_consistency":"moving_non_atomic","original_side_availability":"not_exposed_by_graphql"}),
+            json!({"available":true,"complete":complete && !count_changed && metadata_complete,"expected_thread_count":expected,"fetched_thread_count":fetched,"expected_comment_count":expected_comments,"fetched_comment_count":fetched_comments,"threads_complete":threads_complete,"threads":threads,"incomplete_connection":incomplete_connection,"incomplete_cause":incomplete_cause,"count_changed":count_changed,"page_count":pages.len(),"observation_consistency":"moving_non_atomic","original_side_availability":original_side_availability}),
         )
     }
     fn pages_value(&self, run_id: &str) -> Result<Vec<Value>, ContractError> {
