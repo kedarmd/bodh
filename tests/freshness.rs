@@ -797,5 +797,6 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
         bodh::protected_work_snapshot(&state, &current).unwrap(),
         before
     );
+    assert_eq!(checkout_snapshot(&checkout), checkout_before);
     let _ = std::fs::remove_dir_all(root);
 }
