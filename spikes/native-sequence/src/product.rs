@@ -2864,6 +2864,108 @@ impl Product {
         }).detach();
     }
 
+    fn retry_failed_review(&mut self, failed_operation_id: &str, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if self.review_loading {
+            return;
+        }
+        let failed_operation_id = failed_operation_id.to_owned();
+        self.review_loading = true;
+        self.error = None;
+        self.status = Some("Checking the pull request and saved review before retrying…".into());
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(60));
+        self.active_control = Some(control.clone());
+        cx.spawn(async move |weak, cx| {
+            let result = cx.background_executor().spawn(async move {
+                let remote = inspect_remote_review_with_gh(&binding, Path::new("gh"), &control)?;
+                let mut store = ReviewPublicationStore::open(&state)?;
+                let retry = store.retry_failed(
+                    &failed_operation_id,
+                    &state,
+                    &remote,
+                    &control,
+                )?;
+                let publisher = GhReviewPublisher {
+                    executable: PathBuf::from("gh"),
+                    checkout: PathBuf::from(&binding.checkout),
+                    timeout: Duration::from_secs(35),
+                };
+                let retry_id = retry.id.clone();
+                let publish_result = store.publish_confirmed(&retry.id, &remote, &publisher, &control);
+                let history = store.operation_history(&binding.preparation_id)?;
+                let (operation, drafts, replacements, publication_error) = match publish_result {
+                    Ok(operation) => {
+                        let drafts = if operation.state == "confirmed" {
+                            Some(DraftStore::open(&state)?.list(&binding.preparation_id)?)
+                        } else {
+                            None
+                        };
+                        let replacements = if operation.state == "confirmed" {
+                            Some(DraftStore::open(&state)?.list_replacements(&binding.preparation_id)?)
+                        } else {
+                            None
+                        };
+                        (Some(operation), drafts, replacements, None)
+                    }
+                    Err(error) => (None, None, None, Some(error)),
+                };
+                Ok::<_, bodh::ContractError>((retry_id, operation, drafts, replacements, history, publication_error))
+            }).await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.review_loading = false;
+                this.active_control = None;
+                match result {
+                    Ok((retry_id, operation, drafts, replacements, history, publication_error)) => {
+                        if let Some(snapshot) = drafts {
+                            this.update_draft_counts(snapshot.counts.clone());
+                            this.draft_snapshot = Some(snapshot);
+                        }
+                        if let Some(snapshot) = replacements {
+                            this.replacement_snapshot = Some(snapshot);
+                        }
+                        this.review_history = history;
+                        let Some(operation) = operation else {
+                            let error = publication_error.expect("missing retry publication result");
+                            this.review_plan = this.review_history.iter().find(|item| item.id == retry_id).cloned();
+                            this.status = Some("The retry attempt is saved locally but could not be sent. Review its current state before continuing.".into());
+                            this.error = Some(format!("{}: {}", error.code, error.message));
+                            cx.notify();
+                            return;
+                        };
+                        this.status = Some(match operation.state.as_str() {
+                            "confirmed" => format!(
+                                "Review retry published · {}",
+                                operation.remote_url.as_deref().or(operation.remote_review_id.as_deref()).unwrap_or("confirmed")
+                            ),
+                            "failed" => format!(
+                                "GitHub rejected the retry: {}",
+                                operation.failure.as_deref().unwrap_or("unknown error")
+                            ),
+                            _ => format!(
+                                "Retry outcome is uncertain. Do not retry again; reconcile operation {} first.",
+                                operation.id
+                            ),
+                        });
+                        this.review_plan = Some(operation);
+                        this.error = None;
+                    }
+                    Err(error) => {
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                        this.status = None;
+                    }
+                }
+                cx.notify();
+            });
+        }).detach();
+    }
+
     fn reconcile_review_operation(&mut self, operation_id: &str, cx: &mut Context<Self>) {
         let Some(binding) = self.selected_review.clone() else {
             return;
@@ -4645,6 +4747,21 @@ impl Product {
                     "Check remote review outcome",
                     p,
                     move |this, _, _, cx| this.reconcile_review_operation(&operation_id, cx),
+                    cx,
+                ));
+            }
+            if review_retry_available(&operation, &self.review_history, self.review_loading) {
+                page = page.child(empty_card(
+                    "GitHub rejected this grouped review",
+                    "Bodh will check the current pull request, permissions, draft revisions, and source anchors, then send the same saved review again.",
+                    p,
+                ));
+                let operation_id = operation.id.clone();
+                page = page.child(button(
+                    &format!("retry-failed-review-{}", operation.id),
+                    "Retry rejected review",
+                    p,
+                    move |this, _, _, cx| this.retry_failed_review(&operation_id, cx),
                     cx,
                 ));
             }
@@ -8880,6 +8997,19 @@ fn publication_state_color(state: &str, p: Palette) -> u32 {
     }
 }
 
+fn review_retry_available(
+    operation: &bodh::ReviewOperation,
+    history: &[bodh::ReviewOperation],
+    loading: bool,
+) -> bool {
+    operation.state == "failed"
+        && !loading
+        && !history.iter().any(|candidate| {
+            matches!(candidate.state.as_str(), "planned" | "sending" | "unknown")
+                || candidate.id == format!("retry-{}", operation.id)
+        })
+}
+
 fn trusted_remote_url(host: &str, url: Option<&str>) -> Option<String> {
     let prefix = format!("https://{host}/");
     url.filter(|url| url.starts_with(&prefix))
@@ -8938,7 +9068,7 @@ fn empty_card(title: &str, description: &str, p: Palette) -> Div {
 mod publication_recovery_ui_tests {
     use super::{
         Palette, confirmed_discussion_url, publication_state_color, publication_state_label,
-        trusted_remote_url,
+        review_retry_available, trusted_remote_url,
     };
 
     #[test]
@@ -8959,6 +9089,71 @@ mod publication_recovery_ui_tests {
         assert_eq!(publication_state_color("failed", p), p.danger);
         assert_eq!(publication_state_color("unknown", p), p.caution);
         assert_eq!(publication_state_color("unsent", p), p.muted);
+    }
+
+    #[test]
+    fn retry_action_is_only_available_for_failed_history_without_unresolved_work() {
+        let operation = bodh::ReviewOperation {
+            id: "failed-1".into(),
+            fingerprint: "same-payload".into(),
+            state: "failed".into(),
+            payload: bodh::ReviewPayload {
+                preparation_id: "prep".into(),
+                context_id: "context".into(),
+                pull_request_id: "pr".into(),
+                workspace_revision: 1,
+                intent_revision: 1,
+                head_sha: "head".into(),
+                base_sha: "base".into(),
+                event: bodh::ReviewEvent::Comment,
+                summary: None,
+                comments: vec![],
+                suggestions: vec![],
+            },
+            remote_review_id: None,
+            remote_url: None,
+            failure: None,
+            send_started_at: None,
+        };
+        assert!(review_retry_available(&operation, &[], false));
+        assert!(!review_retry_available(&operation, &[], true));
+        let retry = bodh::ReviewOperation {
+            id: "retry-failed-1".into(),
+            state: "planned".into(),
+            ..operation.clone()
+        };
+        assert!(!review_retry_available(
+            &operation,
+            &[operation.clone(), retry],
+            false
+        ));
+        let retry = bodh::ReviewOperation {
+            id: "retry-retry-failed-1".into(),
+            state: "failed".into(),
+            ..operation.clone()
+        };
+        let failed_retry = bodh::ReviewOperation {
+            id: "retry-failed-1".into(),
+            state: "failed".into(),
+            ..operation.clone()
+        };
+        assert!(review_retry_available(
+            &failed_retry,
+            &[operation.clone(), failed_retry.clone()],
+            false
+        ));
+        assert!(!review_retry_available(
+            &failed_retry,
+            &[operation.clone(), failed_retry.clone(), retry],
+            false
+        ));
+        for state in ["unknown", "sending", "confirmed", "planned"] {
+            let ineligible = bodh::ReviewOperation {
+                state: state.into(),
+                ..operation.clone()
+            };
+            assert!(!review_retry_available(&ineligible, &[], false));
+        }
     }
 
     #[test]

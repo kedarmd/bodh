@@ -163,7 +163,8 @@ impl ReviewPublicationStore {
             .optional()
             .map_err(db_error)?
             .flatten();
-        match version.unwrap_or(0) {
+        let schema_version = version.unwrap_or(0);
+        match schema_version {
             0 => db.execute_batch("
                 CREATE TABLE review_intents(preparation_id TEXT PRIMARY KEY NOT NULL REFERENCES preparations(preparation_id), revision INTEGER NOT NULL, intent_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
                 CREATE TABLE review_operations(operation_id TEXT PRIMARY KEY NOT NULL, preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('planned','sending','confirmed','failed','unknown')), payload_json TEXT NOT NULL, remote_review_id TEXT, remote_url TEXT, failure TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, send_started_at INTEGER);
@@ -173,11 +174,14 @@ impl ReviewPublicationStore {
             1 => {
                 db.execute_batch("ALTER TABLE review_operations ADD COLUMN send_started_at INTEGER; INSERT INTO review_publication_migrations(version) VALUES(2);").map_err(db_error)?;
             },
-            2 => {},
+            2 | 3 => {},
             _ => {
                 let _ = db.execute_batch("ROLLBACK;");
                 return Err(ContractError::new("REVIEW_SCHEMA_UNSUPPORTED", "Review publication schema is newer than this application", ""));
             },
+        }
+        if schema_version < 3 {
+            db.execute_batch("ALTER TABLE review_operations ADD COLUMN retry_of TEXT REFERENCES review_operations(operation_id); CREATE UNIQUE INDEX one_review_retry_per_failure ON review_operations(retry_of) WHERE retry_of IS NOT NULL; INSERT INTO review_publication_migrations(version) VALUES(3);").map_err(db_error)?;
         }
         db.execute_batch("COMMIT;").map_err(db_error)?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS review_published_replacements(operation_id TEXT NOT NULL REFERENCES review_operations(operation_id), preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), context_id TEXT NOT NULL, draft_id TEXT NOT NULL, draft_revision INTEGER NOT NULL, PRIMARY KEY(operation_id,draft_id,draft_revision));").map_err(db_error)?;
@@ -811,6 +815,208 @@ impl ReviewPublicationStore {
             operations.push(self.operation(&row.map_err(db_error)?)?);
         }
         Ok(operations)
+    }
+
+    /// Creates a new immutable attempt from a definitively rejected grouped
+    /// review after rechecking the retained payload against current local and
+    /// remote state. This is the only API that can retry a failed operation.
+    pub fn retry_failed(
+        &mut self,
+        failed_operation_id: &str,
+        state: &Path,
+        remote: &RemoteReviewState,
+        control: &OperationControl,
+    ) -> Result<ReviewOperation, ContractError> {
+        let failed = self.operation(failed_operation_id)?;
+        if failed.state != "failed" {
+            return Err(ContractError::new(
+                "REVIEW_RETRY_NOT_ALLOWED",
+                "Only a definitively failed review can be retried",
+                "",
+            ));
+        }
+        if failed.send_started_at.is_none() {
+            return Err(ContractError::new(
+                "REVIEW_RETRY_NOT_ALLOWED",
+                "Only a review definitively rejected by GitHub can be retried",
+                "",
+            ));
+        }
+        verify_remote_state(&failed.payload, remote)?;
+        let binding = PreparationStore::open(state)?.load(&failed.payload.preparation_id)?;
+        if binding.context.context_id != failed.payload.context_id
+            || binding.context.head_sha != failed.payload.head_sha
+            || binding.context.base_sha != failed.payload.base_sha
+        {
+            return Err(ContractError::new(
+                "PR_CONTEXT_STALE",
+                "The saved review context changed; reload the pull request before retrying",
+                "",
+            ));
+        }
+        for comment in &failed.payload.comments {
+            let published: bool = self.db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM review_published_drafts WHERE preparation_id=?1 AND draft_id=?2 AND draft_revision=?3)",
+                params![failed.payload.preparation_id, comment.draft_id, i64::try_from(comment.draft_revision).map_err(|_| state_error())?],
+                |row| row.get(0),
+            ).map_err(db_error)?;
+            if published {
+                return Err(ContractError::new(
+                    "REVIEW_DRAFT_ALREADY_CONFIRMED",
+                    "A comment in this review was already confirmed and cannot be retried",
+                    "",
+                ));
+            }
+        }
+        for suggestion in &failed.payload.suggestions {
+            let published: bool = self.db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM review_published_replacements WHERE preparation_id=?1 AND draft_id=?2 AND draft_revision=?3)",
+                params![failed.payload.preparation_id, suggestion.draft_id, i64::try_from(suggestion.draft_revision).map_err(|_| state_error())?],
+                |row| row.get(0),
+            ).map_err(db_error)?;
+            if published {
+                return Err(ContractError::new(
+                    "REVIEW_DRAFT_ALREADY_CONFIRMED",
+                    "A suggestion in this review was already confirmed and cannot be retried",
+                    "",
+                ));
+            }
+        }
+        let drafts = DraftStore::open(state)?.list(&failed.payload.preparation_id)?;
+        let replacements =
+            DraftStore::open(state)?.list_replacements(&failed.payload.preparation_id)?;
+        if drafts.workspace_revision != replacements.workspace_revision {
+            return Err(ContractError::new(
+                "WORKSPACE_REVISION_STALE",
+                "Workspace content changed; reload before retrying the review",
+                "",
+            ));
+        }
+        let index = diff_index(Path::new(&binding.checkout), &binding.context, control)?;
+        for comment in &failed.payload.comments {
+            let Some(draft) = drafts
+                .drafts
+                .iter()
+                .find(|draft| draft.id == comment.draft_id)
+            else {
+                return Err(stale_review_draft(
+                    "A comment in the rejected review is no longer available",
+                ));
+            };
+            if draft.revision != comment.draft_revision
+                || draft.body != comment.body
+                || draft.source != comment.source
+            {
+                return Err(stale_review_draft(
+                    "A comment in the rejected review has changed",
+                ));
+            }
+            index.validate_anchor(&comment.source)?;
+        }
+        for suggestion in &failed.payload.suggestions {
+            let Some(draft) = replacements
+                .drafts
+                .iter()
+                .find(|draft| draft.id == suggestion.draft_id)
+            else {
+                return Err(stale_review_draft(
+                    "A suggestion in the rejected review is no longer available",
+                ));
+            };
+            if draft.revision != suggestion.draft_revision
+                || draft.source != suggestion.source
+                || draft.original_text != suggestion.original_text
+                || draft.replacement != suggestion.replacement
+                || suggestion.body != suggestion_markdown(&suggestion.replacement)?
+            {
+                return Err(stale_review_draft(
+                    "A suggestion in the rejected review has changed",
+                ));
+            }
+            validate_replacement_target(
+                Path::new(&binding.checkout),
+                &binding.context,
+                &suggestion.source,
+                &suggestion.original_text,
+                control,
+                &index,
+            )?;
+        }
+
+        let payload_json = serde_json::to_string(&failed.payload).map_err(json_error)?;
+        let retry_id = format!("retry-{}", failed.id);
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        for comment in &failed.payload.comments {
+            let published: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM review_published_drafts WHERE preparation_id=?1 AND draft_id=?2 AND draft_revision=?3)",
+                params![failed.payload.preparation_id, comment.draft_id, i64::try_from(comment.draft_revision).map_err(|_| state_error())?],
+                |row| row.get(0),
+            ).map_err(db_error)?;
+            if published {
+                return Err(ContractError::new(
+                    "REVIEW_DRAFT_ALREADY_CONFIRMED",
+                    "A comment in this review was already confirmed and cannot be retried",
+                    "",
+                ));
+            }
+        }
+        for suggestion in &failed.payload.suggestions {
+            let published: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM review_published_replacements WHERE preparation_id=?1 AND draft_id=?2 AND draft_revision=?3)",
+                params![failed.payload.preparation_id, suggestion.draft_id, i64::try_from(suggestion.draft_revision).map_err(|_| state_error())?],
+                |row| row.get(0),
+            ).map_err(db_error)?;
+            if published {
+                return Err(ContractError::new(
+                    "REVIEW_DRAFT_ALREADY_CONFIRMED",
+                    "A suggestion in this review was already confirmed and cannot be retried",
+                    "",
+                ));
+            }
+        }
+        let existing_retry: Option<String> = tx
+            .query_row(
+                "SELECT operation_id FROM review_operations WHERE retry_of=?1",
+                [&failed.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_error)?;
+        if existing_retry.is_some() {
+            return Err(ContractError::new(
+                "REVIEW_RETRY_ALREADY_CREATED",
+                "A retry attempt already exists for this failed review",
+                "",
+            ));
+        }
+        let unresolved: Option<String> = tx.query_row(
+            "SELECT operation_id FROM review_operations WHERE preparation_id=?1 AND state IN ('planned','sending','unknown')",
+            [&failed.payload.preparation_id],
+            |row| row.get(0),
+        ).optional().map_err(db_error)?;
+        if unresolved.is_some() {
+            return Err(ContractError::new(
+                "REVIEW_OPERATION_UNRESOLVED",
+                "Another review operation needs reconciliation before retrying",
+                "",
+            ));
+        }
+        let inserted = tx.execute(
+            "INSERT OR IGNORE INTO review_operations(operation_id,preparation_id,fingerprint,state,payload_json,created_at,updated_at,retry_of) VALUES(?1,?2,?3,'planned',?4,?5,?5,?6)",
+            params![retry_id, failed.payload.preparation_id, failed.fingerprint, payload_json, now_ms(), failed.id],
+        ).map_err(db_error)?;
+        if inserted != 1 {
+            return Err(ContractError::new(
+                "REVIEW_RETRY_ALREADY_CREATED",
+                "A retry attempt already exists for this failed review",
+                "",
+            ));
+        }
+        tx.commit().map_err(db_error)?;
+        self.operation(&retry_id)
     }
 
     /// A process restart turns a persisted `sending` operation into `unknown`.
@@ -1504,6 +1710,10 @@ fn verify_remote_state(
 }
 fn invalid(message: &str, pointer: &str) -> ContractError {
     ContractError::new("REVIEW_PLAN_INVALID", message, pointer)
+}
+
+fn stale_review_draft(message: &str) -> ContractError {
+    ContractError::new("DRAFT_REVISION_STALE", message, "")
 }
 
 fn validate_replacement_target(
