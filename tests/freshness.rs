@@ -17,6 +17,7 @@ struct CheckoutSnapshot {
     head: String,
     symbolic_ref: String,
     index: Vec<u8>,
+    staged: Vec<u8>,
     tracked: Vec<u8>,
     untracked: Vec<u8>,
 }
@@ -42,6 +43,7 @@ fn checkout_snapshot(checkout: &Path) -> CheckoutSnapshot {
             .trim()
             .to_owned(),
         index: std::fs::read(checkout.join(".git/index")).unwrap(),
+        staged: git_output(checkout, &["show", ":tracked.txt"]),
         tracked: std::fs::read(checkout.join("tracked.txt")).unwrap(),
         untracked: std::fs::read(checkout.join("untracked.txt")).unwrap(),
     }
@@ -591,8 +593,8 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
     assert_eq!(before.unpublished_draft_count, 1);
 
     // Give every acquisition outcome a real repository with a committed
-    // baseline, an unstaged tracked edit, and an untracked file. Capture the
-    // raw index too, while avoiding a staged modification in this fixture.
+    // baseline, a staged version, a later unstaged tracked edit, and an
+    // untracked file. Capture both the raw index and staged blob contents.
     let checkout = root.join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
     assert!(
@@ -632,6 +634,15 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
             .output()
             .unwrap()
             .status
+            .success()
+    );
+    std::fs::write(checkout.join("tracked.txt"), b"staged tracked\n").unwrap();
+    assert!(
+        Command::new("git")
+            .args(["add", "tracked.txt"])
+            .current_dir(&checkout)
+            .status()
+            .unwrap()
             .success()
     );
     std::fs::write(checkout.join("tracked.txt"), b"dirty tracked\n").unwrap();
