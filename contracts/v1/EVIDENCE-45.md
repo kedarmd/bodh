@@ -36,12 +36,12 @@ The first desktop validation rerun failed in the existing `gh_prerequisite::test
 
 ## Checkout and index integrity
 
-The `failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected` fixture now uses a real Git checkout with a committed HEAD, a symbolic `main` branch, an unstaged tracked-file edit, and an untracked file. It captures and compares the raw `.git/index` bytes, HEAD, symbolic ref, tracked file bytes, and untracked file bytes across missing-CLI acquisition failure, controlled HTTP 403 during candidate acquisition, freshness permission denial, and pre-cancelled candidate acquisition. The raw index is verified unchanged, but this fixture does not contain a staged modification. The focused regression passed:
+The `failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected` fixture now uses a real Git checkout with a committed HEAD, a symbolic `main` branch, a staged version of a tracked file, a subsequent unstaged edit to that file, and an untracked file. It captures and compares the raw `.git/index` bytes, the staged blob content (`git show :tracked.txt`), HEAD, symbolic ref, tracked working-file bytes, and untracked file bytes across missing-CLI acquisition failure, controlled HTTP 403 during candidate acquisition, freshness permission denial, and pre-cancelled candidate acquisition. The focused regression passed:
 
 ```sh
 CARGO_BUILD_JOBS=2 cargo test --locked --test freshness failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected -- --exact
 ```
 
-Result: 1 passed, 0 failed. This establishes checkout/index preservation for those acquisition/service outcomes. It does not establish CLI old/new view consistency or native UI behavior.
+Result: 1 passed, 0 failed. This establishes checkout/index and staged-blob preservation for those acquisition/service outcomes. It does not establish CLI old/new view consistency or native UI behavior.
 
-The complete `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/home/kedarmd/dev/bodh/target ./scripts/validate desktop` runner passed after this addition. Its full output is preserved in [`VALIDATE-45-checkout-snapshot.log`](VALIDATE-45-checkout-snapshot.log).
+The complete `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/home/kedarmd/dev/bodh/target ./scripts/validate desktop` runner passed after this addition. Its full output is preserved in [`VALIDATE-45-staged.log`](VALIDATE-45-staged.log). The first isolated-target build exhausted `/tmp`; generated target artifacts were removed and validation was rerun successfully using the shared `/home` target. No source files or user data were removed.
