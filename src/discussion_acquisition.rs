@@ -548,6 +548,8 @@ fn gh_rest_comments(
         "api".to_owned(),
         "--hostname".to_owned(),
         scope.host.to_owned(),
+        "--method".to_owned(),
+        "GET".to_owned(),
         endpoint,
         "-F".to_owned(),
         format!("per_page={PAGE_SIZE}"),
