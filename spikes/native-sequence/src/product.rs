@@ -4,10 +4,10 @@ use super::diagram_adapter::{AdaptedDiagram, ChangedLines, adapt_diagram};
 use bodh::{
     AnchorRepairPreview, AnchorRepairStatus, CodeReplacementSnapshot, DiscussionPlan,
     DiscussionPublicationStore, DiscussionSelection, DraftSnapshot, DraftStore,
-    GeneratedReviewStore, GhDiscussionPublisher, GhReviewPublisher, OperationControl, PinnedDiff,
-    PreparationManifest, PreparationStore, PreparedBinding, ReviewEvent, ReviewIntent,
-    ReviewOperation, ReviewPublicationStore, Revision, SelectedDraft, SourceRef,
-    StageReviewRequest, inspect_remote_review_with_gh, read_diff,
+    GeneratedReviewStore, GhDiscussionPublisher, GhReviewOutcomeReader, GhReviewPublisher,
+    OperationControl, PinnedDiff, PreparationManifest, PreparationStore, PreparedBinding,
+    ReviewEvent, ReviewIntent, ReviewOperation, ReviewPublicationStore, Revision, SelectedDraft,
+    SourceRef, StageReviewRequest, inspect_remote_review_with_gh, read_diff,
 };
 use bodh_sequence_spike::gh_prerequisite::{GhCliStatus, probe_gh_cli, resolve_repository_path};
 use bodh_sequence_spike::overview::{
@@ -193,6 +193,8 @@ pub struct Product {
     review_summary: String,
     review_plan: Option<ReviewOperation>,
     discussion_plan: Option<DiscussionPlan>,
+    review_history: Vec<ReviewOperation>,
+    discussion_history: Vec<DiscussionPlan>,
     review_loading: bool,
     review_summary_focus: FocusHandle,
     freshness_observation: Option<bodh::FreshnessObservation>,
@@ -246,6 +248,13 @@ pub struct Product {
 }
 
 impl Product {
+    fn clear_publication_views(&mut self) {
+        self.review_plan = None;
+        self.discussion_plan = None;
+        self.review_history.clear();
+        self.discussion_history.clear();
+    }
+
     pub fn new(
         prefs_path: PathBuf,
         preparation_db: PathBuf,
@@ -322,6 +331,8 @@ impl Product {
             review_summary: String::new(),
             review_plan: None,
             discussion_plan: None,
+            review_history: Vec::new(),
+            discussion_history: Vec::new(),
             review_loading: false,
             review_summary_focus: cx.focus_handle(),
             freshness_observation: None,
@@ -616,6 +627,7 @@ impl Product {
                     Ok((manifest, binding, blocks, drafts, replacements)) => {
                         this.remember(&manifest, &binding, cx);
                         this.selected_review = Some(binding);
+                        this.clear_publication_views();
                         this.refresh_committed_overview(cx);
                         this.refresh_anchor_repair_previews(cx);
                         this.description_blocks = blocks;
@@ -1335,6 +1347,7 @@ impl Product {
                         this.reply_body.clear();
                         this.reply_saving = false;
                         this.selected_review = Some(binding.clone());
+                        this.clear_publication_views();
                         this.refresh_committed_overview(cx);
                         this.refresh_anchor_repair_previews(cx);
                         this.update_draft_counts(drafts.counts);
@@ -2300,13 +2313,29 @@ impl Product {
             let mut discussions = DiscussionPublicationStore::open(&self.preparation_db)?;
             discussions.recover_interrupted(&binding.preparation_id)?;
             let intent = store.intent(&binding.preparation_id)?;
-            let pending = store.pending_operation(&binding.preparation_id)?;
+            let review_history = store.operation_history(&binding.preparation_id)?;
+            let pending = review_history
+                .iter()
+                .rev()
+                .find(|operation| {
+                    matches!(operation.state.as_str(), "planned" | "sending" | "unknown")
+                })
+                .cloned();
             let discussion = discussions.latest_plan(&binding.preparation_id)?;
-            Ok::<_, bodh::ContractError>((intent, pending, discussion))
+            let discussion_history = discussions.plan_history(&binding.preparation_id)?;
+            Ok::<_, bodh::ContractError>((
+                intent,
+                pending,
+                discussion,
+                review_history,
+                discussion_history,
+            ))
         }) {
-            Ok((mut intent, pending, discussion)) => {
+            Ok((mut intent, pending, discussion, review_history, discussion_history)) => {
                 self.review_plan = pending.clone();
                 self.discussion_plan = discussion.clone();
+                self.review_history = review_history;
+                self.discussion_history = discussion_history;
                 self.review_summary = intent.summary.clone().unwrap_or_default();
                 let mut stale_selection = false;
                 let can_refresh = pending.is_none()
@@ -2835,6 +2864,161 @@ impl Product {
         }).detach();
     }
 
+    fn reconcile_review_operation(&mut self, operation_id: &str, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if self.review_loading {
+            return;
+        }
+        let operation_id = operation_id.to_owned();
+        self.review_loading = true;
+        self.error = None;
+        self.status = Some("Checking GitHub for the exact review outcome (read only)…".into());
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(45));
+        self.active_control = Some(control.clone());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let reader = GhReviewOutcomeReader {
+                        executable: PathBuf::from("gh"),
+                        checkout: PathBuf::from(&binding.checkout),
+                        timeout: Duration::from_secs(35),
+                    };
+                    let mut store = ReviewPublicationStore::open(&state)?;
+                    let operation = store.reconcile_unknown(&operation_id, &reader, &control)?;
+                    let history = store.operation_history(&binding.preparation_id)?;
+                    let snapshots = if operation.state == "confirmed" {
+                        Some((
+                            DraftStore::open(&state)?.list(&binding.preparation_id)?,
+                            DraftStore::open(&state)?.list_replacements(&binding.preparation_id)?,
+                        ))
+                    } else {
+                        None
+                    };
+                    Ok::<_, bodh::ContractError>((operation, history, snapshots))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.review_loading = false;
+                this.active_control = None;
+                match result {
+                    Ok((operation, history, snapshots)) => {
+                        if this
+                            .review_plan
+                            .as_ref()
+                            .is_some_and(|current| current.id == operation.id)
+                        {
+                            this.review_plan = Some(operation.clone());
+                        }
+                        this.review_history = history;
+                        if let Some((drafts, replacements)) = snapshots {
+                            this.update_draft_counts(drafts.counts.clone());
+                            this.draft_snapshot = Some(drafts);
+                            this.replacement_snapshot = Some(replacements);
+                        }
+                        this.status = Some(if operation.state == "confirmed" {
+                            "GitHub confirmed one exact matching review. The saved plan is now recorded as confirmed.".into()
+                        } else {
+                            "GitHub did not provide one defensible exact match. The outcome remains unknown and cannot be resent.".into()
+                        });
+                        this.error = None;
+                    }
+                    Err(error) => {
+                        this.error = Some(format!(
+                            "{}: {}. The operation remains unchanged and cannot be resent.",
+                            error.code, error.message
+                        ));
+                        this.status = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn reconcile_discussion_plan(&mut self, plan_id: &str, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if self.review_loading {
+            return;
+        }
+        let plan_id = plan_id.to_owned();
+        self.review_loading = true;
+        self.error = None;
+        self.status =
+            Some("Checking the selected threads for the exact reply outcome (read only)…".into());
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(45));
+        self.active_control = Some(control.clone());
+        cx.spawn(async move |weak, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let publisher = GhDiscussionPublisher {
+                        executable: PathBuf::from("gh"),
+                        state: state.clone(),
+                    };
+                    let mut store = DiscussionPublicationStore::open(&state)?;
+                    let plan =
+                        store.reconcile_unknown(&plan_id, &publisher, &control)?;
+                    let history = store.plan_history(&binding.preparation_id)?;
+                    let drafts = DraftStore::open(&state)?.list(&binding.preparation_id)?;
+                    Ok::<_, bodh::ContractError>((plan, history, drafts))
+                })
+                .await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.review_loading = false;
+                this.active_control = None;
+                match result {
+                    Ok((plan, history, drafts)) => {
+                        if this
+                            .discussion_plan
+                            .as_ref()
+                            .is_some_and(|current| current.id == plan.id)
+                        {
+                            this.discussion_plan = Some(plan.clone());
+                        }
+                        this.discussion_history = history;
+                        this.update_draft_counts(drafts.counts.clone());
+                        this.draft_snapshot = Some(drafts);
+                        this.status = Some(if plan
+                            .steps
+                            .iter()
+                            .any(|step| step.state == "confirmed")
+                        {
+                            "Read-only thread checks confirmed one or more exact replies. Already-achieved thread actions remain unattributed.".into()
+                        } else {
+                            "The thread evidence did not establish one exact outcome. Unknown operations remain blocked from resending.".into()
+                        });
+                        this.error = None;
+                    }
+                    Err(error) => {
+                        this.error = Some(format!(
+                            "{}: {}. Unknown operations remain unchanged and cannot be resent.",
+                            error.code, error.message
+                        ));
+                        this.status = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn refresh_anchor_repair_previews(&mut self, cx: &mut Context<Self>) {
         let Some(candidate) = self.selected_review.clone() else {
             self.anchor_repair_source_id = None;
@@ -3184,7 +3368,7 @@ impl Product {
                         this.discussion_state = serde_json::json!({"available":false,"threads":[]});
                         this.discussion_loaded_for = None;
                         this.discussion_expanded = false;
-                        this.selected_review = Some(binding.clone()); this.remember(&PreparationManifest::from(binding.clone()), &binding, cx);
+                        this.selected_review = Some(binding.clone()); this.clear_publication_views(); this.remember(&PreparationManifest::from(binding.clone()), &binding, cx);
                         this.refresh_committed_overview(cx);
                         this.refresh_anchor_repair_previews(cx);
                         this.freshness_observation = Some(freshness); this.latest_switch_preview = None;
@@ -4180,7 +4364,12 @@ impl Product {
                         .child(
                             div()
                                 .font_weight(FontWeight::BOLD)
-                                .child(format!("{} · {}", description, step.state)),
+                                .child(format!(
+                                    "{} · {}",
+                                    description,
+                                    publication_state_label(&step.state)
+                                ))
+                                .text_color(rgb(publication_state_color(&step.state, p))),
                         )
                         .child(
                             div()
@@ -4197,6 +4386,24 @@ impl Product {
                                 .clone()
                                 .or_else(|| step.failure.clone())
                                 .unwrap_or_default(),
+                        )
+                        .children(
+                            confirmed_discussion_url(
+                                &binding.context.pr.host,
+                                &binding.context.pr.owner,
+                                &binding.context.pr.repository,
+                                binding.context.pr.number,
+                                step,
+                            )
+                            .map(|url| {
+                                button(
+                                    &format!("open-discussion-{}-{}", plan.id, step.id),
+                                    "Open confirmed discussion in GitHub",
+                                    p,
+                                    move |_, _, _, cx| cx.open_url(&url),
+                                    cx,
+                                )
+                            }),
                         ),
                 );
             }
@@ -4217,13 +4424,23 @@ impl Product {
             } else if plan.state == "unknown" {
                 page = page.child(empty_card(
                     "Discussion outcome uncertain",
-                    "Do not resend. Inspect the remote thread before continuing.",
+                    "Do not resend. Check the remote thread using read-only evidence; an ambiguous result stays unknown.",
                     p,
                 ));
+                if !self.review_loading {
+                    let plan_id = plan.id.clone();
+                    page = page.child(button(
+                        &format!("reconcile-discussion-{}", plan.id),
+                        "Check remote discussion outcome",
+                        p,
+                        move |this, _, _, cx| this.reconcile_discussion_plan(&plan_id, cx),
+                        cx,
+                    ));
+                }
             }
         }
         if let Some(plan) = self.review_plan.clone() {
-            page = page.child(section_title("Exact confirmed plan", p));
+            page = page.child(section_title("Saved grouped review operation", p));
             page = page.child(empty_card(
                 &format!(
                     "{} · {} inline comment(s) · {} code suggestion(s)",
@@ -4237,6 +4454,12 @@ impl Product {
                 ),
                 p,
             ));
+            page = page.child(
+                div()
+                    .text_color(rgb(publication_state_color(&plan.state, p)))
+                    .font_weight(FontWeight::BOLD)
+                    .child(publication_state_label(&plan.state).to_owned()),
+            );
             for comment in &plan.payload.comments {
                 page = page.child(
                     div()
@@ -4295,19 +4518,52 @@ impl Product {
                     cx,
                 ));
             } else if plan.state == "unknown" {
-                page=page.child(empty_card("Outcome uncertain","Do not resend this operation. Inspect the PR for the exact review before taking further action.",p));
+                page=page.child(empty_card("Outcome uncertain","Do not resend this operation. Check for one exact matching review using read-only evidence.",p));
+                if !self.review_loading {
+                    let operation_id = plan.id.clone();
+                    page = page.child(button(
+                        &format!("reconcile-review-{}", plan.id),
+                        "Check remote review outcome",
+                        p,
+                        move |this, _, _, cx| this.reconcile_review_operation(&operation_id, cx),
+                        cx,
+                    ));
+                }
             } else {
                 page = page.child(
                     div()
-                        .text_color(rgb(p.muted))
-                        .child(format!("Operation state: {}", plan.state)),
+                        .text_color(rgb(publication_state_color(&plan.state, p)))
+                        .child(format!(
+                            "Operation state: {}",
+                            publication_state_label(&plan.state)
+                        )),
                 );
             }
+            if plan.state == "confirmed"
+                && let Some(url) =
+                    trusted_remote_url(&binding.context.pr.host, plan.remote_url.as_deref())
+            {
+                page = page.child(button(
+                    &format!("open-review-{}", plan.id),
+                    "Open confirmed review in GitHub",
+                    p,
+                    move |_, _, _, cx| cx.open_url(&url),
+                    cx,
+                ));
+            }
         } else {
+            let summary_already_confirmed = self.review_history.iter().any(|operation| {
+                operation.state == "confirmed"
+                    && operation.payload.comments.is_empty()
+                    && operation.payload.suggestions.is_empty()
+                    && operation.payload.event == event.unwrap_or(ReviewEvent::Comment)
+                    && operation.payload.summary.as_deref() == Some(self.review_summary.as_str())
+                    && !self.review_summary.trim().is_empty()
+            });
             let can_confirm = intent.as_ref().is_some_and(|i| {
                 let has_review = !i.selected.is_empty()
                     || !i.selected_replacements.is_empty()
-                    || !self.review_summary.trim().is_empty();
+                    || (!self.review_summary.trim().is_empty() && !summary_already_confirmed);
                 let has_discussion =
                     !i.selected_replies.is_empty() || !i.selected_thread_actions.is_empty();
                 (has_review || has_discussion) && (!has_review || i.event.is_some())
@@ -4321,10 +4577,148 @@ impl Product {
                     cx,
                 ));
             } else {
-                page = page.child(empty_card(
-                    "Select operations to publish",
-                    "A grouped review needs an explicit event. Replies and thread actions can be confirmed on their own.",
+                page = page.child(if summary_already_confirmed {
+                    empty_card(
+                        "This review was already confirmed",
+                        "Confirmed feedback is kept in the history below and cannot be sent again unchanged.",
+                        p,
+                    )
+                } else {
+                    empty_card(
+                        "Select operations to publish",
+                        "A grouped review needs an explicit event. Replies and thread actions can be confirmed on their own.",
+                        p,
+                    )
+                });
+            }
+        }
+        let current_review_id = self
+            .review_plan
+            .as_ref()
+            .map(|operation| operation.id.as_str());
+        let prior_reviews = self
+            .review_history
+            .iter()
+            .filter(|operation| Some(operation.id.as_str()) != current_review_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let current_discussion_id = self.discussion_plan.as_ref().map(|plan| plan.id.as_str());
+        let prior_discussions = self
+            .discussion_history
+            .iter()
+            .filter(|plan| Some(plan.id.as_str()) != current_discussion_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !prior_reviews.is_empty() || !prior_discussions.is_empty() {
+            page = page.child(section_title("Earlier publication outcomes", p));
+        }
+        for operation in prior_reviews {
+            let mut row = div()
+                .p_3()
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.panel))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(publication_state_color(&operation.state, p)))
+                        .child(publication_state_label(&operation.state).to_owned()),
+                )
+                .child(format!(
+                    "{} · {} inline comment(s) · {} code suggestion(s) · {}",
+                    format!("{:?}", operation.payload.event).to_ascii_uppercase(),
+                    operation.payload.comments.len(),
+                    operation.payload.suggestions.len(),
+                    operation.payload.summary.as_deref().unwrap_or("No summary")
+                ));
+            if let Some(failure) = operation.failure.as_deref() {
+                row = row.child(div().text_color(rgb(p.muted)).child(failure.to_owned()));
+            }
+            page = page.child(row);
+            if operation.state == "unknown" && !self.review_loading {
+                let operation_id = operation.id.clone();
+                page = page.child(button(
+                    &format!("reconcile-history-review-{}", operation.id),
+                    "Check remote review outcome",
                     p,
+                    move |this, _, _, cx| this.reconcile_review_operation(&operation_id, cx),
+                    cx,
+                ));
+            }
+            if operation.state == "confirmed"
+                && let Some(url) =
+                    trusted_remote_url(&binding.context.pr.host, operation.remote_url.as_deref())
+            {
+                page = page.child(button(
+                    &format!("open-history-review-{}", operation.id),
+                    "Open confirmed review in GitHub",
+                    p,
+                    move |_, _, _, cx| cx.open_url(&url),
+                    cx,
+                ));
+            }
+        }
+        for plan in prior_discussions {
+            let mut row = div()
+                .p_3()
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.panel))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(rgb(publication_state_color(&plan.state, p)))
+                        .child(format!(
+                            "Discussion plan · {}",
+                            publication_state_label(&plan.state)
+                        )),
+                );
+            for step in &plan.steps {
+                row = row.child(
+                    div()
+                        .text_color(rgb(publication_state_color(&step.state, p)))
+                        .child(format!(
+                            "{} · {} · {}",
+                            if step.kind == "reply" {
+                                "Reply"
+                            } else {
+                                "Thread action"
+                            },
+                            publication_state_label(&step.state),
+                            step.failure.as_deref().unwrap_or(&step.thread_id)
+                        )),
+                );
+                if let Some(url) = confirmed_discussion_url(
+                    &binding.context.pr.host,
+                    &binding.context.pr.owner,
+                    &binding.context.pr.repository,
+                    binding.context.pr.number,
+                    step,
+                ) {
+                    row = row.child(button(
+                        &format!("open-history-discussion-{}-{}", plan.id, step.id),
+                        "Open confirmed discussion in GitHub",
+                        p,
+                        move |_, _, _, cx| cx.open_url(&url),
+                        cx,
+                    ));
+                }
+            }
+            page = page.child(row);
+            if plan.state == "unknown" && !self.review_loading {
+                let plan_id = plan.id.clone();
+                page = page.child(button(
+                    &format!("reconcile-history-discussion-{}", plan.id),
+                    "Check remote discussion outcome",
+                    p,
+                    move |this, _, _, cx| this.reconcile_discussion_plan(&plan_id, cx),
+                    cx,
                 ));
             }
         }
@@ -8462,6 +8856,58 @@ fn button(
         .child(label.to_owned())
         .on_click(cx.listener(action))
 }
+
+fn publication_state_label(state: &str) -> &str {
+    match state {
+        "confirmed" => "Confirmed",
+        "failed" => "Failed",
+        "unknown" => "Unknown · do not resend",
+        "sending" => "Sending · awaiting response",
+        "planned" => "Planned · not sent",
+        "unsent" => "Unsent · not sent",
+        "already_achieved" => "Already achieved · author unknown",
+        other => other,
+    }
+}
+
+fn publication_state_color(state: &str, p: Palette) -> u32 {
+    match state {
+        "confirmed" => p.success,
+        "failed" => p.danger,
+        "unknown" | "sending" | "already_achieved" => p.caution,
+        "planned" => p.accent,
+        _ => p.muted,
+    }
+}
+
+fn trusted_remote_url(host: &str, url: Option<&str>) -> Option<String> {
+    let prefix = format!("https://{host}/");
+    url.filter(|url| url.starts_with(&prefix))
+        .map(str::to_owned)
+}
+
+fn confirmed_discussion_url(
+    host: &str,
+    owner: &str,
+    repository: &str,
+    number: u64,
+    step: &bodh::DiscussionStep,
+) -> Option<String> {
+    if step.state != "confirmed" {
+        return None;
+    }
+    let comment_id = if step.kind == "reply" {
+        step.remote_id.as_deref()
+    } else {
+        step.root_comment_id.as_deref()
+    }?;
+    if !comment_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let url = format!("https://{host}/{owner}/{repository}/pull/{number}#discussion_r{comment_id}");
+    trusted_remote_url(host, Some(&url))
+}
+
 fn section_title(label: &str, p: Palette) -> Div {
     div()
         .text_size(px(15.))
@@ -8486,6 +8932,73 @@ fn empty_card(title: &str, description: &str, p: Palette) -> Div {
                 .text_color(rgb(p.muted))
                 .child(description.to_owned()),
         )
+}
+
+#[cfg(test)]
+mod publication_recovery_ui_tests {
+    use super::{
+        Palette, confirmed_discussion_url, publication_state_color, publication_state_label,
+        trusted_remote_url,
+    };
+
+    #[test]
+    fn recovery_states_keep_unknown_and_already_achieved_distinct() {
+        assert_eq!(publication_state_label("confirmed"), "Confirmed");
+        assert_eq!(publication_state_label("failed"), "Failed");
+        assert_eq!(
+            publication_state_label("unknown"),
+            "Unknown · do not resend"
+        );
+        assert_eq!(publication_state_label("unsent"), "Unsent · not sent");
+        assert_eq!(
+            publication_state_label("already_achieved"),
+            "Already achieved · author unknown"
+        );
+        let p = Palette::new(true);
+        assert_eq!(publication_state_color("confirmed", p), p.success);
+        assert_eq!(publication_state_color("failed", p), p.danger);
+        assert_eq!(publication_state_color("unknown", p), p.caution);
+        assert_eq!(publication_state_color("unsent", p), p.muted);
+    }
+
+    #[test]
+    fn only_confirmed_remote_objects_get_trusted_github_links() {
+        assert_eq!(
+            trusted_remote_url(
+                "github.com",
+                Some("https://github.com/acme/widget/pull/17#pullrequestreview-4")
+            ),
+            Some("https://github.com/acme/widget/pull/17#pullrequestreview-4".into())
+        );
+        assert!(trusted_remote_url("github.com", Some("http://github.com/a/b")).is_none());
+        assert!(trusted_remote_url("github.com", Some("https://github.com.evil/a/b")).is_none());
+
+        let mut step = bodh::DiscussionStep {
+            id: "step-1".into(),
+            ordinal: 0,
+            kind: "reply".into(),
+            draft_id: "draft-1".into(),
+            draft_revision: 1,
+            thread_id: "thread-1".into(),
+            root_comment_id: Some("123".into()),
+            body: Some("Reply".into()),
+            action: None,
+            observed_resolved: None,
+            state: "confirmed".into(),
+            remote_id: Some("456".into()),
+            failure: None,
+            attempt_started_at: Some(1),
+        };
+        assert_eq!(
+            confirmed_discussion_url("github.com", "acme", "widget", 17, &step),
+            Some("https://github.com/acme/widget/pull/17#discussion_r456".into())
+        );
+        step.state = "already_achieved".into();
+        assert!(confirmed_discussion_url("github.com", "acme", "widget", 17, &step).is_none());
+        step.state = "confirmed".into();
+        step.remote_id = Some("thread_node_id".into());
+        assert!(confirmed_discussion_url("github.com", "acme", "widget", 17, &step).is_none());
+    }
 }
 
 fn state_paths() -> (PathBuf, PathBuf) {

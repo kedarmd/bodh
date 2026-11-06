@@ -789,6 +789,30 @@ impl ReviewPublicationStore {
         id.map(|id| self.operation(&id)).transpose()
     }
 
+    /// Returns the complete local publication history for one preparation,
+    /// oldest first. This is a read-only view for recovery surfaces; it never
+    /// changes operation state or makes a failed/unknown operation retryable.
+    pub fn operation_history(
+        &self,
+        preparation_id: &str,
+    ) -> Result<Vec<ReviewOperation>, ContractError> {
+        let mut statement = self
+            .db
+            .prepare(
+                "SELECT operation_id FROM review_operations
+                 WHERE preparation_id=?1 ORDER BY created_at ASC,operation_id ASC",
+            )
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map([preparation_id], |row| row.get::<_, String>(0))
+            .map_err(db_error)?;
+        let mut operations = Vec::new();
+        for row in rows {
+            operations.push(self.operation(&row.map_err(db_error)?)?);
+        }
+        Ok(operations)
+    }
+
     /// A process restart turns a persisted `sending` operation into `unknown`.
     pub fn recover_interrupted(
         &mut self,

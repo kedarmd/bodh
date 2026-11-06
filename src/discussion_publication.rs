@@ -777,6 +777,27 @@ impl DiscussionPublicationStore {
         id.map(|id| self.plan(&id)).transpose()
     }
 
+    /// Returns every saved discussion publication plan for one preparation,
+    /// oldest first. Reopening this history is read-only and does not make any
+    /// failed, unknown, or unsent step eligible for another send.
+    pub fn plan_history(&self, preparation_id: &str) -> Result<Vec<DiscussionPlan>, ContractError> {
+        let mut statement = self
+            .db
+            .prepare(
+                "SELECT plan_id FROM discussion_publication_plans
+                 WHERE preparation_id=?1 ORDER BY created_at ASC,plan_id ASC",
+            )
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map([preparation_id], |row| row.get::<_, String>(0))
+            .map_err(db_error)?;
+        let mut plans = Vec::new();
+        for row in rows {
+            plans.push(self.plan(&row.map_err(db_error)?)?);
+        }
+        Ok(plans)
+    }
+
     /// Runs all independently safe operations. If a dependent grouped review
     /// has not been confirmed, discussion steps remain explicitly unsent.
     pub fn publish(
