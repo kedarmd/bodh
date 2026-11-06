@@ -664,7 +664,7 @@ impl ReviewPublicationStore {
             .pointer("/repository/nameWithOwner")
             .and_then(Value::as_str)
             != Some(expected_repo.as_str())
-            || pr.get("number").and_then(Value::as_u64) != Some(binding.context.pr.number as u64)
+            || pr.get("number").and_then(Value::as_u64) != Some(binding.context.pr.number)
         {
             return self.store_reconciliation_unknown(operation_id, "GitHub evidence does not match this repository and pull request; outcome remains unknown");
         }
@@ -1012,7 +1012,9 @@ fn reconciliation_unavailable(message: &str) -> ContractError {
     ContractError::new("REVIEW_RECONCILIATION_UNAVAILABLE", &bound(message), "")
 }
 
-fn expected_review_comments(payload: &ReviewPayload) -> Vec<(String, i64, i64, String, String)> {
+type ReviewCommentFingerprint = (String, i64, i64, String, String);
+
+fn expected_review_comments(payload: &ReviewPayload) -> Vec<ReviewCommentFingerprint> {
     let mut expected: Vec<_> = payload
         .comments
         .iter()
@@ -1051,7 +1053,7 @@ fn expected_review_comments(payload: &ReviewPayload) -> Vec<(String, i64, i64, S
 fn remote_review_comments(
     threads: &[Value],
     review_id: &str,
-) -> Option<Vec<(String, i64, i64, String, String)>> {
+) -> Option<Vec<ReviewCommentFingerprint>> {
     let mut comments = Vec::new();
     for thread in threads {
         let path = thread.get("path")?.as_str()?.to_owned();
@@ -1059,8 +1061,7 @@ fn remote_review_comments(
         let start = thread
             .get("startLine")
             .filter(|v| !v.is_null())
-            .map(Value::as_i64)
-            .flatten()
+            .and_then(Value::as_i64)
             .unwrap_or(line);
         let side = thread.get("diffSide")?.as_str()?.to_owned();
         let values = thread.pointer("/comments/nodes")?.as_array()?;

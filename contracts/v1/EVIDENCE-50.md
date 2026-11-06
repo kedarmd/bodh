@@ -13,8 +13,8 @@
 - `cargo fmt --manifest-path Cargo.toml`
 - `cargo fmt --manifest-path spikes/native-sequence/Cargo.toml`
 - `git diff --check`
+- `CARGO_BUILD_JOBS=2 cargo test --locked --test publication_history` — 2 passed, including reopening persisted failed review and discussion records with their payload/state.
 - `CARGO_BUILD_JOBS=2 cargo test --locked --manifest-path spikes/native-sequence/Cargo.toml --bin bodh-sequence-spike publication_recovery_ui_tests` — 2 passed.
-- A focused public history API test was added in `tests/publication_history.rs`; its run is pending.
 
 ## Not verified
 
