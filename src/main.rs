@@ -395,9 +395,24 @@ fn draft_command(args: &[String]) -> Result<Value, ContractError> {
             let prepared = o.get("--prepared").ok_or_else(arguments)?;
             let state = o.get("--state").ok_or_else(arguments)?;
             let snapshot = bodh::DraftStore::open(std::path::Path::new(state))?.list(prepared)?;
-            serde_json::to_value(snapshot).map_err(|_| {
+            let mut value = serde_json::to_value(snapshot).map_err(|_| {
                 ContractError::new("SERIALIZATION_ERROR", "Cannot encode draft state", "")
-            })
+            })?;
+            let finding_triage =
+                bodh::FindingTriageStore::open(std::path::Path::new(state))?.list(prepared)?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "finding_triage".into(),
+                    serde_json::to_value(finding_triage).map_err(|_| {
+                        ContractError::new(
+                            "SERIALIZATION_ERROR",
+                            "Cannot encode finding triage draft state",
+                            "",
+                        )
+                    })?,
+                );
+            }
+            Ok(value)
         }
         Some("replacement-list") => {
             let o = options(&args[1..], &["--prepared", "--state"])?;
