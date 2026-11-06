@@ -29,3 +29,10 @@ The first Spec review found that link-style actions, changed-file rows and selec
 ## Workspace-root focus handoff — 2026-11-06
 
 The Home recent-review, repository Open Review button, and repository keyboard-Enter paths now focus the product root before the asynchronous transition replaces the initiating control. The GPUI test checks traversal can resume after focus returns to the root. A fresh release GUI build then opened saved PR #103, showed a visible Tab focus ring on Back, traversed the Changes tab, a changed-file row and a unified-diff row, and loaded pinned source after Enter on the diff row. Target-only captures: [workspace Back focus](../../spikes/native-sequence/evidence/issue-16-focus-review-root-2026-11-06.png), [changed-file focus](../../spikes/native-sequence/evidence/issue-16-focus-changed-file-row-2026-11-06.png), and [diff-row focus](../../spikes/native-sequence/evidence/issue-16-focus-diff-row-2026-11-06.png). No publication/comment action was activated. The exact GUI runner output is [VALIDATE-16-FOCUS-ROOT-GUI.log](VALIDATE-16-FOCUS-ROOT-GUI.log); it ends with status 143 because the GUI was intentionally stopped after inspection.
+
+### Follow-up: Home-to-repository keyboard focus — 2026-11-07
+
+- A focused GPUI route test reproduced the focus loss when the Home repository row opens the PR browser. Before the fix, the test failed because after activation and asynchronous PR-list completion, four Tab presses did not focus PR search.
+- The repository-row callback now focuses the product root before replacing the Home screen. The exact regression test passed five consecutive runs; after applying the same handoff to typed-path Enter and the **Open Repository** button, the full native test suite also passed.
+- Full `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passed with the change in the dirty working tree. Raw output: [VALIDATE-16-FOCUS-NAVIGATION.log](VALIDATE-16-FOCUS-NAVIGATION.log).
+- This verifies the Home-to-PR-browser tab sequence in GPUI. It does not establish a physical native GUI interaction for this exact transition or the remaining app-wide focus/theme/resize criteria.

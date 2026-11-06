@@ -3974,7 +3974,10 @@ impl Product {
                     &format!("repo-{label}"),
                     &label,
                     p,
-                    move |this, _, _, cx| this.open_repository(open_path.clone(), cx),
+                    move |this, _, window, cx| {
+                        window.focus(&this.focus);
+                        this.open_repository(open_path.clone(), cx);
+                    },
                     cx,
                 ));
             }
@@ -3999,12 +4002,13 @@ impl Product {
                         } else {
                             self.repository_input.clone()
                         })
-                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                             let key = event.keystroke.key.as_str();
                             if key == "backspace" {
                                 this.repository_input.pop();
                             } else if key == "enter" {
                                 let value = this.repository_input.clone();
+                                window.focus(&this.focus);
                                 this.open_repository(value, cx);
                             } else if let Some(text) =
                                 bodh_sequence_spike::repository_input::typed_text(
@@ -4034,7 +4038,10 @@ impl Product {
                     "open-repository",
                     "Open Repository",
                     p,
-                    move |this, _, _, cx| this.open_repository(this.repository_input.clone(), cx),
+                    move |this, _, window, cx| {
+                        window.focus(&this.focus);
+                        this.open_repository(this.repository_input.clone(), cx);
+                    },
                     cx,
                 )),
         );
@@ -9984,7 +9991,8 @@ mod nested_scroll_tests {
 #[cfg(test)]
 mod keyboard_focus_tests {
     use super::{
-        FocusNext, FocusPrevious, Product, Screen, bind_focus_traversal, keyboard_tab_stop,
+        FocusNext, FocusPrevious, GhCliStatus, Preferences, Product, Screen, bind_focus_traversal,
+        keyboard_tab_stop,
     };
     use bodh::{OperationControl, PreparationStore, Revision, prepare_local_pr_with_gh};
     use gpui::{
@@ -9993,6 +10001,7 @@ mod keyboard_focus_tests {
     };
     use std::{
         os::unix::fs::PermissionsExt,
+        path::PathBuf,
         process::Command,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -10163,6 +10172,72 @@ mod keyboard_focus_tests {
         window
             .update(cx, |product, _, _| {
                 assert_eq!(product.screen, Screen::Home);
+            })
+            .unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    fn opening_a_repository_keeps_tab_focus_in_the_pr_browser(cx: &mut TestAppContext) {
+        let root = std::env::temp_dir().join(format!(
+            "bodh-repository-keyboard-route-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let repo = repo.canonicalize().unwrap().to_string_lossy().into_owned();
+        let prefs_path = root.join("preferences.json");
+        Preferences {
+            repositories: vec![repo],
+            ..Default::default()
+        }
+        .save(&prefs_path)
+        .unwrap();
+        let preparation_db = root.join("preparation.sqlite");
+
+        let window = cx.update(|cx| {
+            bind_focus_traversal(cx);
+            cx.open_window(Default::default(), |window, cx| {
+                cx.new(|cx| {
+                    let mut product = Product::new(prefs_path, preparation_db, None, None, cx);
+                    // Avoid racing the asynchronous preflight against this controlled route trial.
+                    product
+                        .gh_check_epoch
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    product.gh_cli_status = GhCliStatus::Available {
+                        executable: PathBuf::from("gh"),
+                        version: "gh version test".into(),
+                    };
+                    window.focus(&product.focus);
+                    product
+                })
+            })
+            .unwrap()
+        });
+
+        cx.simulate_keystrokes(*window, "tab tab tab enter");
+        let mut visual = VisualTestContext::from_window(*window, cx);
+        visual.simulate_event(KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        });
+        cx.run_until_parked();
+
+        window
+            .update(cx, |product, _, _| {
+                assert_eq!(product.screen, Screen::Repository)
+            })
+            .unwrap();
+        cx.simulate_keystrokes(*window, "tab tab tab tab");
+        window
+            .update(cx, |product, window, _| {
+                assert!(
+                    product.search_focus.is_focused(window),
+                    "after opening a repository, Tab should traverse Back, Home, Light, then PR search"
+                );
             })
             .unwrap();
         let _ = std::fs::remove_dir_all(root);
