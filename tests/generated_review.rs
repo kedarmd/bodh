@@ -1,7 +1,9 @@
 use bodh::{
     DraftStore, FindingAlternativeEditInput, FindingDisposition, FindingTriageStore,
-    GeneratedReviewStore, OperationControl, PrIdentity, PreparationStore, ReviewContext,
-    ReviewPublicationStore, ReviewResult, Revision, SourceRef, diff_index,
+    GeneratedReviewStore, OperationControl, PrIdentity, PreparationStore, RemoteReviewState,
+    RetentionPolicy, ReviewContext, ReviewEvent, ReviewPublicationStore, ReviewPublisher,
+    ReviewResult, Revision, SendOutcome, SourceRef, StageReviewRequest, diff_index,
+    enforce_retention,
 };
 use serde_json::{Value, json};
 use std::{
@@ -11,6 +13,16 @@ use std::{
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+struct ConfirmPublication;
+impl ReviewPublisher for ConfirmPublication {
+    fn publish(&self, _payload: &bodh::ReviewPayload, _control: &OperationControl) -> SendOutcome {
+        SendOutcome::Confirmed {
+            remote_id: "controlled-review-id".into(),
+            url: None,
+        }
+    }
+}
 
 fn git(repo: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -307,6 +319,151 @@ fn replacement_keeps_only_compact_prior_concern_text_and_exact_source_metadata()
         .unwrap();
     assert_eq!(count, 1);
     assert!(!current_result.contains("Handle empty response"));
+}
+
+#[test]
+fn generated_import_follow_up_publication_restart_and_failed_prune_cycles() {
+    let fixture = Fixture::new();
+    let repo = fixture.root.join("repo");
+    let policy = RetentionPolicy {
+        per_repository_preparations: 2,
+        global_preparations: 2,
+        per_repository_bytes: 1024 * 1024,
+        global_bytes: 1024 * 1024,
+    };
+    let mut prep_ids = Vec::new();
+    for cycle in 0..3 {
+        let prior = PreparationStore::open(&fixture.state)
+            .unwrap()
+            .load(&fixture.preparation_id)
+            .unwrap();
+        let context = ReviewContext {
+            context_id: format!("generated-cycle-{cycle}"),
+            ..prior.context
+        };
+        let files = diff_index(&repo, &context, &OperationControl::default())
+            .unwrap()
+            .files;
+        let binding = PreparationStore::open(&fixture.state)
+            .unwrap()
+            .save(
+                &context,
+                repo.to_str().unwrap(),
+                "cycle",
+                Some("repeat"),
+                &files,
+            )
+            .unwrap();
+        let mut candidate: Value = serde_json::from_slice(&fixture.result()).unwrap();
+        candidate["context"] = serde_json::to_value(&binding.context).unwrap();
+        if cycle == 0 {
+            candidate["findings"] = json!([{
+                "id":"F_cycle","title":"Check the response","severity":"high","confidence":"medium",
+                "summary":"The response is not checked.","reason":"The consumer receives unchecked data.","impact":"Later failures lose context.",
+                "evidence":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"explanation":"The changed line returns the unchecked value."}],
+                "locations":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"primary":true}],"suggestions":[],"related_thread_ids":[]
+            }]);
+        } else if cycle == 1 {
+            candidate["follow_up"] = json!([{
+                "prior_concern_id":"F_cycle","status":"resolved","explanation":"The response check was added.",
+                "evidence":[{"source":{"path":"src.rs","revision":"head","start_line":1,"end_line":1},"explanation":"Current source returns a checked response."}],"finding_id":null
+            }]);
+        }
+        let commit = GeneratedReviewStore::open(&fixture.state)
+            .unwrap()
+            .commit(
+                &binding.preparation_id,
+                binding.expected_generation,
+                &serde_json::to_vec(&candidate).unwrap(),
+                &OperationControl::default(),
+            )
+            .unwrap();
+        assert_eq!(commit.generation, binding.expected_generation + 1);
+        prep_ids.push(binding.preparation_id.clone());
+
+        if cycle == 0 {
+            let mut publication = ReviewPublicationStore::open(&fixture.state).unwrap();
+            let snapshot = DraftStore::open(&fixture.state)
+                .unwrap()
+                .list(&binding.preparation_id)
+                .unwrap();
+            let intent = publication
+                .stage(StageReviewRequest {
+                    state: fixture.state.clone(),
+                    preparation_id: binding.preparation_id.clone(),
+                    expected_workspace_revision: snapshot.workspace_revision,
+                    expected_intent_revision: 0,
+                    selected: vec![],
+                    selected_replacements: vec![],
+                    selected_replies: vec![],
+                    selected_thread_actions: vec![],
+                    summary: Some("Cycle publication".into()),
+                    event: Some(ReviewEvent::Comment),
+                })
+                .unwrap();
+            let remote = RemoteReviewState {
+                pull_request_id: "PR_controlled".into(),
+                head_sha: context.head_sha.clone(),
+                base_sha: context.base_sha.clone(),
+                state: "OPEN".into(),
+                viewer_permission: "WRITE".into(),
+            };
+            let operation = publication
+                .confirm(
+                    &binding.preparation_id,
+                    &fixture.state,
+                    intent.revision,
+                    &remote,
+                    &OperationControl::default(),
+                )
+                .unwrap();
+            let sent = publication
+                .publish_confirmed(
+                    &operation.id,
+                    &remote,
+                    &ConfirmPublication,
+                    &OperationControl::default(),
+                )
+                .unwrap();
+            assert_eq!(sent.state, "confirmed");
+        }
+        drop(GeneratedReviewStore::open(&fixture.state).unwrap()); // restart/reopen after each import
+        if cycle == 2 {
+            let db = rusqlite::Connection::open(&fixture.state).unwrap();
+            db.execute_batch("CREATE TRIGGER retention_cycle_failure BEFORE DELETE ON preparations BEGIN SELECT RAISE(ABORT,'injected cycle failure'); END;").unwrap();
+            assert!(enforce_retention(&fixture.state, policy, &[]).is_err());
+            db.execute_batch("DROP TRIGGER retention_cycle_failure;")
+                .unwrap();
+            assert_eq!(
+                db.query_row("SELECT count(*) FROM preparations", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                4
+            );
+            drop(db);
+            let reopened = GeneratedReviewStore::open(&fixture.state).unwrap();
+            assert!(reopened.current(&binding.preparation_id).unwrap().is_some());
+            let report = enforce_retention(&fixture.state, policy, &[]).unwrap();
+            assert_eq!(report.preparations_after, 2);
+            assert!(report.estimated_bytes_after <= policy.global_bytes);
+            eprintln!(
+                "generated retention cycles: preparations={} bytes={} deleted_preparations={} deleted_bytes={}",
+                report.preparations_after,
+                report.estimated_bytes_after,
+                report.deleted_preparations,
+                report.deleted_bytes
+            );
+        }
+    }
+    let store = PreparationStore::open(&fixture.state).unwrap();
+    assert!(
+        store.load(&prep_ids[0]).is_ok(),
+        "publication intent remains a protected recovery floor"
+    );
+    assert!(
+        store.load(&prep_ids[2]).is_ok(),
+        "current generated result remains protected after restart"
+    );
 }
 
 #[test]

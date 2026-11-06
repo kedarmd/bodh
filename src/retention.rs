@@ -139,6 +139,7 @@ pub fn enforce_retention(
 #[derive(Clone)]
 struct Item {
     id: String,
+    preparation: bool,
     context: String,
     host: String,
     owner: String,
@@ -248,6 +249,7 @@ fn prune_in_transaction(
             let bytes = associated_bytes(db, &id, base_bytes.max(0) as u64)?;
             items.push(Item {
                 id,
+                preparation: true,
                 context,
                 host,
                 owner,
@@ -258,8 +260,75 @@ fn prune_in_transaction(
             });
         }
     }
-    let before = items.len() as u64;
-    let orphan_bytes = unassociated_bytes(db)?;
+    // Contexts without preparations are usually stale source/context cache.
+    // Give them a deterministic LRU age (rowid) and include their bytes in the
+    // same repository/global byte budgets. Any generated result or draft is a
+    // recovery/user payload and therefore pins the context until explicitly
+    // resolved by its owning workflow.
+    {
+        let sizes = sql_byte_lengths("length(c.context_json)+length(c.changed_files_json)");
+        let query = format!(
+            "SELECT c.context_id,c.context_json,c.rowid,{sizes} FROM contexts c WHERE NOT EXISTS(SELECT 1 FROM preparations p WHERE p.context_id=c.context_id)"
+        );
+        let mut stmt = db.prepare(&query).map_err(db_error)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(db_error)?;
+        for row in rows {
+            let (context, json, created, base_bytes) = row.map_err(db_error)?;
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+            let pr = value.get("pr").unwrap_or(&value);
+            let host = pr
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let owner = pr
+                .get("owner")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let repo = pr
+                .get("repository")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let generated = exists_context(db, "generated_reviews", &context)?;
+            let protected = generated
+                || exists_context(db, "manual_text_drafts", &context)?
+                || exists_context(db, "code_replacement_drafts", &context)?
+                || exists_context(db, "reply_drafts", &context)?
+                || exists_context(db, "thread_action_drafts", &context)?
+                || exists_context(db, "finding_triage_entries", &context)?
+                || exists_context(db, "finding_alternative_edits", &context)?
+                || context_has_anchor_repair(db, &context)?;
+            let bytes = orphan_context_bytes(db, &context, base_bytes.max(0) as u64)?;
+            items.push(Item {
+                id: format!("context:{context}"),
+                preparation: false,
+                context,
+                host,
+                owner,
+                repo,
+                created,
+                bytes,
+                protected,
+            });
+        }
+    }
+    let before = items.iter().filter(|i| i.preparation).count() as u64;
+    let orphan_bytes = items
+        .iter()
+        .filter(|i| !i.preparation && i.protected)
+        .map(|i| i.bytes)
+        .sum::<u64>();
     let bytes_before = items
         .iter()
         .map(|i| i.bytes)
@@ -274,24 +343,25 @@ fn prune_in_transaction(
     let mut protected_repo_bytes =
         std::collections::HashMap::<(String, String, String), u64>::new();
     let mut total_count = 0usize;
-    let mut total_bytes = orphan_bytes;
+    let mut total_bytes = 0u64;
     // Protected items are floors, even when they already exceed policy.
     for item in &items {
         if item.protected {
             keep.insert(item.id.clone());
-            total_count += 1;
+            total_count += usize::from(item.preparation);
             total_bytes += item.bytes;
             let key = (item.host.clone(), item.owner.clone(), item.repo.clone());
-            *repo_counts.entry(key.clone()).or_default() += 1;
+            *repo_counts.entry(key.clone()).or_default() += usize::from(item.preparation);
             *repo_bytes.entry(key.clone()).or_default() += item.bytes;
-            *protected_repo_counts.entry(key.clone()).or_default() += 1;
+            *protected_repo_counts.entry(key.clone()).or_default() += usize::from(item.preparation);
             *protected_repo_bytes.entry(key).or_default() += item.bytes;
         }
     }
     for item in items.iter().filter(|i| !i.protected).rev() {
         let key = (item.host.clone(), item.owner.clone(), item.repo.clone());
-        let count_ok = total_count < policy.global_preparations
-            && *repo_counts.get(&key).unwrap_or(&0) < policy.per_repository_preparations;
+        let count_ok = (!item.preparation || total_count < policy.global_preparations)
+            && (!item.preparation
+                || *repo_counts.get(&key).unwrap_or(&0) < policy.per_repository_preparations);
         let bytes_ok = total_bytes.saturating_add(item.bytes) <= policy.global_bytes
             && repo_bytes
                 .get(&key)
@@ -301,15 +371,18 @@ fn prune_in_transaction(
                 <= policy.per_repository_bytes;
         if count_ok && bytes_ok {
             keep.insert(item.id.clone());
-            total_count += 1;
+            total_count += usize::from(item.preparation);
             total_bytes += item.bytes;
-            *repo_counts.entry(key.clone()).or_default() += 1;
+            *repo_counts.entry(key.clone()).or_default() += usize::from(item.preparation);
             *repo_bytes.entry(key).or_default() += item.bytes;
         }
     }
     let mut report = RetentionReport {
         preparations_before: before,
-        preparations_after: keep.len() as u64,
+        preparations_after: items
+            .iter()
+            .filter(|i| i.preparation && keep.contains(&i.id))
+            .count() as u64,
         estimated_bytes_before: bytes_before,
         unassociated_protected_bytes: orphan_bytes,
         ..Default::default()
@@ -317,6 +390,14 @@ fn prune_in_transaction(
     let mut contexts_to_check = std::collections::HashSet::new();
     for item in &items {
         if !keep.contains(&item.id) {
+            if !item.preparation {
+                // Cache-only orphan context selected for eviction. The
+                // protected predicate above excludes drafts/results/recovery.
+                db.execute("DELETE FROM contexts WHERE context_id=?1", [&item.context])
+                    .map_err(db_error)?;
+                report.deleted_bytes = report.deleted_bytes.saturating_add(item.bytes);
+                continue;
+            }
             if table_exists(db, "review_published_drafts")? {
                 db.execute(
                     "DELETE FROM review_published_drafts WHERE preparation_id=?1",
@@ -483,12 +564,8 @@ fn sql_byte_lengths(expr: &str) -> String {
     }
     out
 }
-fn unassociated_bytes(db: &Connection) -> Result<u64, ContractError> {
-    let sizes = sql_byte_lengths("length(context_json)+length(changed_files_json)");
-    let query = format!(
-        "SELECT coalesce(sum({sizes}),0) FROM contexts c WHERE NOT EXISTS(SELECT 1 FROM preparations p WHERE p.context_id=c.context_id)"
-    );
-    let mut total: i64 = db.query_row(&query, [], |r| r.get(0)).map_err(db_error)?;
+fn orphan_context_bytes(db: &Connection, context: &str, base: u64) -> Result<u64, ContractError> {
+    let mut total = base as i64;
     for (table, expr) in [
         (
             "generated_reviews",
@@ -515,11 +592,10 @@ fn unassociated_bytes(db: &Connection) -> Result<u64, ContractError> {
     ] {
         if table_exists(db, table)? {
             let expr = sql_byte_lengths(expr);
-            let sql = format!(
-                "SELECT coalesce(sum({expr}),0) FROM {table} d WHERE NOT EXISTS(SELECT 1 FROM preparations p WHERE p.context_id=d.context_id)"
-            );
+            let sql =
+                format!("SELECT coalesce(sum({expr}),0) FROM {table} d WHERE d.context_id=?1");
             total = total.saturating_add(
-                db.query_row(&sql, [], |r| r.get::<_, i64>(0))
+                db.query_row(&sql, [context], |r| r.get::<_, i64>(0))
                     .map_err(db_error)?,
             );
         }
@@ -885,6 +961,85 @@ mod tests {
         assert_eq!(retained, vec!["active", "current", "draft"]);
         assert_eq!(report.deleted_preparations, 1);
         clear_active_preparation(&path, "test-window").unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn byte_budget_evicts_orphan_cache_but_protects_orphan_generated_and_draft_payloads() {
+        let path = temp_db();
+        let _store = PreparationStore::open(&path).unwrap();
+        drop(DraftStore::open(&path).unwrap());
+        drop(GeneratedReviewStore::open(&path).unwrap());
+        let db = Connection::open(&path).unwrap();
+        db.execute("INSERT INTO workspaces(host,owner,repository,number) VALUES('github.com','org','repo',2)", []).unwrap();
+        db.execute("INSERT INTO contexts(context_id,context_json,changed_files_json) VALUES('orphan-cache',?1,?2)", params![json!({"pr":{"host":"github.com","owner":"org","repository":"repo","number":1}}).to_string(), "source cache ".repeat(1000)]).unwrap();
+        db.execute("INSERT INTO contexts(context_id,context_json,changed_files_json) VALUES('orphan-draft',?1,'[]')", [json!({"pr":{"host":"github.com","owner":"org","repository":"repo","number":2}}).to_string()]).unwrap();
+        db.execute("INSERT INTO contexts(context_id,context_json,changed_files_json) VALUES('orphan-result',?1,'[]')", [json!({"pr":{"host":"github.com","owner":"org","repository":"repo","number":3}}).to_string()]).unwrap();
+        db.execute("INSERT INTO generated_reviews VALUES('github.com','org','repo',3,'orphan-result','{\"result\":\"keep\"}','{}','[]',1,1)", []).unwrap();
+        db.execute("INSERT INTO manual_text_drafts(draft_id,context_id,host,owner,repository,number,body,source_json,provenance_json,revision,created_at,updated_at) VALUES('orphan-draft-row','orphan-draft','github.com','org','repo',2,'keep this draft','{}','{}',1,1,1)", []).unwrap();
+        drop(db);
+
+        let report = enforce_retention(
+            &path,
+            RetentionPolicy {
+                per_repository_preparations: 10,
+                global_preparations: 10,
+                per_repository_bytes: 8,
+                global_bytes: 8,
+            },
+            &[],
+        )
+        .unwrap();
+        let db = Connection::open(&path).unwrap();
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM contexts WHERE context_id='orphan-cache'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0,
+            "stale orphan source/context cache should be evicted"
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM contexts WHERE context_id='orphan-draft'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT body FROM manual_text_drafts WHERE draft_id='orphan-draft-row'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "keep this draft"
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM generated_reviews WHERE context_id='orphan-result'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT count(*) FROM contexts WHERE context_id='orphan-result'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        assert!(report.unassociated_protected_bytes > 0);
+        assert!(report.protected_over_budget_bytes > 0);
+        assert!(report.protected_over_budget_per_repository_bytes > 0);
         let _ = std::fs::remove_file(&path);
     }
 
