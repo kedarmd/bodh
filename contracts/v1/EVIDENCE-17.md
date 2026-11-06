@@ -45,3 +45,11 @@ The user also reviewed the narrow-window pane behavior and confirmed that the di
 ### Read-only merged-review state — 2026-11-06
 
 A later read-only check confirmed that `kedarmd/kmdot#103` was merged on 2026-11-05. Bodh's open Changes workspace shows “PR is no longer open on GitHub” while retaining the previously selected `CastLauncherView.qml` diff and pinned Head source. This is a stale, now-closed review context; it was not treated as a new open-review trial, and no local draft or remote action was created. Capture: [issue-17-merged-review-context-2026-11-06.png](../../spikes/native-sequence/evidence/issue-17-merged-review-context-2026-11-06.png). The previously recorded restore-after-switch result remains scoped to the earlier session when the PR was open.
+
+### Follow-up: repository-list resume route — 2026-11-06
+
+- A native trial found that reopening a PR from the repository list labeled the row “Saved workspace” but prepared a new review instead of resuming that workspace. The resume path also replaced a saved Base source selection with the default Head side.
+- Repository-list mouse and keyboard activation now resume the newest saved workspace for that repository/PR, falling back to preparation only when none exists. Resume restores the saved source side when that side is available for the selected file and persists the restored selection and scroll state after selection initialization.
+- Added a preference lookup unit test and a GPUI integration regression test using a temporary Git repository and controlled `gh` fixture. The test verifies the original preparation ID, file selection, Base side, split diff, Changes tab, and absence of duplicate recent entries.
+- The focused integration test passed, and `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passed on the local working tree. Raw full-run output: [VALIDATE-17-RESUME-ROUTE.log](VALIDATE-17-RESUME-ROUTE.log). The subsequent isolated-state native GUI replay has not yet been run; the existing user state was not changed by this fix.
+- This addresses saved-workspace routing and source-side restoration. Per-review scroll/pane restoration across restart, long-description stress, cancelled loads, and unsupported content remain unverified; #17 and #37 remain open.

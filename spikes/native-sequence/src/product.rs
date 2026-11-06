@@ -689,6 +689,18 @@ impl Product {
         .detach();
     }
 
+    fn open_review(&mut self, path: String, number: u64, cx: &mut Context<Self>) {
+        if let Some(id) = self
+            .prefs
+            .recent_review_for_pr(&path, number)
+            .map(|review| review.preparation_id.clone())
+        {
+            self.resume(id, cx);
+        } else {
+            self.prepare(path, number, cx);
+        }
+    }
+
     fn remember(
         &mut self,
         manifest: &PreparationManifest,
@@ -1402,7 +1414,7 @@ impl Product {
                                 })
                             });
                             if let Some(index) = this.selected_file {
-                                this.select_file(index, cx);
+                                this.select_file_with_revision(index, saved.source_revision, cx);
                                 this.file_scroll
                                     .0
                                     .borrow()
@@ -1415,6 +1427,7 @@ impl Product {
                                     .set_offset(point(px(0.), px(saved.diff_scroll_y)));
                                 this.source_scroll
                                     .set_offset(point(px(0.), px(saved.source_scroll_y)));
+                                this.persist_navigation();
                             }
                         }
                     }
@@ -1427,6 +1440,15 @@ impl Product {
     }
 
     fn select_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.select_file_with_revision(index, None, cx);
+    }
+
+    fn select_file_with_revision(
+        &mut self,
+        index: usize,
+        preferred_revision: Option<Revision>,
+        cx: &mut Context<Self>,
+    ) {
         let pending_evidence = self
             .pending_overview_source
             .take()
@@ -1461,11 +1483,18 @@ impl Product {
             .base_handle
             .set_offset(point(px(0.), px(0.)));
         self.source_scroll.set_offset(point(px(0.), px(0.)));
-        let revision = if file.new_path.is_some() {
-            Revision::Head
-        } else {
-            Revision::Base
-        };
+        let revision = preferred_revision
+            .filter(|revision| match revision {
+                Revision::Head => file.new_path.is_some(),
+                Revision::Base => file.old_path.is_some(),
+            })
+            .unwrap_or_else(|| {
+                if file.new_path.is_some() {
+                    Revision::Head
+                } else {
+                    Revision::Base
+                }
+            });
         self.source_revision = revision;
         let Some(path) = (match revision {
             Revision::Head => file.new_path.clone(),
@@ -3648,7 +3677,7 @@ impl Product {
                             .or_else(|| rows.first().map(|pr| pr.number)),
                     ) {
                         window.focus(&self.focus);
-                        self.prepare(path, number, cx);
+                        self.open_review(path, number, cx);
                     }
                 }
                 _ => {}
@@ -4172,7 +4201,7 @@ impl Product {
                             move |this, _, window, cx| {
                                 this.selected_pr = Some(number);
                                 window.focus(&this.focus);
-                                this.prepare(path.clone(), number, cx);
+                                this.open_review(path.clone(), number, cx);
                             },
                             cx,
                         )),
@@ -9957,11 +9986,16 @@ mod keyboard_focus_tests {
     use super::{
         FocusNext, FocusPrevious, Product, Screen, bind_focus_traversal, keyboard_tab_stop,
     };
+    use bodh::{OperationControl, PreparationStore, Revision, prepare_local_pr_with_gh};
     use gpui::{
         AppContext, Context, FocusHandle, InteractiveElement, IntoElement, KeyUpEvent,
         ParentElement, Render, Styled, TestAppContext, VisualTestContext, Window, div,
     };
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        os::unix::fs::PermissionsExt,
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     struct FocusTraversalProbe {
         root: FocusHandle,
@@ -10129,6 +10163,149 @@ mod keyboard_focus_tests {
         window
             .update(cx, |product, _, _| {
                 assert_eq!(product.screen, Screen::Home);
+            })
+            .unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[gpui::test]
+    fn repository_pr_entry_resumes_the_saved_selection_instead_of_repreparing(
+        cx: &mut TestAppContext,
+    ) {
+        let root = std::env::temp_dir().join(format!(
+            "bodh-pr-resume-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "Fixture")
+                .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Fixture")
+                .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-b", "main"]);
+        std::fs::write(repo.join("src.txt"), "base\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+        let base = git(&["rev-parse", "HEAD"]);
+        git(&["checkout", "-b", "feature"]);
+        std::fs::write(repo.join("src.txt"), "head\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "head"]);
+        let head = git(&["rev-parse", "HEAD"]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widget.git",
+        ]);
+
+        let fake_gh = root.join("gh");
+        let response = format!(
+            r#"{{"title":"Saved review","body":"Description","base":{{"repo":{{"full_name":"acme/widget"}},"sha":"{base}"}},"head":{{"repo":{{"full_name":"acme/widget"}},"sha":"{head}"}}}}"#
+        );
+        std::fs::write(
+            &fake_gh,
+            format!("#!/bin/sh\ncat >/dev/null\nprintf '%s' '{response}'\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let state = root.join("reviews.sqlite");
+        let manifest = prepare_local_pr_with_gh(
+            &repo,
+            17,
+            None,
+            &state,
+            &OperationControl::default(),
+            &fake_gh,
+        )
+        .unwrap();
+        let binding = PreparationStore::open(&state)
+            .unwrap()
+            .load(&manifest.preparation_id)
+            .unwrap();
+        let checkout = repo.canonicalize().unwrap().to_string_lossy().into_owned();
+        let prefs_path = root.join("native-preferences.json");
+        bodh_sequence_spike::preferences::NavigationPreferences {
+            active_tab: Some(bodh_sequence_spike::preferences::WorkspaceTab::Changes),
+            recent: vec![bodh_sequence_spike::preferences::RecentReview {
+                preparation_id: binding.preparation_id.clone(),
+                repository_path: checkout.clone(),
+                title: manifest.title,
+                owner: "acme".into(),
+                repository: "widget".into(),
+                number: 17,
+                pending_work: 0,
+                selected_file: Some("src.txt".into()),
+                source_revision: Some(Revision::Base),
+                split_diff: true,
+                file_scroll_y: 0.,
+                diff_scroll_y: 0.,
+                source_scroll_y: 0.,
+                description_scroll_y: 0.,
+            }],
+            ..Default::default()
+        }
+        .save(&prefs_path)
+        .unwrap();
+
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                cx.new(|cx| {
+                    let mut product =
+                        Product::new(prefs_path.clone(), state.clone(), None, None, cx);
+                    product.screen = Screen::Repository;
+                    product.active_repository = Some(checkout.clone());
+                    window.focus(&product.focus);
+                    product
+                })
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |product, _, cx| {
+                product.open_review(checkout.clone(), 17, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |product, _, _| {
+                assert_eq!(product.screen, Screen::Workspace);
+                assert_eq!(
+                    product
+                        .selected_review
+                        .as_ref()
+                        .map(|review| review.preparation_id.as_str()),
+                    Some(manifest.preparation_id.as_str())
+                );
+                assert_eq!(product.selected_file, Some(0));
+                assert_eq!(product.source_revision, Revision::Base);
+                assert!(product.split_diff);
+                assert_eq!(
+                    product.active_tab,
+                    bodh_sequence_spike::preferences::WorkspaceTab::Changes
+                );
+                assert_eq!(product.prefs.recent.len(), 1);
             })
             .unwrap();
         let _ = std::fs::remove_dir_all(root);

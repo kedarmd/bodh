@@ -56,6 +56,20 @@ pub struct NavigationPreferences {
     pub repositories: Vec<String>,
     pub recent: Vec<RecentReview>,
 }
+
+impl NavigationPreferences {
+    /// Returns the newest saved preparation for a repository PR, if present.
+    pub fn recent_review_for_pr(
+        &self,
+        repository_path: &str,
+        number: u64,
+    ) -> Option<&RecentReview> {
+        self.recent
+            .iter()
+            .find(|review| review.repository_path == repository_path && review.number == number)
+    }
+}
+
 impl Default for NavigationPreferences {
     fn default() -> Self {
         Self {
@@ -96,6 +110,72 @@ mod tests {
     use super::{NavigationPreferences, RecentReview, WorkspaceTab};
     use bodh::Revision;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn repository_pr_lookup_returns_the_most_recent_saved_workspace() {
+        let prefs = NavigationPreferences {
+            recent: vec![
+                RecentReview {
+                    preparation_id: "newest".into(),
+                    repository_path: "/repo".into(),
+                    title: "A change".into(),
+                    owner: "acme".into(),
+                    repository: "app".into(),
+                    number: 24,
+                    pending_work: 0,
+                    selected_file: Some("src/current.rs".into()),
+                    source_revision: Some(Revision::Base),
+                    split_diff: true,
+                    file_scroll_y: 120.,
+                    diff_scroll_y: 240.,
+                    source_scroll_y: 360.,
+                    description_scroll_y: 480.,
+                },
+                RecentReview {
+                    preparation_id: "other-repository".into(),
+                    repository_path: "/other".into(),
+                    title: "A change".into(),
+                    owner: "acme".into(),
+                    repository: "app".into(),
+                    number: 24,
+                    pending_work: 0,
+                    selected_file: None,
+                    source_revision: None,
+                    split_diff: false,
+                    file_scroll_y: 0.,
+                    diff_scroll_y: 0.,
+                    source_scroll_y: 0.,
+                    description_scroll_y: 0.,
+                },
+                RecentReview {
+                    preparation_id: "older".into(),
+                    repository_path: "/repo".into(),
+                    title: "A change".into(),
+                    owner: "acme".into(),
+                    repository: "app".into(),
+                    number: 24,
+                    pending_work: 0,
+                    selected_file: None,
+                    source_revision: None,
+                    split_diff: false,
+                    file_scroll_y: 0.,
+                    diff_scroll_y: 0.,
+                    source_scroll_y: 0.,
+                    description_scroll_y: 0.,
+                },
+            ],
+            ..NavigationPreferences::default()
+        };
+
+        assert_eq!(
+            prefs
+                .recent_review_for_pr("/repo", 24)
+                .map(|review| review.preparation_id.as_str()),
+            Some("newest")
+        );
+        assert!(prefs.recent_review_for_pr("/repo", 25).is_none());
+        assert!(prefs.recent_review_for_pr("/missing", 24).is_none());
+    }
 
     #[test]
     fn navigation_preferences_persist_without_review_content() {
