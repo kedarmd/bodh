@@ -590,9 +590,9 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
     let before = bodh::protected_work_snapshot(&state, &current).unwrap();
     assert_eq!(before.unpublished_draft_count, 1);
 
-    // Give every acquisition outcome a real repository with committed, staged,
-    // dirty, and untracked state so the service's read-only boundary is checked
-    // independently from its SQLite draft-preservation assertions.
+    // Give every acquisition outcome a real repository with a committed
+    // baseline, an unstaged tracked edit, and an untracked file. Capture the
+    // raw index too, while avoiding a staged modification in this fixture.
     let checkout = root.join("checkout");
     std::fs::create_dir_all(&checkout).unwrap();
     assert!(

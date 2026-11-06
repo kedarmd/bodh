@@ -26,7 +26,7 @@ These tests exercise real SQLite stores and switch APIs, not the desktop view wi
 
 ## Follow-up: controlled permission-loss observation
 
-The failed/cancelled acquisition fixture also invokes both latest-candidate acquisition and the public freshness service with a controlled `gh` executable that returns HTTP 403. A real temporary checkout with the matching GitHub remote ensures candidate acquisition reaches the denied metadata request; the call returns `AUTH_ACCESS` while the selected preparation, protected-work fingerprint and populated text draft remain unchanged. Freshness records `Unknown` with `AUTH_ACCESS`. This is a deterministic process fixture, not a live permission race. It does not add actual CLI view switching or a real checkout/index snapshot; those acceptance gaps remain open.
+The failed/cancelled acquisition fixture also invokes both latest-candidate acquisition and the public freshness service with a controlled `gh` executable that returns HTTP 403. A real temporary checkout with the matching GitHub remote ensures candidate acquisition reaches the denied metadata request; the call returns `AUTH_ACCESS` while the selected preparation, protected-work fingerprint and populated text draft remain unchanged. Freshness records `Unknown` with `AUTH_ACCESS`. This is a deterministic process fixture, not a live permission race. At this point the checkout/index snapshot had not yet been added; see the later checkout-integrity section.
 
 - `CARGO_BUILD_JOBS=2 cargo test --locked --test freshness` — 11 passed.
 - `cargo fmt --check` — passed.
@@ -36,7 +36,7 @@ The first desktop validation rerun failed in the existing `gh_prerequisite::test
 
 ## Checkout and index integrity
 
-The `failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected` fixture now uses a real Git checkout with a committed HEAD, a symbolic `main` branch, dirty tracked bytes, and an untracked file. It captures and compares the raw `.git/index` bytes, HEAD, symbolic ref, tracked file bytes, and untracked file bytes across missing-CLI acquisition failure, controlled HTTP 403 during candidate acquisition, freshness permission denial, and pre-cancelled candidate acquisition. The focused regression passed:
+The `failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected` fixture now uses a real Git checkout with a committed HEAD, a symbolic `main` branch, an unstaged tracked-file edit, and an untracked file. It captures and compares the raw `.git/index` bytes, HEAD, symbolic ref, tracked file bytes, and untracked file bytes across missing-CLI acquisition failure, controlled HTTP 403 during candidate acquisition, freshness permission denial, and pre-cancelled candidate acquisition. The raw index is verified unchanged, but this fixture does not contain a staged modification. The focused regression passed:
 
 ```sh
 CARGO_BUILD_JOBS=2 cargo test --locked --test freshness failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected -- --exact
