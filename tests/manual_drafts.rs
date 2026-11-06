@@ -715,6 +715,72 @@ fn code_replacements_reject_old_side_changed_source_and_stale_concurrent_saves()
 }
 
 #[test]
+fn code_replacements_reject_deleted_head_files_and_malformed_spans() {
+    let fixture = Fixture::new();
+    let mut store = DraftStore::open(&fixture.state).unwrap();
+    let mut malformed = fixture.source.clone();
+    malformed.start_line = 0;
+    let error = store
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &malformed,
+            "    let count = 2;\n",
+            "    let count = 3;\n",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "INLINE_ANCHOR_INVALID");
+
+    let prior = PreparationStore::open(&fixture.state)
+        .unwrap()
+        .load(&fixture.preparation_id)
+        .unwrap();
+    git(&fixture.repo, &["rm", "-f", "source.rs"]);
+    git(&fixture.repo, &["commit", "-m", "delete suggestion target"]);
+    let head = git(&fixture.repo, &["rev-parse", "HEAD"]);
+    let context = ReviewContext {
+        context_id: "manual-draft-deleted-context".into(),
+        head_sha: head,
+        ..prior.context
+    };
+    let files = diff_index(&fixture.repo, &context, &OperationControl::default())
+        .unwrap()
+        .files;
+    let deleted = PreparationStore::open(&fixture.state)
+        .unwrap()
+        .save(
+            &context,
+            fixture.repo.to_str().unwrap(),
+            "Deleted target",
+            None,
+            &files,
+        )
+        .unwrap();
+    let error = DraftStore::open(&fixture.state)
+        .unwrap()
+        .save_replacement(
+            &deleted.preparation_id,
+            None,
+            &SourceRef {
+                path: "source.rs".into(),
+                revision: Revision::Head,
+                start_line: 1,
+                end_line: 1,
+            },
+            "fn main() {",
+            "fn main() {\n    todo!();",
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "INLINE_ANCHOR_INVALID");
+}
+
+#[test]
 fn replacement_cli_uses_separate_list_and_save_envelopes() {
     let fixture = Fixture::new();
     let args = [

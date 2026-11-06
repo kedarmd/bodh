@@ -28,7 +28,7 @@ fn confirmed_replacement_publishes_exact_suggestion_and_only_then_removes_draft(
         path: "a.rs".into(),
         revision: Revision::Head,
         start_line: 2,
-        end_line: 2,
+        end_line: 3,
     };
     let replacement = DraftStore::open(&f.state)
         .unwrap()
@@ -36,8 +36,8 @@ fn confirmed_replacement_publishes_exact_suggestion_and_only_then_removes_draft(
             &f.prep,
             None,
             &source,
-            "    2\n",
-            "    3\n",
+            "    2\n    20\n",
+            "    3\n    30\n",
             1,
             0,
             &OperationControl::default(),
@@ -82,7 +82,7 @@ fn confirmed_replacement_publishes_exact_suggestion_and_only_then_removes_draft(
         .unwrap();
     assert_eq!(
         plan.payload.suggestions[0].body,
-        "```suggestion\n    3\n```"
+        "```suggestion\n    3\n    30\n```"
     );
     assert_eq!(plan.payload.suggestions[0].source, source);
     let capture = f.root.join("suggestion-request.json");
@@ -106,9 +106,10 @@ fn confirmed_replacement_publishes_exact_suggestion_and_only_then_removes_draft(
     let sent: serde_json::Value = serde_json::from_slice(&std::fs::read(capture).unwrap()).unwrap();
     assert_eq!(
         sent["variables"]["threads"][0]["body"],
-        "```suggestion\n    3\n```"
+        "```suggestion\n    3\n    30\n```"
     );
-    assert_eq!(sent["variables"]["threads"][0]["line"], 2);
+    assert_eq!(sent["variables"]["threads"][0]["line"], 3);
+    assert_eq!(sent["variables"]["threads"][0]["startLine"], 2);
     assert_eq!(sent["variables"]["threads"][0]["side"], "RIGHT");
     let remaining = DraftStore::open(&f.state)
         .unwrap()
@@ -155,11 +156,11 @@ impl Fixture {
         let state = root.join("state.sqlite");
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-b", "main"]);
-        std::fs::write(repo.join("a.rs"), "fn value() {\n    1\n}\n").unwrap();
+        std::fs::write(repo.join("a.rs"), "fn value() {\n    1\n    10\n}\n").unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "base"]);
         let base = git(&repo, &["rev-parse", "HEAD"]);
-        std::fs::write(repo.join("a.rs"), "fn value() {\n    2\n}\n").unwrap();
+        std::fs::write(repo.join("a.rs"), "fn value() {\n    2\n    20\n}\n").unwrap();
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "head"]);
         let head = git(&repo, &["rev-parse", "HEAD"]);
@@ -392,18 +393,40 @@ fn interrupted_send_becomes_unknown_and_cannot_be_started_again() {
 #[test]
 fn changed_head_or_permission_after_confirmation_blocks_send_without_starting_journal() {
     let f = Fixture::new();
+    let replacement = DraftStore::open(&f.state)
+        .unwrap()
+        .save_replacement(
+            &f.prep,
+            None,
+            &SourceRef {
+                path: "a.rs".into(),
+                revision: Revision::Head,
+                start_line: 2,
+                end_line: 2,
+            },
+            "    2\n",
+            "    3\n",
+            1,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap()
+        .draft;
     let mut store = ReviewPublicationStore::open(&f.state).unwrap();
     let intent = store
         .stage(StageReviewRequest {
             state: f.state.clone(),
             preparation_id: f.prep.clone(),
-            expected_workspace_revision: 1,
+            expected_workspace_revision: 2,
             expected_intent_revision: 0,
             selected: vec![SelectedDraft {
                 id: f.draft_id.clone(),
                 revision: 1,
             }],
-            selected_replacements: vec![],
+            selected_replacements: vec![SelectedDraft {
+                id: replacement.id,
+                revision: replacement.revision,
+            }],
             selected_replies: vec![],
             selected_thread_actions: vec![],
             summary: Some("A summary".into()),

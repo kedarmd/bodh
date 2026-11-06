@@ -6,9 +6,10 @@ The native Finish Review screen shows replacement drafts, lets users select or u
 
 ## Verification
 
-- `cargo test --locked --test manual_review`: 9 passed, including exact suggestion Markdown, target path/line/side, fake-`gh` request body, and removal only after confirmed publication.
+- `CARGO_BUILD_JOBS=2 cargo test --locked --test manual_drafts --test manual_review`: 15 + 9 passed. `manual_drafts` covers multiline replacement ranges, renamed targets, changed original text, deleted head-side targets, malformed ranges, binary/unsupported spans and unchanged source/index bytes. `manual_review` publishes an exact multiline suggestion through fake `gh` and asserts body, start/end lines and side; its head-race case now includes a selected replacement and confirms a moved head leaves the operation planned and unsent.
 - `./scripts/validate desktop`: passed on the merged integration tip `9c1d6c1` plus the #22 changes. The complete runner output is in [VALIDATE-22.log](VALIDATE-22.log).
 - The generated-review stage fixture now supplies an empty `selected_replacements` list for the extended review request type.
+- `cargo fmt --all -- --check` and `git diff --check` passed after these fixture additions.
 - No live GitHub write or interactive GUI trial was performed.
 
 ## Boundaries
