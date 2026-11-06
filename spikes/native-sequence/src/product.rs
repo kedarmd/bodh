@@ -6608,6 +6608,7 @@ impl Product {
                                         this.finding_alternative_edit_body.pop();
                                     }
                                     "enter" => this.finding_alternative_edit_body.push('\n'),
+                                    "space" => this.finding_alternative_edit_body.push(' '),
                                     "a" if command => this.finding_alternative_edit_body.clear(),
                                     text if text.chars().count() == 1 && !command => {
                                         this.finding_alternative_edit_body.push_str(text)
@@ -6656,6 +6657,9 @@ impl Product {
                                             }
                                             "enter" => {
                                                 this.finding_alternative_edit_replacement.push('\n')
+                                            }
+                                            "space" => {
+                                                this.finding_alternative_edit_replacement.push(' ')
                                             }
                                             "a" if command => {
                                                 this.finding_alternative_edit_replacement.clear()
@@ -6851,6 +6855,7 @@ impl Product {
                                     this.finding_feedback_body.pop();
                                 }
                                 "enter" => this.finding_feedback_body.push('\n'),
+                                "space" => this.finding_feedback_body.push(' '),
                                 "a" if command => this.finding_feedback_body.clear(),
                                 text if text.chars().count() == 1 && !command => {
                                     this.finding_feedback_body.push_str(text)
@@ -7510,6 +7515,7 @@ impl Product {
                                 }
                                 "enter" => this.reply_body.push('\n'),
                                 "tab" => this.reply_body.push_str("    "),
+                                "space" => this.reply_body.push(' '),
                                 "a" if command => {}
                                 text if text.chars().count() == 1 && !command => {
                                     this.reply_body.push_str(text)
@@ -8636,6 +8642,7 @@ impl Product {
                             "end" => editor.move_cursor_to_edge(true),
                             "enter" => editor.insert_text("\n"),
                             "tab" => editor.insert_text("    "),
+                            "space" => editor.insert_text(" "),
                             "a" if command => editor.select_all(),
                             text if text.chars().count() == 1 && !command => {
                                 editor.insert_text(text)
@@ -8742,6 +8749,7 @@ impl Product {
                             "end" => editor.move_cursor_to_edge(true),
                             "enter" => editor.insert_text("\n"),
                             "tab" => editor.insert_text("    "),
+                            "space" => editor.insert_text(" "),
                             "a" if command => editor.select_all(),
                             text if text.chars().count() == 1 && !command => {
                                 editor.insert_text(text)
