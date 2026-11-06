@@ -23,6 +23,8 @@ Four focused `source_switch_line_tests` pass. They cover initial-hunk-to-change 
 
 The pre-fix result is preserved in [light-base-selected-947x560.png](evidence/issue-39-native-2026-11-06/light-base-selected-947x560.png). A pointer-coordinate trial also opened a blank inline-comment editor instead of the Base control; no text was entered or saved, and the clean rerun began after that process was closed.
 
+Hosted validation for the accepted implementation commit `707ca10` passed both core and desktop jobs in [run 42206828872](https://github.com/kedarmd/bodh/actions/runs/42206828872).
+
 ### Fresh native results
 
 - At 1904×1020, Base and Head both select line 43, matching the theme change. See [light-base-mapped-43-1904x1020.png](evidence/issue-39-native-2026-11-06/light-base-mapped-43-1904x1020.png) and [light-head-mapped-43-1904x1020.png](evidence/issue-39-native-2026-11-06/light-head-mapped-43-1904x1020.png).
