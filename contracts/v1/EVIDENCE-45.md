@@ -26,8 +26,10 @@ These tests exercise real SQLite stores and switch APIs, not the desktop view wi
 
 ## Follow-up: controlled permission-loss observation
 
-The failed/cancelled acquisition fixture now also invokes the public freshness service with a controlled `gh` executable that returns HTTP 403. It verifies the outcome is explicitly `Unknown` with `AUTH_ACCESS`, while the selected preparation, protected-work fingerprint and populated text draft remain unchanged. This is a deterministic process fixture, not a live permission race. It does not add actual CLI view switching or a real checkout/index snapshot; those acceptance gaps remain open.
+The failed/cancelled acquisition fixture also invokes both latest-candidate acquisition and the public freshness service with a controlled `gh` executable that returns HTTP 403. A real temporary checkout with the matching GitHub remote ensures candidate acquisition reaches the denied metadata request; the call returns `AUTH_ACCESS` while the selected preparation, protected-work fingerprint and populated text draft remain unchanged. Freshness records `Unknown` with `AUTH_ACCESS`. This is a deterministic process fixture, not a live permission race. It does not add actual CLI view switching or a real checkout/index snapshot; those acceptance gaps remain open.
 
 - `CARGO_BUILD_JOBS=2 cargo test --locked --test freshness` — 11 passed.
 - `cargo fmt --check` — passed.
 - `git diff --check` — passed.
+
+The first desktop validation rerun failed in the existing `gh_prerequisite::tests::preflight_reports_the_installed_cli_version` test because its temporary fake executable could not be started; the immediate complete rerun passed. The failure was transient and did not involve the new freshness test. The final passing output is in `VALIDATE-45-permission-loss-acquisition.log`.
