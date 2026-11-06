@@ -12,6 +12,41 @@ use std::{
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+#[derive(Debug, PartialEq, Eq)]
+struct CheckoutSnapshot {
+    head: String,
+    symbolic_ref: String,
+    index: Vec<u8>,
+    tracked: Vec<u8>,
+    untracked: Vec<u8>,
+}
+
+fn git_output(checkout: &Path, args: &[&str]) -> Vec<u8> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(checkout)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {:?}", output.stderr);
+    output.stdout
+}
+
+fn checkout_snapshot(checkout: &Path) -> CheckoutSnapshot {
+    CheckoutSnapshot {
+        head: String::from_utf8(git_output(checkout, &["rev-parse", "HEAD"]))
+            .unwrap()
+            .trim()
+            .to_owned(),
+        symbolic_ref: String::from_utf8(git_output(checkout, &["symbolic-ref", "HEAD"]))
+            .unwrap()
+            .trim()
+            .to_owned(),
+        index: std::fs::read(checkout.join(".git/index")).unwrap(),
+        tracked: std::fs::read(checkout.join("tracked.txt")).unwrap(),
+        untracked: std::fs::read(checkout.join("untracked.txt")).unwrap(),
+    }
+}
+
 fn fixture() -> (
     std::path::PathBuf,
     std::path::PathBuf,
@@ -554,6 +589,66 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
     drop(db);
     let before = bodh::protected_work_snapshot(&state, &current).unwrap();
     assert_eq!(before.unpublished_draft_count, 1);
+
+    // Give every acquisition outcome a real repository with committed, staged,
+    // dirty, and untracked state so the service's read-only boundary is checked
+    // independently from its SQLite draft-preservation assertions.
+    let checkout = root.join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    assert!(
+        Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&checkout)
+            .status()
+            .unwrap()
+            .success()
+    );
+    for (name, value) in [
+        ("user.name", "Bodh Test"),
+        ("user.email", "bodh-test@example.invalid"),
+    ] {
+        assert!(
+            Command::new("git")
+                .args(["config", name, value])
+                .current_dir(&checkout)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    std::fs::write(checkout.join("tracked.txt"), b"committed\n").unwrap();
+    assert!(
+        Command::new("git")
+            .args(["add", "tracked.txt"])
+            .current_dir(&checkout)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .args(["commit", "-m", "fixture"])
+            .current_dir(&checkout)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    std::fs::write(checkout.join("tracked.txt"), b"dirty tracked\n").unwrap();
+    std::fs::write(checkout.join("untracked.txt"), b"untracked bytes\n").unwrap();
+    let checkout_before = checkout_snapshot(&checkout);
+    Connection::open(&state)
+        .unwrap()
+        .execute(
+            "UPDATE preparations SET checkout=?1 WHERE preparation_id=?2",
+            rusqlite::params![checkout.to_string_lossy(), current.preparation_id],
+        )
+        .unwrap();
+    let current = PreparationStore::open(&state)
+        .unwrap()
+        .load(&current.preparation_id)
+        .unwrap();
+
     let missing_gh = root.join("missing-gh");
     let error = bodh::prepare_latest_candidate_with_gh(
         &current.preparation_id,
@@ -575,6 +670,7 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
         bodh::protected_work_snapshot(&state, &current).unwrap(),
         before
     );
+    assert_eq!(checkout_snapshot(&checkout), checkout_before);
     assert_eq!(
         bodh::DraftStore::open(&state)
             .unwrap()
@@ -598,14 +694,6 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
 
     // Use a real checkout and matching remote so latest-candidate preparation
     // reaches the controlled GitHub API denial rather than failing locally.
-    let checkout = root.join("checkout");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let init = Command::new("git")
-        .args(["init", "-b", "main"])
-        .current_dir(&checkout)
-        .output()
-        .unwrap();
-    assert!(init.status.success());
     let remote = Command::new("git")
         .args([
             "remote",
@@ -617,17 +705,7 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
         .output()
         .unwrap();
     assert!(remote.status.success());
-    Connection::open(&state)
-        .unwrap()
-        .execute(
-            "UPDATE preparations SET checkout=?1 WHERE preparation_id=?2",
-            rusqlite::params![checkout.to_string_lossy(), current.preparation_id],
-        )
-        .unwrap();
-    let current = PreparationStore::open(&state)
-        .unwrap()
-        .load(&current.preparation_id)
-        .unwrap();
+    assert_eq!(checkout_snapshot(&checkout), checkout_before);
     let acquisition_error = bodh::prepare_latest_candidate_with_gh(
         &current.preparation_id,
         &state,
@@ -648,6 +726,7 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
         bodh::protected_work_snapshot(&state, &current).unwrap(),
         before
     );
+    assert_eq!(checkout_snapshot(&checkout), checkout_before);
     assert_eq!(
         bodh::DraftStore::open(&state)
             .unwrap()
@@ -674,6 +753,7 @@ fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
         bodh::protected_work_snapshot(&state, &current).unwrap(),
         before
     );
+    assert_eq!(checkout_snapshot(&checkout), checkout_before);
     assert_eq!(
         bodh::DraftStore::open(&state)
             .unwrap()
