@@ -414,7 +414,14 @@ fn reader(executable: PathBuf, checkout: &Path) -> GhReviewOutcomeReader {
 fn fake_gh(path: &Path, response: &Value) -> PathBuf {
     let response = serde_json::to_string(response).unwrap();
     let quoted = response.replace('\'', "'\"'\"'");
-    std::fs::write(path, format!("#!/bin/sh\nprintf '%s' '{quoted}'\n")).unwrap();
+    // The production client sends the GraphQL request on stdin. Consume it
+    // before exiting so the fixture cannot race a fast shell startup and close
+    // the pipe while the parent is still writing a larger request.
+    std::fs::write(
+        path,
+        format!("#!/bin/sh\ncat >/dev/null\nprintf '%s' '{quoted}'\n"),
+    )
+    .unwrap();
     let mut permissions = std::fs::metadata(path).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(path, permissions).unwrap();
