@@ -335,6 +335,11 @@ impl GeneratedReviewStore {
         )
         .map_err(db_error)?;
         tx.commit().map_err(db_error)?;
+        let _ = crate::enforce_retention(
+            &self.path,
+            crate::RetentionPolicy::default(),
+            &[preparation_id.to_owned()],
+        );
         Ok(GeneratedReviewCommit {
             status: "committed".into(),
             generation: next_generation,

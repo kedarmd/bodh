@@ -1,0 +1,38 @@
+# Failed desktop validation attempts for issue #46
+
+Workspace: `/tmp/bodh-issue-46-retention`, base `2580ce76bbcaa0ea65aacd70ffbbc2177cb022cc`.
+
+Attempt 1 — `CARGO_TARGET_DIR=/home/kedarmd/dev/bodh/target ./scripts/validate desktop`
+- Failed in core Clippy.
+- `src/retention.rs:347`: unnecessary `usize` cast.
+- `src/retention.rs:538`: identical branches in SQL string selection.
+- Corrections: removed the cast and collapsed the identical branch.
+
+Attempt 2 — same command after Clippy fixes.
+- Failed in `tests/discussion_drafts.rs::confirmed_discussion_marker_hides_only_its_exact_draft_revision` because retention eagerly opened `DiscussionPublicationStore`, creating `discussion_published_replies` before the test's fixture DDL.
+- Correction: retention no longer initializes that optional feature store. It prunes discussion publication rows only if the feature has already created its tables. The focused regression test then passed.
+
+Attempt 3 — same command after removing the schema side effect.
+- All core and native tests passed, then the runner failed at rustfmt because `spikes/native-sequence` is a separate Cargo manifest; root `cargo fmt --all` did not format `spikes/native-sequence/src/product.rs`.
+- Correction: ran `cargo fmt --manifest-path spikes/native-sequence/Cargo.toml`.
+
+Attempt 4 — full desktop runner passed after formatting. This intermediate pass preceded the final byte-estimator, settled-publication cleanup, and post-commit cleanup hooks; its redundant success log was removed after the current-tree final run passed.
+
+Attempt 5 — full desktop runner passed after the UTF-8 byte estimator and focused test additions. This intermediate pass preceded the final settled-publication and post-commit hook changes; its redundant success log was removed after the current-tree final run passed.
+
+The final, current-tree desktop run is recorded separately as `VALIDATION-46-final.log`.
+
+Attempt 6 — full desktop runner after settled review history and post-commit hooks.
+- Failed in core Clippy at `src/publication.rs:623` for cloning the preparation ID to create a one-element slice.
+- Correction: use `std::slice::from_ref(&operation.payload.preparation_id)`.
+- Full runner output is retained as `VALIDATION-46-attempt6.log`.
+
+Attempt 7 — full desktop runner after adding post-commit cleanup hooks.
+- Core and native checks passed; `tests/generated_review.rs::replacement_approval_is_one_use_and_rejects_a_different_candidate` failed because retention deleted consumed replacement approvals before their expiry, changing `APPROVAL_ALREADY_USED` into `APPROVAL_INVALID`.
+- Correction: preserve consumed approvals until expiry; only expired approvals are removed.
+- Full output is retained as `VALIDATION-46-attempt7.log`.
+
+Attempt 8 — full desktop runner after preserving consumed-approval tombstones.
+- Retention and generated-review tests passed, but an unrelated existing controlled-`gh` integration test failed to start its temporary executable with `Text file busy (os error 26)` in `tests/manual_review.rs::remote_preflight_uses_json_fields_and_retains_current_permission_observation`.
+- No code change was made for this environment-specific executable race. The test is included in the next full rerun.
+- Full output is retained as `VALIDATION-46-attempt8.log`.

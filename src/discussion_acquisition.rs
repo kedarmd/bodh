@@ -420,7 +420,13 @@ pub fn acquire_discussions_with_gh(
             failure_cause: failure.as_ref().map(|(_, cause)| cause.as_str()),
         },
     )?;
-    store.load(&run_id)
+    let observation = store.load(&run_id)?;
+    let _ = crate::enforce_retention(
+        state,
+        crate::RetentionPolicy::default(),
+        std::slice::from_ref(&binding.preparation_id),
+    );
+    Ok(observation)
 }
 
 pub fn load_latest_discussions(state: &Path, preparation_id: &str) -> Result<Value, ContractError> {

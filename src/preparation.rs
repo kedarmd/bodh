@@ -487,6 +487,11 @@ pub fn prepare_local_pr_with_gh(
         &context.head_sha,
         pull_request_state,
     )?;
+    let _ = crate::enforce_retention(
+        state,
+        crate::RetentionPolicy::default(),
+        std::slice::from_ref(&binding.preparation_id),
+    );
     let _ = url;
     let _ = remote;
     Ok(binding.into())

@@ -616,7 +616,13 @@ impl ReviewPublicationStore {
             record_published_payload(&tx, operation_id, &payload)?;
         }
         tx.commit().map_err(db_error)?;
-        self.operation(operation_id)
+        let operation = self.operation(operation_id)?;
+        let _ = crate::enforce_retention(
+            &self.path,
+            crate::RetentionPolicy::default(),
+            std::slice::from_ref(&operation.payload.preparation_id),
+        );
+        Ok(operation)
     }
 
     pub fn operation(&self, operation_id: &str) -> Result<ReviewOperation, ContractError> {

@@ -24,6 +24,7 @@ mod model;
 mod preparation;
 mod publication;
 mod replacement_authorization;
+mod retention;
 mod sqlite;
 pub use evidence::*;
 pub use freshness::*;
@@ -31,6 +32,10 @@ pub use model::*;
 pub use preparation::*;
 pub use publication::*;
 pub use replacement_authorization::{ReplacementApproval, ReplacementApprovalPreview};
+pub use retention::{
+    RetentionPolicy, RetentionReport, clear_active_preparation, enforce_retention,
+    new_active_session_id, set_active_preparation,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 

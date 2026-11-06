@@ -132,6 +132,7 @@ pub struct Product {
     prefs: Preferences,
     prefs_path: PathBuf,
     preparation_db: PathBuf,
+    active_session_id: String,
     repository_input: String,
     active_repository: Option<String>,
     pull_requests: Vec<PullRequest>,
@@ -271,6 +272,7 @@ impl Product {
             prefs,
             prefs_path,
             preparation_db,
+            active_session_id: bodh::new_active_session_id(),
             repository_input,
             pull_requests: Vec::new(),
             selected_pr: None,
@@ -625,6 +627,11 @@ impl Product {
                 this.active_control = None;
                 match result {
                     Ok((manifest, binding, blocks, drafts, replacements)) => {
+                        let _ = bodh::set_active_preparation(
+                            Path::new(&this.preparation_db),
+                            &this.active_session_id,
+                            Some(&binding.preparation_id),
+                        );
                         this.remember(&manifest, &binding, cx);
                         this.selected_review = Some(binding);
                         this.clear_publication_views();
@@ -1305,6 +1312,13 @@ impl Product {
             return;
         }
         self.cancel_pending();
+        if let Err(error) =
+            bodh::set_active_preparation(&self.preparation_db, &self.active_session_id, Some(&id))
+        {
+            self.error = Some(format!("{}: {}", error.code, error.message));
+            cx.notify();
+            return;
+        }
         self.loading = true;
         self.busy_label = "Resuming review…".into();
         self.error = None;
@@ -1329,6 +1343,11 @@ impl Product {
                 this.loading = false;
                 match result {
                     Ok((binding, blocks, drafts, replacements)) => {
+                        let _ = bodh::set_active_preparation(
+                            Path::new(&this.preparation_db),
+                            &this.active_session_id,
+                            Some(&binding.preparation_id),
+                        );
                         this.active_repository = Some(binding.checkout.clone());
                         this.screen = Screen::Workspace;
                         this.description_blocks = blocks;
@@ -3666,6 +3685,12 @@ impl Product {
         }
         self.persist();
         cx.notify();
+    }
+}
+
+impl Drop for Product {
+    fn drop(&mut self) {
+        let _ = bodh::clear_active_preparation(&self.preparation_db, &self.active_session_id);
     }
 }
 

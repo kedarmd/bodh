@@ -172,4 +172,43 @@ mod tests {
         assert_eq!(restored.recent[0].source_revision, None);
         let _ = std::fs::remove_file(path);
     }
+
+    #[test]
+    fn retention_cleanup_does_not_overwrite_concurrent_atomic_preference_saves() {
+        let root = std::env::temp_dir().join(format!(
+            "bodh-prefs-retention-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let prefs_path = root.join("prefs.json");
+        let state_path = root.join("state.sqlite");
+        drop(bodh::PreparationStore::open(&state_path).unwrap());
+        NavigationPreferences::default().save(&prefs_path).unwrap();
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let writer_barrier = barrier.clone();
+        let writer_path = prefs_path.clone();
+        let writer = std::thread::spawn(move || {
+            writer_barrier.wait();
+            for width in 400..420 {
+                let prefs = NavigationPreferences {
+                    inspector_width: width as f32,
+                    ..NavigationPreferences::default()
+                };
+                prefs.save(&writer_path).unwrap();
+            }
+        });
+        barrier.wait();
+        for _ in 0..20 {
+            bodh::enforce_retention(&state_path, bodh::RetentionPolicy::default(), &[]).unwrap();
+        }
+        writer.join().unwrap();
+        let restored = NavigationPreferences::load(&prefs_path);
+        assert_eq!(restored.inspector_width, 419.);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -1216,7 +1216,13 @@ impl DiscussionPublicationStore {
             }
         }
         self.recompute_plan(plan_id)?;
-        self.plan(plan_id)
+        let final_plan = self.plan(plan_id)?;
+        let _ = crate::enforce_retention(
+            &self.path,
+            crate::RetentionPolicy::default(),
+            std::slice::from_ref(&final_plan.preparation_id),
+        );
+        Ok(final_plan)
     }
 
     /// Reconciles unknown sends using read-only observations. It never retries a
