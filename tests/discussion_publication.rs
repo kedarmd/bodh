@@ -18,6 +18,10 @@ use std::{
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn fixture() -> (PathBuf, PathBuf, String) {
+    fixture_with_resolved(false)
+}
+
+fn fixture_with_resolved(resolved: bool) -> (PathBuf, PathBuf, String) {
     let root = std::env::temp_dir().join(format!(
         "bodh-discussion-publication-{}-{}",
         std::process::id(),
@@ -47,12 +51,13 @@ fn fixture() -> (PathBuf, PathBuf, String) {
         )
         .unwrap();
     let gh = root.join("gh");
-    std::fs::write(&gh,r##"#!/bin/sh
+    let script = r##"#!/bin/sh
 case "$*" in
   *node\(id:*) printf '%s' '{"data":{"node":{"comments":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"c1"},"nodes":[{"id":"123","databaseId":123,"body":"root text","replyTo":null}]}}}}' ;;
-  *) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"t1"},"nodes":[{"id":"thread-node-1","path":"src/lib.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":true,"comments":{"totalCount":1}}]}}}}}' ;;
+  *) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"t1"},"nodes":[{"id":"thread-node-1","path":"src/lib.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":__RESOLVED__,"isOutdated":false,"viewerCanReply":true,"viewerCanResolve":true,"viewerCanUnresolve":true,"comments":{"totalCount":1}}]}}}}}' ;;
 esac
-"##).unwrap();
+"##.replace("__RESOLVED__", if resolved { "true" } else { "false" });
+    std::fs::write(&gh, script).unwrap();
     let mut permissions = std::fs::metadata(&gh).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&gh, permissions).unwrap();
@@ -1033,5 +1038,381 @@ fn ambiguous_or_unavailable_read_only_evidence_keeps_the_step_unknown() {
             .unwrap()
             .contains("cannot be established uniquely")
     );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_partial_plan_can_retry_only_its_failed_steps_as_a_new_plan() {
+    let (root, state, prep) = fixture();
+    let (workspace_revision, reply_id, action_id) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[&action_id]);
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    let plan = store
+        .confirm(
+            &prep,
+            intent_revision,
+            None,
+            &[DiscussionSelection {
+                id: reply_id,
+                revision: 1,
+            }],
+            &[DiscussionSelection {
+                id: action_id.clone(),
+                revision: 1,
+            }],
+        )
+        .unwrap();
+    let first_sender = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![
+            DiscussionSendOutcome::Confirmed {
+                remote_id: Some("reply-1".into()),
+            },
+            DiscussionSendOutcome::Rejected {
+                message: "thread action was rejected".into(),
+            },
+        ],
+    );
+    let first = store
+        .publish(&plan.id, &first_sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(first.state, "partial");
+    assert_eq!(
+        first
+            .steps
+            .iter()
+            .map(|step| step.state.as_str())
+            .collect::<Vec<_>>(),
+        ["confirmed", "failed"]
+    );
+
+    let retry_sender = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![DiscussionSendOutcome::Confirmed {
+            remote_id: Some("thread-node-1".into()),
+        }],
+    );
+    let retry = store
+        .retry_failed_plan(&first.id, &retry_sender, &OperationControl::default())
+        .unwrap();
+    assert_ne!(retry.id, first.id);
+    assert_eq!(retry.state, "planned");
+    assert_eq!(retry.steps.len(), 1);
+    assert_eq!(retry.steps[0].kind, "thread_action");
+    assert_eq!(retry.steps[0].draft_id, action_id);
+    assert_eq!(retry.steps[0].state, "planned");
+    assert_eq!(retry.review_operation_id, first.review_operation_id);
+
+    let history = DiscussionPublicationStore::open(&state)
+        .unwrap()
+        .plan_history(&prep)
+        .unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0], first);
+    assert_eq!(history[1], retry);
+    assert_eq!(
+        workspace_revision,
+        DraftStore::open(&state)
+            .unwrap()
+            .list(&prep)
+            .unwrap()
+            .workspace_revision
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn retry_includes_eligible_unsent_steps_and_never_repeats_confirmed_steps() {
+    let (root, state, prep) = fixture();
+    let (_, reply_id, action_id) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[&action_id]);
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    let original = store
+        .confirm(
+            &prep,
+            intent_revision,
+            None,
+            &[DiscussionSelection {
+                id: reply_id,
+                revision: 1,
+            }],
+            &[DiscussionSelection {
+                id: action_id.clone(),
+                revision: 1,
+            }],
+        )
+        .unwrap();
+    let mut first_sender = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![DiscussionSendOutcome::Confirmed {
+            remote_id: Some("reply-1".into()),
+        }],
+    );
+    first_sender.state.can_resolve = false;
+    let first = store
+        .publish(&original.id, &first_sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(first.state, "partial");
+    assert_eq!(
+        first
+            .steps
+            .iter()
+            .map(|step| step.state.as_str())
+            .collect::<Vec<_>>(),
+        ["confirmed", "unsent"]
+    );
+    drop(store);
+    Connection::open(&state)
+        .unwrap()
+        .execute(
+            "UPDATE discussion_publication_plans SET state='confirmed' WHERE plan_id=?1",
+            [&first.id],
+        )
+        .unwrap();
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    assert_eq!(store.plan(&first.id).unwrap().state, "partial");
+    let retry_sender = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![DiscussionSendOutcome::Confirmed {
+            remote_id: Some("thread-node-1".into()),
+        }],
+    );
+    let retry = store
+        .retry_failed_plan(&first.id, &retry_sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(retry.steps.len(), 1);
+    assert_eq!(retry.steps[0].state, "planned");
+    assert_eq!(retry.steps[0].kind, "thread_action");
+    assert_eq!(retry.steps[0].draft_id, action_id);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn failed_replies_can_be_retried_after_restart_and_keep_the_exact_payload() {
+    let (root, state, prep) = fixture();
+    let (_, reply_id, _) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[]);
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    let original = store
+        .confirm(
+            &prep,
+            intent_revision,
+            None,
+            &[DiscussionSelection {
+                id: reply_id.clone(),
+                revision: 1,
+            }],
+            &[],
+        )
+        .unwrap();
+    let reject = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![DiscussionSendOutcome::Rejected {
+            message: "reply rejected".into(),
+        }],
+    );
+    let failed = store
+        .publish(&original.id, &reject, &OperationControl::default())
+        .unwrap();
+    assert_eq!(failed.state, "failed");
+
+    let sender = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![DiscussionSendOutcome::Confirmed {
+            remote_id: Some("reply-2".into()),
+        }],
+    );
+    let retry = store
+        .retry_failed_plan(&failed.id, &sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(retry.retry_of.as_deref(), Some(failed.id.as_str()));
+    assert_eq!(retry.steps.len(), 1);
+    assert_eq!(retry.steps[0].kind, "reply");
+    assert_eq!(retry.steps[0].root_comment_id.as_deref(), Some("123"));
+    assert_eq!(retry.steps[0].body.as_deref(), Some("first reply"));
+
+    let duplicate = store
+        .retry_failed_plan(&failed.id, &sender, &OperationControl::default())
+        .unwrap_err();
+    assert_eq!(duplicate.code, "DISCUSSION_RETRY_NOT_ALLOWED");
+
+    drop(store);
+    let mut reopened = DiscussionPublicationStore::open(&state).unwrap();
+    let history = reopened.plan_history(&prep).unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].state, "failed");
+    assert_eq!(history[1].retry_of.as_deref(), Some(failed.id.as_str()));
+    let published = reopened
+        .publish(&retry.id, &sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(published.state, "confirmed");
+    assert_eq!(published.steps[0].body.as_deref(), Some("first reply"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn unknown_or_stale_discussion_work_cannot_be_retried() {
+    let (root, state, prep) = fixture();
+    let (_, reply_id, _) = seed_work(&state, &prep);
+    let intent_revision = stage_intent(&state, &prep, &[&reply_id], &[]);
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    let plan = store
+        .confirm(
+            &prep,
+            intent_revision,
+            None,
+            &[DiscussionSelection {
+                id: reply_id.clone(),
+                revision: 1,
+            }],
+            &[],
+        )
+        .unwrap();
+    let unknown_sender = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![DiscussionSendOutcome::Uncertain {
+            message: "reply acknowledgment was lost".into(),
+        }],
+    );
+    let unknown = store
+        .publish(&plan.id, &unknown_sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(unknown.state, "unknown");
+    let fresh = controlled_publisher(Arc::new(Mutex::new(Vec::new())), vec![]);
+    assert_eq!(
+        store
+            .retry_failed_plan(&unknown.id, &fresh, &OperationControl::default())
+            .unwrap_err()
+            .code,
+        "DISCUSSION_RETRY_NOT_ALLOWED"
+    );
+
+    let (root2, state2, prep2) = fixture();
+    let (_, reply_id2, _) = seed_work(&state2, &prep2);
+    let intent_revision2 = stage_intent(&state2, &prep2, &[&reply_id2], &[]);
+    let mut stale_store = DiscussionPublicationStore::open(&state2).unwrap();
+    let plan2 = stale_store
+        .confirm(
+            &prep2,
+            intent_revision2,
+            None,
+            &[DiscussionSelection {
+                id: reply_id2,
+                revision: 1,
+            }],
+            &[],
+        )
+        .unwrap();
+    let reject = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![DiscussionSendOutcome::Rejected {
+            message: "reply rejected".into(),
+        }],
+    );
+    let failed = stale_store
+        .publish(&plan2.id, &reject, &OperationControl::default())
+        .unwrap();
+    let mut stale_head = controlled_publisher(Arc::new(Mutex::new(Vec::new())), vec![]);
+    stale_head.state.head_sha = "f".repeat(40);
+    assert_eq!(
+        stale_store
+            .retry_failed_plan(&failed.id, &stale_head, &OperationControl::default())
+            .unwrap_err()
+            .code,
+        "DISCUSSION_RETRY_STALE"
+    );
+    let mut no_permission = controlled_publisher(Arc::new(Mutex::new(Vec::new())), vec![]);
+    no_permission.state.can_reply = false;
+    assert_eq!(
+        stale_store
+            .retry_failed_plan(&failed.id, &no_permission, &OperationControl::default())
+            .unwrap_err()
+            .code,
+        "DISCUSSION_RETRY_STALE"
+    );
+    let snapshot = DraftStore::open(&state2).unwrap().list(&prep2).unwrap();
+    DraftStore::open(&state2)
+        .unwrap()
+        .save_reply(
+            &prep2,
+            Some(&failed.steps[0].draft_id),
+            &failed.steps[0].thread_id,
+            failed.steps[0].root_comment_id.as_deref().unwrap(),
+            "edited after rejection",
+            snapshot.workspace_revision,
+            failed.steps[0].draft_revision,
+        )
+        .unwrap();
+    assert_eq!(
+        stale_store
+            .retry_failed_plan(&failed.id, &fresh, &OperationControl::default())
+            .unwrap_err()
+            .code,
+        "DISCUSSION_RETRY_STALE"
+    );
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(root2);
+}
+
+#[test]
+fn a_failed_reopen_action_can_be_retried_after_a_fresh_permission_check() {
+    let (root, state, prep) = fixture_with_resolved(true);
+    let mut drafts = DraftStore::open(&state).unwrap();
+    let snapshot = drafts.list(&prep).unwrap();
+    let action = drafts
+        .stage_thread_action(
+            &prep,
+            None,
+            "thread-node-1",
+            ThreadAction::Reopen,
+            snapshot.workspace_revision,
+            0,
+        )
+        .unwrap();
+    let intent_revision = stage_intent(&state, &prep, &[], &[&action.action.id]);
+    let mut store = DiscussionPublicationStore::open(&state).unwrap();
+    let plan = store
+        .confirm(
+            &prep,
+            intent_revision,
+            None,
+            &[],
+            &[DiscussionSelection {
+                id: action.action.id,
+                revision: 1,
+            }],
+        )
+        .unwrap();
+    let mut reject = controlled_publisher(
+        Arc::new(Mutex::new(Vec::new())),
+        vec![DiscussionSendOutcome::Rejected {
+            message: "reopen rejected".into(),
+        }],
+    );
+    reject.state.resolved = true;
+    let failed = store
+        .publish(&plan.id, &reject, &OperationControl::default())
+        .unwrap();
+    assert_eq!(failed.steps[0].action, Some(ThreadAction::Reopen));
+    let retry_sender = ControlledPublisher {
+        state: ThreadState {
+            pull_request_open: true,
+            head_sha: "b".repeat(40),
+            base_sha: "a".repeat(40),
+            resolved: true,
+            can_reply: true,
+            can_resolve: true,
+            can_reopen: true,
+        },
+        outcomes: Arc::new(Mutex::new(vec![DiscussionSendOutcome::Confirmed {
+            remote_id: Some("thread-node-1".into()),
+        }])),
+        reconciliations: Arc::new(Mutex::new(Vec::new())),
+        calls: Arc::new(Mutex::new(Vec::new())),
+    };
+    let retry = store
+        .retry_failed_plan(&failed.id, &retry_sender, &OperationControl::default())
+        .unwrap();
+    assert_eq!(retry.steps[0].action, Some(ThreadAction::Reopen));
     let _ = std::fs::remove_dir_all(root);
 }

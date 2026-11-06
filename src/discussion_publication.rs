@@ -49,8 +49,20 @@ pub struct DiscussionPlan {
     /// An optional grouped review operation. It must be confirmed before these
     /// dependent discussion operations can be sent.
     pub review_operation_id: Option<String>,
+    #[serde(default)]
+    pub retry_of: Option<String>,
     pub state: String,
     pub steps: Vec<DiscussionStep>,
+}
+
+struct StoredDiscussionPlanHeader {
+    preparation_id: String,
+    context_id: String,
+    intent_revision: i64,
+    fingerprint: String,
+    review_operation_id: Option<String>,
+    state: String,
+    retry_of: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -488,6 +500,7 @@ impl DiscussionPublicationStore {
                 plan_id TEXT PRIMARY KEY NOT NULL, preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id),
                 context_id TEXT NOT NULL, intent_revision INTEGER NOT NULL, fingerprint TEXT NOT NULL,
                 review_operation_id TEXT, state TEXT NOT NULL CHECK(state IN ('planned','sending','partial','confirmed','failed','unknown')),
+                retry_of TEXT,
                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
             CREATE UNIQUE INDEX IF NOT EXISTS one_unresolved_discussion_plan
                 ON discussion_publication_plans(preparation_id) WHERE state IN ('planned','sending','unknown');
@@ -524,6 +537,36 @@ impl DiscussionPublicationStore {
             )
             .map_err(db_error)?;
         }
+        let has_retry_of: bool = db
+            .prepare("PRAGMA table_info(discussion_publication_plans)")
+            .map_err(db_error)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(db_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)?
+            .iter()
+            .any(|name| name == "retry_of");
+        if !has_retry_of {
+            db.execute(
+                "ALTER TABLE discussion_publication_plans ADD COLUMN retry_of TEXT",
+                [],
+            )
+            .map_err(db_error)?;
+        }
+        db.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS one_discussion_retry_per_failure
+             ON discussion_publication_plans(retry_of) WHERE retry_of IS NOT NULL;",
+        )
+        .map_err(db_error)?;
+        db.execute_batch(
+            "UPDATE discussion_publication_plans SET state='partial'
+             WHERE state='confirmed' AND EXISTS (
+                 SELECT 1 FROM discussion_publication_steps
+                 WHERE discussion_publication_steps.plan_id=discussion_publication_plans.plan_id
+                   AND discussion_publication_steps.state IN ('failed','unsent','already_achieved')
+             );",
+        )
+        .map_err(db_error)?;
         Ok(Self {
             db,
             path: path.to_path_buf(),
@@ -683,16 +726,26 @@ impl DiscussionPublicationStore {
     }
 
     pub fn plan(&self, id: &str) -> Result<DiscussionPlan, ContractError> {
-        let header: Option<(String,String,i64,String,Option<String>,String)> = self.db.query_row("SELECT preparation_id,context_id,intent_revision,fingerprint,review_operation_id,state FROM discussion_publication_plans WHERE plan_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(db_error)?;
-        let Some((
-            preparation_id,
-            context_id,
-            intent_revision,
-            fingerprint,
-            review_operation_id,
-            state,
-        )) = header
-        else {
+        let header: Option<StoredDiscussionPlanHeader> = self
+            .db
+            .query_row(
+                "SELECT preparation_id,context_id,intent_revision,fingerprint,review_operation_id,state,retry_of FROM discussion_publication_plans WHERE plan_id=?1",
+                [id],
+                |row| {
+                    Ok(StoredDiscussionPlanHeader {
+                        preparation_id: row.get(0)?,
+                        context_id: row.get(1)?,
+                        intent_revision: row.get(2)?,
+                        fingerprint: row.get(3)?,
+                        review_operation_id: row.get(4)?,
+                        state: row.get(5)?,
+                        retry_of: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(db_error)?;
+        let Some(header) = header else {
             return Err(invalid("Discussion plan not found", "/id"));
         };
         let mut q=self.db.prepare("SELECT step_id,ordinal,kind,draft_id,draft_revision,thread_id,root_comment_id,body,action,observed_resolved,state,remote_id,failure,attempt_started_at FROM discussion_publication_steps WHERE plan_id=?1 ORDER BY ordinal").map_err(db_error)?;
@@ -759,12 +812,13 @@ impl DiscussionPublicationStore {
         }
         Ok(DiscussionPlan {
             id: id.into(),
-            fingerprint,
-            preparation_id,
-            context_id,
-            intent_revision: u64::try_from(intent_revision).map_err(|_| state_error())?,
-            review_operation_id,
-            state,
+            fingerprint: header.fingerprint,
+            preparation_id: header.preparation_id,
+            context_id: header.context_id,
+            intent_revision: u64::try_from(header.intent_revision).map_err(|_| state_error())?,
+            review_operation_id: header.review_operation_id,
+            retry_of: header.retry_of,
+            state: header.state,
             steps,
         })
     }
@@ -796,6 +850,223 @@ impl DiscussionPublicationStore {
             plans.push(self.plan(&row.map_err(db_error)?)?);
         }
         Ok(plans)
+    }
+
+    /// Creates a fresh immutable plan from only definitively failed and still
+    /// unsent steps. The prior plan remains unchanged for outcome history.
+    pub fn retry_failed_plan(
+        &mut self,
+        failed_plan_id: &str,
+        publisher: &dyn DiscussionPublisher,
+        control: &OperationControl,
+    ) -> Result<DiscussionPlan, ContractError> {
+        let failed = self.plan(failed_plan_id)?;
+        if !matches!(failed.state.as_str(), "failed" | "partial")
+            || failed.steps.iter().any(|step| {
+                !matches!(
+                    step.state.as_str(),
+                    "confirmed" | "failed" | "unsent" | "already_achieved"
+                )
+            })
+        {
+            return Err(retry_not_allowed(
+                "Only settled failed or partial plans can be retried; unknown work must be reconciled first",
+            ));
+        }
+        let eligible = failed
+            .steps
+            .iter()
+            .filter(|step| matches!(step.state.as_str(), "failed" | "unsent"))
+            .cloned()
+            .collect::<Vec<_>>();
+        if eligible.is_empty() {
+            return Err(retry_not_allowed(
+                "This plan has no failed or eligible unsent operations to retry",
+            ));
+        }
+        let existing_retry: bool = self
+            .db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM discussion_publication_plans WHERE retry_of=?1)",
+                [&failed.id],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if existing_retry {
+            return Err(retry_not_allowed(
+                "A retry plan already exists for this discussion outcome",
+            ));
+        }
+        let binding = PreparationStore::open(&self.path)?.load(&failed.preparation_id)?;
+        if binding.context.context_id != failed.context_id {
+            return Err(retry_stale(
+                "The saved pull request context changed; reload before retrying",
+            ));
+        }
+        if let Some(review_id) = failed.review_operation_id.as_deref() {
+            let review = crate::ReviewPublicationStore::open(&self.path)?.operation(review_id)?;
+            if review.state != "confirmed" {
+                return Err(retry_not_allowed(
+                    "The grouped review dependency must be confirmed before discussion work can be retried",
+                ));
+            }
+        }
+        let snapshot = DraftStore::open(&self.path)?.list(&failed.preparation_id)?;
+        let intent =
+            crate::ReviewPublicationStore::open(&self.path)?.intent(&failed.preparation_id)?;
+        let unresolved: bool = self
+            .db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM discussion_publication_plans WHERE preparation_id=?1 AND state IN ('planned','sending','unknown'))",
+                [&failed.preparation_id],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if unresolved {
+            return Err(retry_not_allowed(
+                "Another discussion plan is unresolved; reconcile or finish it first",
+            ));
+        }
+
+        for step in &eligible {
+            if step.kind == "reply" {
+                let selected = intent
+                    .selected_replies
+                    .iter()
+                    .any(|item| item.id == step.draft_id && item.revision == step.draft_revision);
+                let draft = snapshot
+                    .reply_drafts
+                    .iter()
+                    .find(|item| item.id == step.draft_id);
+                if !selected
+                    || draft.is_none_or(|draft| {
+                        draft.revision != step.draft_revision
+                            || draft.thread_id != step.thread_id
+                            || Some(draft.root_comment_id.as_str())
+                                != step.root_comment_id.as_deref()
+                            || Some(draft.body.as_str()) != step.body.as_deref()
+                    })
+                {
+                    return Err(retry_stale(
+                        "A saved reply or its selected draft revision changed",
+                    ));
+                }
+            } else {
+                let selected = intent
+                    .selected_thread_actions
+                    .iter()
+                    .any(|item| item.id == step.draft_id && item.revision == step.draft_revision);
+                let draft = snapshot
+                    .thread_actions
+                    .iter()
+                    .find(|item| item.id == step.draft_id);
+                if !selected
+                    || draft.is_none_or(|draft| {
+                        draft.revision != step.draft_revision
+                            || draft.thread_id != step.thread_id
+                            || Some(draft.action) != step.action
+                            || Some(draft.observed_resolved) != step.observed_resolved
+                    })
+                {
+                    return Err(retry_stale(
+                        "A saved thread action or its selected draft revision changed",
+                    ));
+                }
+            }
+
+            let fresh = publisher.inspect(&failed.preparation_id, &step.thread_id, control)?;
+            if !fresh.pull_request_open
+                || fresh.head_sha != binding.context.head_sha
+                || fresh.base_sha != binding.context.base_sha
+            {
+                return Err(retry_stale(
+                    "The pull request head, base, or open state changed before retry",
+                ));
+            }
+            let allowed = if step.kind == "reply" {
+                fresh.can_reply
+            } else {
+                match step.action {
+                    Some(ThreadAction::Resolve) => {
+                        fresh.resolved || (fresh.can_resolve && !fresh.resolved)
+                    }
+                    Some(ThreadAction::Reopen) => {
+                        !fresh.resolved || (fresh.can_reopen && fresh.resolved)
+                    }
+                    None => false,
+                }
+            };
+            if !allowed {
+                return Err(retry_stale(
+                    "Current thread state or permissions do not allow this retry",
+                ));
+            }
+        }
+
+        let current_intent = intent.revision;
+        let canonical = serde_json::to_vec(&(failed.id.as_str(), current_intent, &eligible))
+            .map_err(json_error)?;
+        let fingerprint = format!("{:x}", Sha256::digest(&canonical));
+        let retry_id = format!("discussion-retry-{}", &fingerprint[..24]);
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let inserted = match tx.execute(
+            "INSERT INTO discussion_publication_plans(plan_id,preparation_id,context_id,intent_revision,fingerprint,review_operation_id,state,created_at,updated_at,retry_of) VALUES(?1,?2,?3,?4,?5,?6,'planned',?7,?7,?8)",
+            params![
+                retry_id,
+                failed.preparation_id,
+                failed.context_id,
+                i64::try_from(current_intent).map_err(|_| state_error())?,
+                fingerprint,
+                failed.review_operation_id,
+                now_ms(),
+                failed.id
+            ],
+        ) {
+            Ok(inserted) => inserted,
+            Err(error) => {
+                let duplicate: bool = tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM discussion_publication_plans WHERE retry_of=?1)",
+                        [&failed.id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                return Err(if duplicate {
+                    retry_not_allowed("A retry plan already exists for this discussion outcome")
+                } else {
+                    db_error(error)
+                });
+            }
+        };
+        if inserted != 1 {
+            return Err(retry_not_allowed("Could not create a unique retry plan"));
+        }
+        for (ordinal, step) in eligible.iter().enumerate() {
+            let step_id = format!("{}-{ordinal:04}", &fingerprint[..16]);
+            tx.execute(
+                "INSERT INTO discussion_publication_steps(step_id,plan_id,ordinal,kind,draft_id,draft_revision,thread_id,root_comment_id,body,action,observed_resolved,state,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'planned',?12,?12)",
+                params![
+                    step_id,
+                    retry_id,
+                    i64::try_from(ordinal).map_err(|_| state_error())?,
+                    step.kind,
+                    step.draft_id,
+                    i64::try_from(step.draft_revision).map_err(|_| state_error())?,
+                    step.thread_id,
+                    step.root_comment_id,
+                    step.body,
+                    step.action.map(action_name),
+                    step.observed_resolved.map(i64::from),
+                    now_ms()
+                ],
+            )
+            .map_err(db_error)?;
+        }
+        tx.commit().map_err(db_error)?;
+        self.plan(&retry_id)
     }
 
     /// Runs all independently safe operations. If a dependent grouped review
@@ -1129,14 +1400,14 @@ impl DiscussionPublicationStore {
         Ok(())
     }
     fn recompute_plan(&self, id: &str) -> Result<(), ContractError> {
-        let counts:(i64,i64,i64,i64)=self.db.query_row("SELECT sum(state='confirmed'),sum(state='failed'),sum(state='unknown'),sum(state IN ('planned','sending')) FROM discussion_publication_steps WHERE plan_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(db_error)?;
+        let counts:(i64,i64,i64,i64,i64,i64)=self.db.query_row("SELECT sum(state='confirmed'),sum(state='failed'),sum(state='unknown'),sum(state IN ('planned','sending')),sum(state='unsent'),sum(state='already_achieved') FROM discussion_publication_steps WHERE plan_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(db_error)?;
         let state = if counts.2 > 0 {
             "unknown"
         } else if counts.3 > 0 {
             "partial"
         } else if counts.1 > 0 && counts.0 == 0 {
             "failed"
-        } else if counts.1 > 0 || counts.0 == 0 {
+        } else if counts.1 > 0 || counts.0 == 0 || counts.4 > 0 || counts.5 > 0 {
             "partial"
         } else {
             "confirmed"
@@ -1178,6 +1449,12 @@ fn stale() -> ContractError {
 }
 fn invalid(message: &str, pointer: &str) -> ContractError {
     ContractError::new("DISCUSSION_PLAN_INVALID", message, pointer)
+}
+fn retry_not_allowed(message: &str) -> ContractError {
+    ContractError::new("DISCUSSION_RETRY_NOT_ALLOWED", message, "")
+}
+fn retry_stale(message: &str) -> ContractError {
+    ContractError::new("DISCUSSION_RETRY_STALE", message, "")
 }
 fn bound(message: &str) -> String {
     message.chars().take(1024).collect()

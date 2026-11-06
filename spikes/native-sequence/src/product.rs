@@ -2780,11 +2780,81 @@ impl Product {
             let result=cx.background_executor().spawn(async move{
                 let publisher=GhDiscussionPublisher{executable:PathBuf::from("gh"),state:state.clone()};
                 let mut store=DiscussionPublicationStore::open(&state)?;
-                let plan=store.publish(&plan.id,&publisher,&control)?;
+                let publish_result=store.publish(&plan.id,&publisher,&control);
+                let (plan,error)=match publish_result {
+                    Ok(plan)=>(plan,None),
+                    Err(error)=>(store.plan(&plan.id)?,Some(error)),
+                };
+                let history=store.plan_history(&binding.preparation_id)?;
                 let snapshot=DraftStore::open(&state)?.list(&binding.preparation_id)?;
-                Ok::<_,bodh::ContractError>((plan,snapshot))
+                Ok::<_,bodh::ContractError>((plan,error,history,snapshot))
             }).await;
-            let _=weak.update(cx,|this,cx|{if this.operation_epoch.load(Ordering::Relaxed)!=token{return;}this.review_loading=false;this.active_control=None;match result{Ok((plan,snapshot))=>{this.discussion_plan=Some(plan.clone());this.update_draft_counts(snapshot.counts.clone());this.draft_snapshot=Some(snapshot);this.status=Some(format!("Discussion publication finished with state {}. Confirmed steps are removed from the unpublished drafts.",plan.state));this.error=None;},Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;}}cx.notify();});
+            let _=weak.update(cx,|this,cx|{if this.operation_epoch.load(Ordering::Relaxed)!=token{return;}this.review_loading=false;this.active_control=None;match result{Ok((plan,error,history,snapshot))=>{this.discussion_plan=Some(plan.clone());this.discussion_history=history;this.update_draft_counts(snapshot.counts.clone());this.draft_snapshot=Some(snapshot);if let Some(error)=error{this.error=Some(format!("{}: {}. The saved discussion outcome remains visible.",error.code,error.message));this.status=None;}else{this.status=Some(format!("Discussion publication finished with state {}. Confirmed steps are removed from the unpublished drafts.",plan.state));this.error=None;}},Err(error)=>{this.error=Some(format!("{}: {}",error.code,error.message));this.status=None;}}cx.notify();});
+        }).detach();
+    }
+
+    fn retry_failed_discussion_plan(&mut self, plan_id: &str, cx: &mut Context<Self>) {
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        if self.review_loading {
+            return;
+        }
+        let plan_id = plan_id.to_owned();
+        self.review_loading = true;
+        self.error = None;
+        self.status = Some(
+            "Rechecking the pull request, threads, permissions, and saved drafts before retrying…"
+                .into(),
+        );
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        let state = self.preparation_db.clone();
+        let control = OperationControl::with_timeout(Duration::from_secs(60));
+        self.active_control = Some(control.clone());
+        cx.spawn(async move |weak, cx| {
+            let result = cx.background_executor().spawn(async move {
+                let publisher = GhDiscussionPublisher {
+                    executable: PathBuf::from("gh"),
+                    state: state.clone(),
+                };
+                let mut store = DiscussionPublicationStore::open(&state)?;
+                let retry = store.retry_failed_plan(&plan_id, &publisher, &control)?;
+                let publish_result = store.publish(&retry.id, &publisher, &control);
+                let saved = match publish_result {
+                    Ok(plan) => (plan, None),
+                    Err(error) => (store.plan(&retry.id)?, Some(error)),
+                };
+                let history = store.plan_history(&binding.preparation_id)?;
+                let drafts = DraftStore::open(&state)?.list(&binding.preparation_id)?;
+                Ok::<_, bodh::ContractError>((saved.0, saved.1, history, drafts))
+            }).await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token {
+                    return;
+                }
+                this.review_loading = false;
+                this.active_control = None;
+                match result {
+                    Ok((plan, publish_error, history, drafts)) => {
+                        this.discussion_plan = Some(plan.clone());
+                        this.discussion_history = history;
+                        this.update_draft_counts(drafts.counts.clone());
+                        this.draft_snapshot = Some(drafts);
+                        if let Some(error) = publish_error {
+                            this.error = Some(format!("{}: {}. The saved retry remains in publication history.", error.code, error.message));
+                            this.status = None;
+                        } else {
+                            this.status = Some(format!("Discussion retry finished with state {}. Confirmed steps are removed from the unpublished drafts.", plan.state));
+                            this.error = None;
+                        }
+                    }
+                    Err(error) => {
+                        this.error = Some(format!("{}: {}", error.code, error.message));
+                        this.status = None;
+                    }
+                }
+                cx.notify();
+            });
         }).detach();
     }
 
@@ -4540,6 +4610,21 @@ impl Product {
                     ));
                 }
             }
+            if discussion_retry_available(&plan, &self.discussion_history, self.review_loading) {
+                page = page.child(empty_card(
+                    "Some discussion work was rejected or not sent",
+                    "Bodh will keep confirmed steps untouched, recheck the saved replies and threads, and retry only failed or eligible unsent work.",
+                    p,
+                ));
+                let plan_id = plan.id.clone();
+                page = page.child(button(
+                    &format!("retry-failed-discussion-{}", plan.id),
+                    "Retry failed discussion work",
+                    p,
+                    move |this, _, _, cx| this.retry_failed_discussion_plan(&plan_id, cx),
+                    cx,
+                ));
+            }
         }
         if let Some(plan) = self.review_plan.clone() {
             page = page.child(section_title("Saved grouped review operation", p));
@@ -4835,6 +4920,15 @@ impl Product {
                     "Check remote discussion outcome",
                     p,
                     move |this, _, _, cx| this.reconcile_discussion_plan(&plan_id, cx),
+                    cx,
+                ));
+            }
+            if discussion_retry_available(&plan, &self.discussion_history, self.review_loading) {
+                page = page.child(button(
+                    &format!("retry-history-discussion-{}", plan.id),
+                    "Retry failed discussion work",
+                    p,
+                    move |this, _, _, cx| this.retry_failed_discussion_plan(&plan.id, cx),
                     cx,
                 ));
             }
@@ -9010,6 +9104,30 @@ fn review_retry_available(
         })
 }
 
+fn discussion_retry_available(
+    plan: &DiscussionPlan,
+    history: &[DiscussionPlan],
+    loading: bool,
+) -> bool {
+    !loading
+        && matches!(plan.state.as_str(), "failed" | "partial")
+        && !plan.steps.is_empty()
+        && plan.steps.iter().all(|step| {
+            matches!(
+                step.state.as_str(),
+                "confirmed" | "failed" | "unsent" | "already_achieved"
+            )
+        })
+        && plan
+            .steps
+            .iter()
+            .any(|step| matches!(step.state.as_str(), "failed" | "unsent"))
+        && !history.iter().any(|candidate| {
+            matches!(candidate.state.as_str(), "planned" | "sending" | "unknown")
+                || candidate.retry_of.as_deref() == Some(plan.id.as_str())
+        })
+}
+
 fn trusted_remote_url(host: &str, url: Option<&str>) -> Option<String> {
     let prefix = format!("https://{host}/");
     url.filter(|url| url.starts_with(&prefix))
@@ -9067,9 +9185,10 @@ fn empty_card(title: &str, description: &str, p: Palette) -> Div {
 #[cfg(test)]
 mod publication_recovery_ui_tests {
     use super::{
-        Palette, confirmed_discussion_url, publication_state_color, publication_state_label,
-        review_retry_available, trusted_remote_url,
+        Palette, confirmed_discussion_url, discussion_retry_available, publication_state_color,
+        publication_state_label, review_retry_available, trusted_remote_url,
     };
+    use bodh::{DiscussionPlan, DiscussionStep};
 
     #[test]
     fn recovery_states_keep_unknown_and_already_achieved_distinct() {
@@ -9193,6 +9312,86 @@ mod publication_recovery_ui_tests {
         step.state = "confirmed".into();
         step.remote_id = Some("thread_node_id".into());
         assert!(confirmed_discussion_url("github.com", "acme", "widget", 17, &step).is_none());
+    }
+
+    #[test]
+    fn discussion_retry_requires_settled_eligible_work_and_no_existing_retry() {
+        let plan = DiscussionPlan {
+            id: "discussion-original".into(),
+            fingerprint: "fingerprint".into(),
+            preparation_id: "prep".into(),
+            context_id: "context".into(),
+            intent_revision: 1,
+            review_operation_id: None,
+            retry_of: None,
+            state: "partial".into(),
+            steps: vec![DiscussionStep {
+                id: "reply".into(),
+                ordinal: 0,
+                kind: "reply".into(),
+                draft_id: "draft".into(),
+                draft_revision: 1,
+                thread_id: "thread".into(),
+                root_comment_id: Some("1".into()),
+                body: Some("saved reply".into()),
+                action: None,
+                observed_resolved: None,
+                state: "failed".into(),
+                remote_id: None,
+                failure: Some("rejected".into()),
+                attempt_started_at: Some(1),
+            }],
+        };
+        assert!(discussion_retry_available(
+            &plan,
+            std::slice::from_ref(&plan),
+            false
+        ));
+        assert!(!discussion_retry_available(
+            &plan,
+            std::slice::from_ref(&plan),
+            true
+        ));
+
+        let unknown = DiscussionPlan {
+            state: "unknown".into(),
+            steps: vec![DiscussionStep {
+                state: "unknown".into(),
+                ..plan.steps[0].clone()
+            }],
+            ..plan.clone()
+        };
+        assert!(!discussion_retry_available(
+            &unknown,
+            std::slice::from_ref(&unknown),
+            false
+        ));
+
+        let retry = DiscussionPlan {
+            id: "discussion-retry".into(),
+            retry_of: Some(plan.id.clone()),
+            state: "planned".into(),
+            ..plan.clone()
+        };
+        assert!(!discussion_retry_available(
+            &plan,
+            &[plan.clone(), retry],
+            false
+        ));
+
+        let confirmed = DiscussionPlan {
+            state: "confirmed".into(),
+            steps: vec![DiscussionStep {
+                state: "confirmed".into(),
+                ..plan.steps[0].clone()
+            }],
+            ..plan
+        };
+        assert!(!discussion_retry_available(
+            &confirmed,
+            std::slice::from_ref(&confirmed),
+            false
+        ));
     }
 }
 

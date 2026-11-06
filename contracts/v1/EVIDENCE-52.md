@@ -8,7 +8,7 @@ A retry is a new journal operation whose serialized payload and fingerprint matc
 
 ## Controlled tests
 
-`tests/review_retry.rs` covers rejection followed by a distinct operation with identical retained payload and preserved history; duplicate retry blocking; unknown outcome exclusion; stale PR head and draft revision rejection; and exclusion of a draft revision already recorded as confirmed. UI helper tests cover failed-only eligibility, unresolved work, duplicate retry children, and retrying a failed retry child. The tests use temporary Git/SQLite fixtures and do not write to GitHub.
+`tests/review_retry.rs` covers rejection followed by a distinct operation with identical retained payload and preserved history; duplicate retry blocking; unknown outcome exclusion; stale PR head and permission rejection; edited draft rejection; exclusion of a draft revision already recorded as confirmed; and retrying a rejected code replacement with its exact retained suggestion and source anchor. The UI helper tests cover failed-only eligibility, unresolved work, duplicate retry children, and retrying a failed retry child. The tests use temporary Git/SQLite fixtures and do not write to GitHub.
 
 ## Design and scope
 
@@ -20,7 +20,7 @@ Native GUI/pointer/keyboard acceptance was not verified. No live GitHub write wa
 
 ## Executed validation
 
-- `cargo test --locked --test review_retry` — 4 passed. Covers a rejected review followed by a distinct immutable attempt with the same payload/fingerprint and retained history; duplicate retry blocking; unknown outcome exclusion; moved head, insufficient permission, and edited draft rejection; and confirmed draft provenance exclusion.
+- `cargo test --locked --test review_retry` — 5 passed. Covers a rejected review followed by a distinct immutable attempt with the same payload/fingerprint and retained history; duplicate retry blocking; unknown outcome exclusion; moved head, insufficient permission, and edited draft rejection; confirmed draft provenance exclusion; and exact replacement suggestion/anchor retention on retry.
 - `cargo test --locked --manifest-path spikes/native-sequence/Cargo.toml --bin bodh-sequence-spike publication_recovery_ui_tests::retry_action_is_only_available_for_failed_history_without_unresolved_work` — 1 passed. Covers failed-only eligibility, suppression when a direct retry child exists or unresolved work is present, and allowing a failed retry child its own retry.
 - `cargo fmt --manifest-path Cargo.toml`
 - `cargo fmt --manifest-path spikes/native-sequence/Cargo.toml`

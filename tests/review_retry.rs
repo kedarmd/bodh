@@ -359,3 +359,89 @@ fn retry_excludes_draft_revisions_already_confirmed_by_another_operation() {
         .unwrap_err();
     assert_eq!(already_confirmed.code, "REVIEW_DRAFT_ALREADY_CONFIRMED");
 }
+
+#[test]
+fn a_rejected_replacement_retry_keeps_its_exact_suggestion_and_anchor() {
+    let fixture = Fixture::new();
+    let source = SourceRef {
+        path: "a.rs".into(),
+        revision: Revision::Head,
+        start_line: 2,
+        end_line: 2,
+    };
+    let snapshot = DraftStore::open(&fixture.state)
+        .unwrap()
+        .list(&fixture.preparation_id)
+        .unwrap();
+    let replacement = DraftStore::open(&fixture.state)
+        .unwrap()
+        .save_replacement(
+            &fixture.preparation_id,
+            None,
+            &source,
+            "    2\n",
+            "    3\n",
+            snapshot.workspace_revision,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap()
+        .draft;
+    let snapshot = DraftStore::open(&fixture.state)
+        .unwrap()
+        .list(&fixture.preparation_id)
+        .unwrap();
+    let intent = ReviewPublicationStore::open(&fixture.state)
+        .unwrap()
+        .stage(StageReviewRequest {
+            state: fixture.state.clone(),
+            preparation_id: fixture.preparation_id.clone(),
+            expected_workspace_revision: snapshot.workspace_revision,
+            expected_intent_revision: 0,
+            selected: vec![],
+            selected_replacements: vec![SelectedDraft {
+                id: replacement.id,
+                revision: 1,
+            }],
+            selected_replies: vec![],
+            selected_thread_actions: vec![],
+            summary: Some("Please use this replacement.".into()),
+            event: Some(ReviewEvent::RequestChanges),
+        })
+        .unwrap();
+    let mut store = ReviewPublicationStore::open(&fixture.state).unwrap();
+    let operation = store
+        .confirm(
+            &fixture.preparation_id,
+            &fixture.state,
+            intent.revision,
+            &fixture.remote,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    store.begin_send(&operation.id, &fixture.remote).unwrap();
+    let rejected = store
+        .finish_send(
+            &operation.id,
+            bodh::SendOutcome::Rejected {
+                message: "GitHub rejected the review".into(),
+            },
+        )
+        .unwrap();
+    let retry = ReviewPublicationStore::open(&fixture.state)
+        .unwrap()
+        .retry_failed(
+            &rejected.id,
+            &fixture.state,
+            &fixture.remote,
+            &OperationControl::default(),
+        )
+        .unwrap();
+
+    assert_eq!(retry.payload, rejected.payload);
+    assert_eq!(retry.payload.suggestions.len(), 1);
+    assert_eq!(retry.payload.suggestions[0].source, source);
+    assert_eq!(retry.payload.suggestions[0].original_text, "    2\n");
+    assert_eq!(retry.payload.suggestions[0].replacement, "    3\n");
+    let _ = std::fs::remove_dir_all(&fixture.root);
+}

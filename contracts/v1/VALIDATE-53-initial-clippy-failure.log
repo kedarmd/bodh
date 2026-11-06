@@ -1,0 +1,14 @@
+Initial `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` attempt, revision 53e2977
+
+The runner reached Clippy and stopped before the root test suite:
+
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> src/discussion_publication.rs:719:21
+    |
+719 | let header: Option<(String,String,i64,String,Option<String>,String,Option<String>)> = ...
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#type_complexity
+    = note: `-D clippy::type-complexity` implied by `-D warnings`
+
+The tuple was replaced with `StoredDiscussionPlanHeader`; the subsequent full desktop validation passed. This was a code lint finding, not a transient test failure.
