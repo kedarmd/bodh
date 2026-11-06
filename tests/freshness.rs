@@ -318,3 +318,257 @@ fn load_latest_approval_is_one_use_and_returns_the_complete_candidate() {
     assert_eq!(still_available.context, current.context);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn load_latest_switch_keeps_every_draft_attached_to_the_old_preparation() {
+    let (root, state, current) = fixture();
+    drop(bodh::DraftStore::open(&state).unwrap());
+    drop(bodh::FindingTriageStore::open(&state).unwrap());
+    drop(bodh::DiscussionPublicationStore::open(&state).unwrap());
+    let candidate_context = ReviewContext {
+        context_id: "ctx-latest-all-drafts".into(),
+        head_sha: "d".repeat(40),
+        ..current.context.clone()
+    };
+    let candidate = PreparationStore::open(&state)
+        .unwrap()
+        .save(
+            &candidate_context,
+            "/checkout",
+            "Latest title",
+            Some("Latest description"),
+            &[],
+        )
+        .unwrap();
+    let db = Connection::open(&state).unwrap();
+    let pr = &current.context.pr;
+    let number = i64::try_from(pr.number).unwrap();
+    let source =
+        serde_json::json!({"path":"src/lib.rs","revision":"head","start_line":1,"end_line":1})
+            .to_string();
+    let provenance = serde_json::json!({
+        "preparation_id":current.preparation_id,
+        "context_id":current.context.context_id,
+        "base_sha":current.context.base_sha,
+        "head_sha":current.context.head_sha,
+        "merge_base_sha":current.context.merge_base_sha,
+    })
+    .to_string();
+    db.execute(
+        "INSERT INTO manual_text_drafts(draft_id,context_id,host,owner,repository,number,body,source_json,provenance_json,revision,created_at,updated_at) VALUES('comment-1',?1,?2,?3,?4,?5,'manual comment',?6,?7,1,1,1)",
+        rusqlite::params![current.context.context_id,pr.host,pr.owner,pr.repository,number,source,provenance],
+    ).unwrap();
+    db.execute(
+        "INSERT INTO code_replacement_drafts(draft_id,context_id,host,owner,repository,number,source_json,original_text,replacement,provenance_json,revision,created_at,updated_at) VALUES('replacement-1',?1,?2,?3,?4,?5,?6,'old','new',?7,2,1,1)",
+        rusqlite::params![current.context.context_id,pr.host,pr.owner,pr.repository,number,source,provenance],
+    ).unwrap();
+    db.execute(
+        "INSERT INTO reply_drafts(draft_id,context_id,host,owner,repository,number,thread_id,root_comment_id,body,revision,created_at,updated_at) VALUES('reply-1',?1,?2,?3,?4,?5,'thread-1','42','reply body',3,1,1)",
+        rusqlite::params![current.context.context_id,pr.host,pr.owner,pr.repository,number],
+    ).unwrap();
+    db.execute(
+        "INSERT INTO thread_action_drafts(draft_id,context_id,host,owner,repository,number,thread_id,action,observed_resolved,revision,created_at,updated_at) VALUES('action-1',?1,?2,?3,?4,?5,'thread-1','resolve',0,4,1,1)",
+        rusqlite::params![current.context.context_id,pr.host,pr.owner,pr.repository,number],
+    ).unwrap();
+    db.execute(
+        "INSERT INTO finding_triage_entries(context_id,finding_id,disposition,selected_suggestion_id,manual_feedback,revision,updated_at) VALUES(?1,'finding-1','deferred',NULL,'retain feedback',5,1)",
+        [&current.context.context_id],
+    ).unwrap();
+    db.execute(
+        "INSERT INTO finding_alternative_edits(context_id,finding_id,suggestion_id,body,source_json,original_text,replacement,draft_id,revision,updated_at) VALUES(?1,'finding-1','suggestion-1','edited alternative',?2,'old','new','alternative-1',6,1)",
+        rusqlite::params![current.context.context_id,source],
+    ).unwrap();
+    drop(db);
+
+    let before = bodh::protected_work_snapshot(&state, &current).unwrap();
+    assert_eq!(before.unpublished_draft_count, 5);
+    let approval = bodh::authorize_latest_switch(
+        &state,
+        &current.preparation_id,
+        &candidate.preparation_id,
+        &before.fingerprint,
+    )
+    .unwrap();
+    let selected = bodh::apply_latest_switch_approval(&state, &approval.approval_id).unwrap();
+
+    assert_eq!(selected.preparation_id, candidate.preparation_id);
+    assert_eq!(
+        PreparationStore::open(&state)
+            .unwrap()
+            .load(&current.preparation_id)
+            .unwrap()
+            .context,
+        current.context
+    );
+    let old_drafts = bodh::DraftStore::open(&state)
+        .unwrap()
+        .list(&current.preparation_id)
+        .unwrap();
+    assert_eq!(
+        old_drafts
+            .drafts
+            .iter()
+            .map(|d| d.id.as_str())
+            .collect::<Vec<_>>(),
+        ["comment-1"]
+    );
+    assert_eq!(
+        old_drafts
+            .reply_drafts
+            .iter()
+            .map(|d| d.id.as_str())
+            .collect::<Vec<_>>(),
+        ["reply-1"]
+    );
+    assert_eq!(
+        old_drafts
+            .thread_actions
+            .iter()
+            .map(|d| d.id.as_str())
+            .collect::<Vec<_>>(),
+        ["action-1"]
+    );
+    let new_drafts = bodh::DraftStore::open(&state)
+        .unwrap()
+        .list(&selected.preparation_id)
+        .unwrap();
+    assert!(
+        new_drafts.drafts.is_empty()
+            && new_drafts.reply_drafts.is_empty()
+            && new_drafts.thread_actions.is_empty()
+    );
+    let triage = bodh::FindingTriageStore::open(&state)
+        .unwrap()
+        .list(&current.preparation_id)
+        .unwrap();
+    assert_eq!(
+        triage.entries[0].manual_feedback.as_deref(),
+        Some("retain feedback")
+    );
+    assert_eq!(triage.alternative_edits[0].body, "edited alternative");
+    let new_triage = bodh::FindingTriageStore::open(&state)
+        .unwrap()
+        .list(&selected.preparation_id)
+        .unwrap();
+    assert!(new_triage.entries.is_empty() && new_triage.alternative_edits.is_empty());
+    assert_eq!(
+        bodh::protected_work_snapshot(&state, &current).unwrap(),
+        before
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn concurrent_draft_edit_rejects_load_latest_and_retains_both_preparations() {
+    let (root, state, current) = fixture();
+    drop(bodh::DraftStore::open(&state).unwrap());
+    let candidate_context = ReviewContext {
+        context_id: "ctx-latest-concurrent-edit".into(),
+        head_sha: "e".repeat(40),
+        ..current.context.clone()
+    };
+    let candidate = PreparationStore::open(&state)
+        .unwrap()
+        .save(&candidate_context, "/checkout", "Latest title", None, &[])
+        .unwrap();
+    let before = bodh::protected_work_snapshot(&state, &current).unwrap();
+    let approval = bodh::authorize_latest_switch(
+        &state,
+        &current.preparation_id,
+        &candidate.preparation_id,
+        &before.fingerprint,
+    )
+    .unwrap();
+    let db = Connection::open(&state).unwrap();
+    db.execute(
+        "INSERT INTO manual_text_drafts(draft_id,context_id,host,owner,repository,number,body,source_json,provenance_json,revision,created_at,updated_at) VALUES('comment-race',?1,?2,?3,?4,?5,'edited while preview open',?6,?7,1,1,1)",
+        rusqlite::params![current.context.context_id,current.context.pr.host,current.context.pr.owner,current.context.pr.repository,i64::try_from(current.context.pr.number).unwrap(),serde_json::json!({"path":"src/lib.rs","revision":"head","start_line":1,"end_line":1}).to_string(),serde_json::json!({"preparation_id":current.preparation_id,"context_id":current.context.context_id,"base_sha":current.context.base_sha,"head_sha":current.context.head_sha,"merge_base_sha":current.context.merge_base_sha}).to_string()],
+    ).unwrap();
+    drop(db);
+
+    assert_eq!(
+        bodh::apply_latest_switch_approval(&state, &approval.approval_id)
+            .unwrap_err()
+            .code,
+        "DRAFT_REVISION_STALE"
+    );
+    assert_eq!(
+        PreparationStore::open(&state)
+            .unwrap()
+            .load(&current.preparation_id)
+            .unwrap()
+            .context,
+        current.context
+    );
+    assert_eq!(
+        PreparationStore::open(&state)
+            .unwrap()
+            .load(&candidate.preparation_id)
+            .unwrap()
+            .context,
+        candidate.context
+    );
+    let drafts = bodh::DraftStore::open(&state)
+        .unwrap()
+        .list(&current.preparation_id)
+        .unwrap();
+    assert_eq!(drafts.drafts.len(), 1);
+    assert_eq!(drafts.drafts[0].body, "edited while preview open");
+    assert!(
+        bodh::DraftStore::open(&state)
+            .unwrap()
+            .list(&candidate.preparation_id)
+            .unwrap()
+            .drafts
+            .is_empty()
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected() {
+    let (root, state, current) = fixture();
+    let missing_gh = root.join("missing-gh");
+    let error = bodh::prepare_latest_candidate_with_gh(
+        &current.preparation_id,
+        &state,
+        &OperationControl::default(),
+        &missing_gh,
+    )
+    .unwrap_err();
+    assert!(!error.code.is_empty());
+    assert_eq!(
+        PreparationStore::open(&state)
+            .unwrap()
+            .load(&current.preparation_id)
+            .unwrap()
+            .context,
+        current.context
+    );
+    assert_eq!(
+        bodh::protected_work_snapshot(&state, &current)
+            .unwrap()
+            .unpublished_draft_count,
+        0
+    );
+
+    let cancelled = OperationControl::default();
+    cancelled.cancel();
+    let error = bodh::prepare_latest_candidate_with_gh(
+        &current.preparation_id,
+        &state,
+        &cancelled,
+        &missing_gh,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "CANCELLED");
+    assert_eq!(
+        PreparationStore::open(&state)
+            .unwrap()
+            .load(&current.preparation_id)
+            .unwrap()
+            .context,
+        current.context
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
