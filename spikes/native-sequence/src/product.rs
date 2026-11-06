@@ -227,6 +227,12 @@ pub struct Product {
     finding_feedback_target: Option<String>,
     finding_feedback_body: String,
     finding_feedback_focus: FocusHandle,
+    finding_alternative_edit_target: Option<(String, String)>,
+    finding_alternative_edit_body: String,
+    finding_alternative_edit_replacement: String,
+    finding_alternative_edit_has_replacement: bool,
+    finding_alternative_edit_focus: FocusHandle,
+    finding_alternative_replacement_focus: FocusHandle,
     focused_discussion_thread: Option<String>,
     pending_overview_source: Option<(usize, SourceRef)>,
     diagram_views: Vec<AdaptedDiagram>,
@@ -366,6 +372,12 @@ impl Product {
             finding_feedback_target: None,
             finding_feedback_body: String::new(),
             finding_feedback_focus: cx.focus_handle().tab_stop(true),
+            finding_alternative_edit_target: None,
+            finding_alternative_edit_body: String::new(),
+            finding_alternative_edit_replacement: String::new(),
+            finding_alternative_edit_has_replacement: false,
+            finding_alternative_edit_focus: cx.focus_handle().tab_stop(true),
+            finding_alternative_replacement_focus: cx.focus_handle().tab_stop(true),
             focused_discussion_thread: None,
             pending_overview_source: None,
             diagram_views: Vec::new(),
@@ -6511,6 +6523,12 @@ impl Product {
                         source.clone(),
                     ),
                 };
+                let (suggested_body, suggested_replacement) = match suggestion {
+                    bodh::Suggestion::TextComment { body, .. } => (body.clone(), None),
+                    bodh::Suggestion::CodeReplacement {
+                        body, replacement, ..
+                    } => (body.clone(), Some(replacement.clone())),
+                };
                 let saved_edit = self.finding_triage_snapshot.as_ref().and_then(|snapshot| {
                     snapshot.alternative_edits.iter().find(|edit| {
                         edit.finding_id == finding.id && edit.suggestion_id == suggestion_id
@@ -6551,7 +6569,165 @@ impl Product {
                     move |this, _, _, cx| this.select_finding_source(source_to_open.clone(), cx),
                     cx,
                 ));
+                let editing_this_alternative = self.finding_alternative_edit_target.as_ref()
+                    == Some(&(finding.id.clone(), suggestion_id.clone()));
                 let is_selected = selected_suggestion == Some(suggestion_id.as_str());
+                let edit_finding_id = finding.id.clone();
+                let edit_suggestion_id = suggestion_id.clone();
+                if editing_this_alternative {
+                    detail = detail.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
+                        "Edit this local alternative. Saving does not stage or publish it.",
+                    ));
+                    detail = detail.child(
+                        div()
+                            .id("finding-alternative-edit-body")
+                            .track_focus(&self.finding_alternative_edit_focus)
+                            .min_h(px(72.))
+                            .p_2()
+                            .border_1()
+                            .border_color(rgb(p.border))
+                            .bg(rgb(p.raised))
+                            .child(if self.finding_alternative_edit_body.is_empty() {
+                                "|Alternative feedback".to_owned()
+                            } else {
+                                format!("{}|", self.finding_alternative_edit_body)
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, _| {
+                                    window.focus(&this.finding_alternative_edit_focus)
+                                }),
+                            )
+                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                window.focus(&this.finding_alternative_edit_focus);
+                                let key = event.keystroke.key.as_str();
+                                let command = event.keystroke.modifiers.control
+                                    || event.keystroke.modifiers.platform;
+                                match key {
+                                    "backspace" => {
+                                        this.finding_alternative_edit_body.pop();
+                                    }
+                                    "enter" => this.finding_alternative_edit_body.push('\n'),
+                                    "a" if command => this.finding_alternative_edit_body.clear(),
+                                    text if text.chars().count() == 1 && !command => {
+                                        this.finding_alternative_edit_body.push_str(text)
+                                    }
+                                    _ => return,
+                                }
+                                cx.notify();
+                            })),
+                    );
+                    if suggested_replacement.is_some() {
+                        detail = detail.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(rgb(p.muted))
+                                .child("Proposed replacement"),
+                        );
+                        detail = detail.child(
+                            div()
+                                .id("finding-alternative-edit-replacement")
+                                .track_focus(&self.finding_alternative_replacement_focus)
+                                .min_h(px(72.))
+                                .p_2()
+                                .border_1()
+                                .border_color(rgb(p.border))
+                                .bg(rgb(p.raised))
+                                .child(if self.finding_alternative_edit_replacement.is_empty() {
+                                    "|Replacement code".to_owned()
+                                } else {
+                                    format!("{}|", self.finding_alternative_edit_replacement)
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, window, _| {
+                                        window.focus(&this.finding_alternative_replacement_focus)
+                                    }),
+                                )
+                                .on_key_down(cx.listener(
+                                    |this, event: &KeyDownEvent, window, cx| {
+                                        window.focus(&this.finding_alternative_replacement_focus);
+                                        let key = event.keystroke.key.as_str();
+                                        let command = event.keystroke.modifiers.control
+                                            || event.keystroke.modifiers.platform;
+                                        match key {
+                                            "backspace" => {
+                                                this.finding_alternative_edit_replacement.pop();
+                                            }
+                                            "enter" => {
+                                                this.finding_alternative_edit_replacement.push('\n')
+                                            }
+                                            "a" if command => {
+                                                this.finding_alternative_edit_replacement.clear()
+                                            }
+                                            text if text.chars().count() == 1 && !command => this
+                                                .finding_alternative_edit_replacement
+                                                .push_str(text),
+                                            _ => return,
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                        );
+                    }
+                    let save_finding_id = edit_finding_id.clone();
+                    let save_suggestion_id = edit_suggestion_id.clone();
+                    detail = detail.child(button(
+                        "save-finding-alternative-edit",
+                        if self.finding_action_saving {
+                            "Saving locally…"
+                        } else {
+                            "Save alternative locally"
+                        },
+                        p,
+                        move |this, _, _, cx| {
+                            this.save_finding_alternative_edit(
+                                save_finding_id.clone(),
+                                save_suggestion_id.clone(),
+                                cx,
+                            )
+                        },
+                        cx,
+                    ));
+                } else {
+                    let open_finding_id = edit_finding_id.clone();
+                    let open_suggestion_id = edit_suggestion_id.clone();
+                    let open_body = saved_edit
+                        .map(|edit| edit.body.clone())
+                        .unwrap_or(suggested_body);
+                    let open_replacement = saved_edit
+                        .and_then(|edit| edit.replacement.clone())
+                        .or(suggested_replacement)
+                        .unwrap_or_default();
+                    let has_replacement =
+                        matches!(suggestion, bodh::Suggestion::CodeReplacement { .. });
+                    detail = detail.child(button(
+                        &format!("finding-alternative-edit-{suggestion_index}"),
+                        if is_selected {
+                            "Unstage to edit alternative"
+                        } else {
+                            "Edit alternative"
+                        },
+                        p,
+                        move |this, _, window, cx| {
+                            if is_selected {
+                                this.set_finding_disposition(
+                                    open_finding_id.clone(),
+                                    bodh::FindingDisposition::Unreviewed,
+                                    cx,
+                                );
+                            }
+                            this.finding_alternative_edit_target =
+                                Some((open_finding_id.clone(), open_suggestion_id.clone()));
+                            this.finding_alternative_edit_body = open_body.clone();
+                            this.finding_alternative_edit_replacement = open_replacement.clone();
+                            this.finding_alternative_edit_has_replacement = has_replacement;
+                            window.focus(&this.finding_alternative_edit_focus);
+                            cx.notify();
+                        },
+                        cx,
+                    ));
+                }
                 let action_finding = finding.id.clone();
                 let action_suggestion = suggestion_id.clone();
                 detail = detail.child(button(
@@ -6937,6 +7113,86 @@ impl Product {
                         this.status = Some(format!("Independent feedback saved locally for finding {}. It is not published.",entry.finding_id));
                     }
                     Err(error) => this.error = Some(format!("{}: {}",error.code,error.message)),
+                }
+                cx.notify();
+            });
+        }).detach();
+    }
+
+    fn save_finding_alternative_edit(
+        &mut self,
+        finding_id: String,
+        suggestion_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.finding_action_saving
+            || self.review_plan.as_ref().is_some_and(|plan| {
+                matches!(plan.state.as_str(), "planned" | "sending" | "unknown")
+            })
+        {
+            self.status = Some(
+                "Resolve the current or uncertain publication before editing finding alternatives."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
+        let Some(binding) = self.selected_review.clone() else {
+            return;
+        };
+        let expected_revision = self
+            .finding_triage_snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot.alternative_edits.iter().find(|edit| {
+                    edit.finding_id == finding_id && edit.suggestion_id == suggestion_id
+                })
+            })
+            .map(|edit| edit.revision)
+            .unwrap_or(0);
+        let body = self.finding_alternative_edit_body.clone();
+        let replacement = self.finding_alternative_edit_replacement.clone();
+        let has_replacement = self.finding_alternative_edit_has_replacement;
+        let state = self.preparation_db.clone();
+        let preparation_id = binding.preparation_id.clone();
+        let token = self.operation_epoch.load(Ordering::Relaxed);
+        self.finding_action_saving = true;
+        cx.spawn(async move |weak, cx| {
+            let result = cx.background_executor().spawn(async move {
+                let mut store = bodh::FindingTriageStore::open(Path::new(&state))?;
+                let control = bodh::OperationControl::with_timeout(Duration::from_secs(30));
+                let edit = store.save_alternative_edit(
+                    &preparation_id,
+                    &finding_id,
+                    &suggestion_id,
+                    bodh::FindingAlternativeEditInput {
+                        body: &body,
+                        replacement: has_replacement.then_some(replacement.as_str()),
+                        expected_revision,
+                    },
+                    &control,
+                )?;
+                let triage = store.list(&preparation_id)?;
+                let drafts = DraftStore::open(Path::new(&state))?.list(&preparation_id)?;
+                let replacements = DraftStore::open(Path::new(&state))?.list_replacements(&preparation_id)?;
+                Ok::<_, bodh::ContractError>((edit, triage, drafts, replacements))
+            }).await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.operation_epoch.load(Ordering::Relaxed) != token { return; }
+                this.finding_action_saving = false;
+                match result {
+                    Ok((edit, triage, drafts, replacements)) => {
+                        this.finding_triage_snapshot = Some(triage);
+                        this.draft_snapshot = Some(drafts.clone());
+                        this.replacement_snapshot = Some(replacements);
+                        this.update_draft_counts(drafts.counts);
+                        this.finding_alternative_edit_target = None;
+                        this.status = Some(format!(
+                            "Alternative {} edited locally at revision {}. It is not staged or published.",
+                            edit.suggestion_id, edit.revision
+                        ));
+                    }
+                    Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
                 }
                 cx.notify();
             });
