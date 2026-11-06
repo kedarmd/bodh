@@ -2,7 +2,7 @@ use bodh::{
     DiscussionPublicationStore, PrIdentity, PreparationStore, ReviewContext, ReviewPublicationStore,
 };
 use rusqlite::{Connection, params};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -17,7 +17,7 @@ fn state_path() -> PathBuf {
     root.join("state.sqlite")
 }
 
-fn create_preparation(state: &PathBuf) -> String {
+fn create_preparation(state: &Path) -> String {
     PreparationStore::open(state)
         .unwrap()
         .save(
