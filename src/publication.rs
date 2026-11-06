@@ -110,6 +110,9 @@ pub struct ReviewOperation {
     pub remote_review_id: Option<String>,
     pub remote_url: Option<String>,
     pub failure: Option<String>,
+    /// UTC Unix milliseconds when the durable send transition began.
+    #[serde(default)]
+    pub send_started_at: Option<i64>,
 }
 
 pub struct ReviewPublicationStore {
@@ -163,11 +166,14 @@ impl ReviewPublicationStore {
         match version.unwrap_or(0) {
             0 => db.execute_batch("
                 CREATE TABLE review_intents(preparation_id TEXT PRIMARY KEY NOT NULL REFERENCES preparations(preparation_id), revision INTEGER NOT NULL, intent_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
-                CREATE TABLE review_operations(operation_id TEXT PRIMARY KEY NOT NULL, preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('planned','sending','confirmed','failed','unknown')), payload_json TEXT NOT NULL, remote_review_id TEXT, remote_url TEXT, failure TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+                CREATE TABLE review_operations(operation_id TEXT PRIMARY KEY NOT NULL, preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), fingerprint TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('planned','sending','confirmed','failed','unknown')), payload_json TEXT NOT NULL, remote_review_id TEXT, remote_url TEXT, failure TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, send_started_at INTEGER);
                 CREATE TABLE review_published_drafts(operation_id TEXT NOT NULL REFERENCES review_operations(operation_id), preparation_id TEXT NOT NULL REFERENCES preparations(preparation_id), context_id TEXT NOT NULL, draft_id TEXT NOT NULL, draft_revision INTEGER NOT NULL, PRIMARY KEY(operation_id,draft_id,draft_revision));
                 CREATE UNIQUE INDEX one_unresolved_review_operation ON review_operations(preparation_id) WHERE state IN ('planned','sending','unknown');
-                INSERT INTO review_publication_migrations(version) VALUES(1);").map_err(db_error)?,
-            1 => {},
+                INSERT INTO review_publication_migrations(version) VALUES(2);").map_err(db_error)?,
+            1 => {
+                db.execute_batch("ALTER TABLE review_operations ADD COLUMN send_started_at INTEGER; INSERT INTO review_publication_migrations(version) VALUES(2);").map_err(db_error)?;
+            },
+            2 => {},
             _ => {
                 let _ = db.execute_batch("ROLLBACK;");
                 return Err(ContractError::new("REVIEW_SCHEMA_UNSUPPORTED", "Review publication schema is newer than this application", ""));
@@ -530,6 +536,7 @@ impl ReviewPublicationStore {
             remote_review_id: None,
             remote_url: None,
             failure: None,
+            send_started_at: None,
         })
     }
 
@@ -553,10 +560,12 @@ impl ReviewPublicationStore {
         }
         verify_remote_state(&operation.payload, remote)?;
         verify_replacement_revisions(&tx, &operation.payload)?;
-        tx.execute("UPDATE review_operations SET state='sending',updated_at=?1 WHERE operation_id=?2 AND state='planned'", params![now_ms(), operation_id]).map_err(db_error)?;
+        let started_at = now_ms();
+        tx.execute("UPDATE review_operations SET state='sending',send_started_at=?1,updated_at=?1 WHERE operation_id=?2 AND state='planned'", params![started_at, operation_id]).map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         let mut updated = operation;
         updated.state = "sending".into();
+        updated.send_started_at = Some(started_at);
         Ok(updated)
     }
 
@@ -582,8 +591,8 @@ impl ReviewPublicationStore {
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db_error)?;
-        let payload_json:Option<String>=tx.query_row("SELECT payload_json FROM review_operations WHERE operation_id=?1 AND state='sending'",[operation_id],|row|row.get(0)).optional().map_err(db_error)?;
-        let Some(payload_json) = payload_json else {
+        let record: Option<(String, Option<i64>)> = tx.query_row("SELECT payload_json,send_started_at FROM review_operations WHERE operation_id=?1 AND state='sending'",[operation_id],|row|Ok((row.get(0)?,row.get(1)?))).optional().map_err(db_error)?;
+        let Some((payload_json, _send_started_at)) = record else {
             return Err(ContractError::new(
                 "REVIEW_SEND_STATE_INVALID",
                 "Review operation is not awaiting an acknowledgment",
@@ -600,12 +609,7 @@ impl ReviewPublicationStore {
             ));
         }
         if state == "confirmed" {
-            for comment in payload.comments {
-                tx.execute("INSERT OR IGNORE INTO review_published_drafts(operation_id,preparation_id,context_id,draft_id,draft_revision) VALUES(?1,?2,?3,?4,?5)",params![operation_id,payload.preparation_id,payload.context_id,comment.draft_id,i64::try_from(comment.draft_revision).map_err(|_|state_error())?]).map_err(db_error)?;
-            }
-            for suggestion in payload.suggestions {
-                tx.execute("INSERT OR IGNORE INTO review_published_replacements(operation_id,preparation_id,context_id,draft_id,draft_revision) VALUES(?1,?2,?3,?4,?5)",params![operation_id,payload.preparation_id,payload.context_id,suggestion.draft_id,i64::try_from(suggestion.draft_revision).map_err(|_|state_error())?]).map_err(db_error)?;
-            }
+            record_published_payload(&tx, operation_id, &payload)?;
         }
         tx.commit().map_err(db_error)?;
         self.operation(operation_id)
@@ -613,6 +617,166 @@ impl ReviewPublicationStore {
 
     pub fn operation(&self, operation_id: &str) -> Result<ReviewOperation, ContractError> {
         load_operation(&self.db, operation_id)
+    }
+
+    /// Reconciles an uncertain outcome using a complete, read-only GitHub snapshot.
+    /// The immutable request payload remains unchanged on every path.
+    pub fn reconcile_unknown(
+        &mut self,
+        operation_id: &str,
+        reader: &dyn ReviewOutcomeReader,
+        control: &OperationControl,
+    ) -> Result<ReviewOperation, ContractError> {
+        let operation = self.operation(operation_id)?;
+        if operation.state != "unknown" {
+            return Err(ContractError::new(
+                "REVIEW_RECONCILIATION_NOT_ALLOWED",
+                "Only an unknown review operation can be reconciled",
+                "",
+            ));
+        }
+        let started_at = operation.send_started_at.ok_or_else(|| {
+            ContractError::new(
+                "REVIEW_RECONCILIATION_INCOMPLETE",
+                "The send attempt has no recorded start time",
+                "",
+            )
+        })?;
+        let binding =
+            PreparationStore::open(&self.path)?.load(&operation.payload.preparation_id)?;
+        let snapshot = reader.read(&binding.context.pr, control)?;
+        let Some(data) = snapshot.pointer("/data") else {
+            return Err(reconciliation_unavailable(
+                "GitHub returned no complete data object",
+            ));
+        };
+        if data.get("errors").is_some() {
+            return Err(reconciliation_unavailable("GitHub returned GraphQL errors"));
+        }
+        let pr = data.pointer("/repository/pullRequest").ok_or_else(|| {
+            reconciliation_unavailable("GitHub did not return the requested pull request")
+        })?;
+        let expected_repo = format!(
+            "{}/{}",
+            binding.context.pr.owner, binding.context.pr.repository
+        );
+        if data
+            .pointer("/repository/nameWithOwner")
+            .and_then(Value::as_str)
+            != Some(expected_repo.as_str())
+            || pr.get("number").and_then(Value::as_u64) != Some(binding.context.pr.number as u64)
+        {
+            return self.store_reconciliation_unknown(operation_id, "GitHub evidence does not match this repository and pull request; outcome remains unknown");
+        }
+        let Some(viewer) = data.pointer("/viewer/login").and_then(Value::as_str) else {
+            return Err(reconciliation_unavailable(
+                "GitHub did not identify the authenticated viewer",
+            ));
+        };
+        let reviews = pr
+            .pointer("/reviews/nodes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| reconciliation_unavailable("GitHub review listing is incomplete"))?;
+        let threads = pr
+            .pointer("/reviewThreads/nodes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| reconciliation_unavailable("GitHub thread listing is incomplete"))?;
+        let complete = pr
+            .pointer("/reviews/pageInfo/hasNextPage")
+            .and_then(Value::as_bool)
+            == Some(false)
+            && pr
+                .pointer("/reviewThreads/pageInfo/hasNextPage")
+                .and_then(Value::as_bool)
+                == Some(false)
+            && threads.iter().all(|t| {
+                t.pointer("/comments/pageInfo/hasNextPage")
+                    .and_then(Value::as_bool)
+                    == Some(false)
+            });
+        if !complete {
+            return self.store_reconciliation_unknown(
+                operation_id,
+                "GitHub returned an incomplete review listing; outcome remains unknown",
+            );
+        }
+        let lower = started_at.saturating_sub(2_000);
+        let upper = now_ms().saturating_add(30_000);
+        let expected_event = match operation.payload.event {
+            ReviewEvent::Comment => "COMMENTED",
+            ReviewEvent::Approve => "APPROVED",
+            ReviewEvent::RequestChanges => "CHANGES_REQUESTED",
+        };
+        let mut matches = Vec::new();
+        for review in reviews {
+            if review.pointer("/author/login").and_then(Value::as_str) != Some(viewer)
+                || review.pointer("/state").and_then(Value::as_str) != Some(expected_event)
+                || review
+                    .pointer("/body")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    != operation.payload.summary.as_deref().unwrap_or("")
+                || review.pointer("/commit/oid").and_then(Value::as_str)
+                    != Some(operation.payload.head_sha.as_str())
+                || review
+                    .pointer("/submittedAt")
+                    .and_then(Value::as_str)
+                    .and_then(parse_rfc3339_ms)
+                    .is_none_or(|t| t < lower || t > upper)
+            {
+                continue;
+            }
+            let Some(review_id) = review.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if remote_review_comments(threads, review_id)
+                == Some(expected_review_comments(&operation.payload))
+            {
+                matches.push(review);
+            }
+        }
+        match matches.as_slice() {
+            [review] => {
+                let id = review
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let url = review.get("url").and_then(Value::as_str).map(str::to_owned);
+                let tx = self
+                    .db
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(db_error)?;
+                let changed = tx.execute("UPDATE review_operations SET state='confirmed',remote_review_id=?1,remote_url=?2,failure=NULL,updated_at=?3 WHERE operation_id=?4 AND state='unknown'", params![id,url,now_ms(),operation_id]).map_err(db_error)?;
+                if changed != 1 {
+                    return Err(ContractError::new(
+                        "REVIEW_RECONCILIATION_NOT_ALLOWED",
+                        "Review operation changed while reconciliation was running",
+                        "",
+                    ));
+                }
+                record_published_payload(&tx, operation_id, &operation.payload)?;
+                tx.commit().map_err(db_error)?;
+                self.operation(operation_id)
+            }
+            [] => self.store_reconciliation_unknown(
+                operation_id,
+                "No unique matching GitHub review was found; outcome remains unknown",
+            ),
+            _ => self.store_reconciliation_unknown(
+                operation_id,
+                "Ambiguous: multiple matching GitHub reviews were found; outcome remains unknown",
+            ),
+        }
+    }
+
+    fn store_reconciliation_unknown(
+        &self,
+        operation_id: &str,
+        message: &str,
+    ) -> Result<ReviewOperation, ContractError> {
+        self.db.execute("UPDATE review_operations SET failure=?1,updated_at=?2 WHERE operation_id=?3 AND state='unknown'", params![bound(message),now_ms(),operation_id]).map_err(db_error)?;
+        self.operation(operation_id)
     }
 
     /// Returns an unresolved operation for the review so a restart can present
@@ -768,6 +932,192 @@ pub enum SendOutcome {
 /// Minimal transport boundary makes controlled `gh` fixtures replace publication safely.
 pub trait ReviewPublisher {
     fn publish(&self, payload: &ReviewPayload, control: &OperationControl) -> SendOutcome;
+}
+
+/// Read-only boundary used to inspect an uncertain grouped review outcome.
+pub trait ReviewOutcomeReader {
+    fn read(
+        &self,
+        pr: &crate::PrIdentity,
+        control: &OperationControl,
+    ) -> Result<Value, ContractError>;
+}
+
+/// Reads reviews, threads, and the authenticated viewer through a read-only GraphQL query.
+pub struct GhReviewOutcomeReader {
+    pub executable: PathBuf,
+    pub checkout: PathBuf,
+    pub timeout: Duration,
+}
+
+impl ReviewOutcomeReader for GhReviewOutcomeReader {
+    fn read(
+        &self,
+        pr: &crate::PrIdentity,
+        control: &OperationControl,
+    ) -> Result<Value, ContractError> {
+        let query = "query($owner:String!,$name:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$name){nameWithOwner pullRequest(number:$number){number reviews(first:100){pageInfo{hasNextPage} nodes{id url body state submittedAt author{login} commit{oid}}} reviewThreads(first:100){pageInfo{hasNextPage} nodes{path line startLine diffSide startDiffSide comments(first:100){pageInfo{hasNextPage} nodes{id body pullRequestReview{id}}}}}}}}}";
+        let input = json!({"query":query,"variables":{"owner":pr.owner,"name":pr.repository,"number":pr.number}});
+        let output = run_gh_json(
+            &self.executable,
+            &self.checkout,
+            &input,
+            control,
+            self.timeout,
+        )
+        .map_err(|e| {
+            reconciliation_unavailable(&match e {
+                ProcessFailure::NotStarted(m) | ProcessFailure::Uncertain(m) => m,
+            })
+        })?;
+        if !output.status.success() {
+            return Err(reconciliation_unavailable(&String::from_utf8_lossy(
+                &output.stderr,
+            )));
+        }
+        let value: Value = serde_json::from_slice(&output.stdout)
+            .map_err(|_| reconciliation_unavailable("GitHub returned invalid JSON"))?;
+        if value.get("errors").is_some() {
+            return Err(reconciliation_unavailable("GitHub returned GraphQL errors"));
+        }
+        Ok(value)
+    }
+}
+
+fn reconciliation_unavailable(message: &str) -> ContractError {
+    ContractError::new("REVIEW_RECONCILIATION_UNAVAILABLE", &bound(message), "")
+}
+
+fn expected_review_comments(payload: &ReviewPayload) -> Vec<(String, i64, i64, String, String)> {
+    let mut expected: Vec<_> = payload
+        .comments
+        .iter()
+        .map(|c| {
+            (
+                c.source.path.clone(),
+                c.source.start_line as i64,
+                c.source.end_line as i64,
+                c.body.clone(),
+                if c.source.revision == Revision::Head {
+                    "RIGHT".into()
+                } else {
+                    "LEFT".into()
+                },
+            )
+        })
+        .collect();
+    expected.extend(payload.suggestions.iter().map(|c| {
+        (
+            c.source.path.clone(),
+            c.source.start_line as i64,
+            c.source.end_line as i64,
+            c.body.clone(),
+            if c.source.revision == Revision::Head {
+                "RIGHT".into()
+            } else {
+                "LEFT".into()
+            },
+        )
+    }));
+    expected.sort();
+    expected
+}
+
+/// Missing fields or unsupported diff-side metadata fail closed.
+fn remote_review_comments(
+    threads: &[Value],
+    review_id: &str,
+) -> Option<Vec<(String, i64, i64, String, String)>> {
+    let mut comments = Vec::new();
+    for thread in threads {
+        let path = thread.get("path")?.as_str()?.to_owned();
+        let line = thread.get("line")?.as_i64()?;
+        let start = thread
+            .get("startLine")
+            .filter(|v| !v.is_null())
+            .map(Value::as_i64)
+            .flatten()
+            .unwrap_or(line);
+        let side = thread.get("diffSide")?.as_str()?.to_owned();
+        let values = thread.pointer("/comments/nodes")?.as_array()?;
+        for comment in values {
+            if comment
+                .pointer("/pullRequestReview/id")
+                .and_then(Value::as_str)
+                == Some(review_id)
+            {
+                comments.push((
+                    path.clone(),
+                    start,
+                    line,
+                    comment.get("body")?.as_str()?.to_owned(),
+                    side.clone(),
+                ));
+            }
+        }
+    }
+    comments.sort();
+    Some(comments)
+}
+
+/// Parse RFC3339 timestamps to Unix milliseconds without accepting malformed dates.
+fn parse_rfc3339_ms(value: &str) -> Option<i64> {
+    let (date, clock) = value.split_once('T')?;
+    let mut d = date.split('-');
+    let year: i64 = d.next()?.parse().ok()?;
+    let month: i64 = d.next()?.parse().ok()?;
+    let day: i64 = d.next()?.parse().ok()?;
+    if d.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let tz_pos = clock.find(['Z', '+', '-'])?;
+    let time = &clock[..tz_pos];
+    let zone = &clock[tz_pos..];
+    let mut t = time.split(':');
+    let hour: i64 = t.next()?.parse().ok()?;
+    let minute: i64 = t.next()?.parse().ok()?;
+    let sec_fraction = t.next()?;
+    if t.next().is_some() || hour > 23 || minute > 59 {
+        return None;
+    }
+    let (sec, frac) = sec_fraction.split_once('.').unwrap_or((sec_fraction, ""));
+    let second: i64 = sec.parse().ok()?;
+    if second > 59 || !frac.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let millis: i64 = if frac.is_empty() {
+        0
+    } else {
+        format!("{:0<3}", &frac[..frac.len().min(3)]).parse().ok()?
+    };
+    let offset = if zone == "Z" {
+        0
+    } else {
+        if zone.len() != 6 || &zone[3..4] != ":" {
+            return None;
+        }
+        let sign = if zone.starts_with('+') {
+            1
+        } else if zone.starts_with('-') {
+            -1
+        } else {
+            return None;
+        };
+        let oh: i64 = zone[1..3].parse().ok()?;
+        let om: i64 = zone[4..6].parse().ok()?;
+        if oh > 23 || om > 59 {
+            return None;
+        }
+        sign * (oh * 3600 + om * 60)
+    };
+    let y = year - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some((days * 86400 + hour * 3600 + minute * 60 + second - offset) * 1000 + millis)
 }
 
 pub struct GhReviewPublisher {
@@ -1057,11 +1407,12 @@ type OperationRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<i64>,
 );
 
 fn load_operation(db: &Connection, id: &str) -> Result<ReviewOperation, ContractError> {
-    let row: Option<OperationRow> = db.query_row("SELECT fingerprint,state,payload_json,remote_review_id,remote_url,failure FROM review_operations WHERE operation_id=?1", [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional().map_err(db_error)?;
-    let Some((fingerprint, state, payload, remote_id, url, failure)) = row else {
+    let row: Option<OperationRow> = db.query_row("SELECT fingerprint,state,payload_json,remote_review_id,remote_url,failure,send_started_at FROM review_operations WHERE operation_id=?1", [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).optional().map_err(db_error)?;
+    let Some((fingerprint, state, payload, remote_id, url, failure, send_started_at)) = row else {
         return Err(ContractError::new(
             "REVIEW_OPERATION_NOT_FOUND",
             "Review operation was not found",
@@ -1076,8 +1427,23 @@ fn load_operation(db: &Connection, id: &str) -> Result<ReviewOperation, Contract
         remote_review_id: remote_id,
         remote_url: url,
         failure,
+        send_started_at,
     })
 }
+fn record_published_payload(
+    tx: &rusqlite::Transaction<'_>,
+    operation_id: &str,
+    payload: &ReviewPayload,
+) -> Result<(), ContractError> {
+    for comment in &payload.comments {
+        tx.execute("INSERT OR IGNORE INTO review_published_drafts(operation_id,preparation_id,context_id,draft_id,draft_revision) VALUES(?1,?2,?3,?4,?5)", params![operation_id,payload.preparation_id,payload.context_id,comment.draft_id,i64::try_from(comment.draft_revision).map_err(|_|state_error())?]).map_err(db_error)?;
+    }
+    for suggestion in &payload.suggestions {
+        tx.execute("INSERT OR IGNORE INTO review_published_replacements(operation_id,preparation_id,context_id,draft_id,draft_revision) VALUES(?1,?2,?3,?4,?5)", params![operation_id,payload.preparation_id,payload.context_id,suggestion.draft_id,i64::try_from(suggestion.draft_revision).map_err(|_|state_error())?]).map_err(db_error)?;
+    }
+    Ok(())
+}
+
 fn verify_remote_state(
     payload: &ReviewPayload,
     remote: &RemoteReviewState,
