@@ -930,25 +930,72 @@ impl DraftStore {
         candidate_preparation_id: &str,
         control: &OperationControl,
     ) -> Result<Vec<AnchorRepairPreview>, ContractError> {
+        Ok(self
+            .preview_anchor_repairs_from_preparations(
+                &[source_preparation_id.to_owned()],
+                candidate_preparation_id,
+                control,
+            )?
+            .into_iter()
+            .map(|(_, preview)| preview)
+            .collect())
+    }
+
+    /// Compares drafts from multiple earlier preparations against one candidate
+    /// diff. The index is shared and each result retains its originating review.
+    pub fn preview_anchor_repairs_from_preparations(
+        &self,
+        source_preparation_ids: &[String],
+        candidate_preparation_id: &str,
+        control: &OperationControl,
+    ) -> Result<Vec<(String, AnchorRepairPreview)>, ContractError> {
         let preparations = PreparationStore::open(&self.path)?;
-        let source_binding = preparations.load(source_preparation_id)?;
         let candidate = preparations.load(candidate_preparation_id)?;
-        require_same_pull_request(&source_binding, &candidate)?;
         let index = diff_index(Path::new(&candidate.checkout), &candidate.context, control)?;
-        let old = self.list(source_preparation_id)?;
-        let replacements = self.list_replacements(source_preparation_id)?;
+        let mut previews = Vec::new();
+        for source_preparation_id in source_preparation_ids {
+            if source_preparation_id == candidate_preparation_id {
+                continue;
+            }
+            let source = preparations.load(source_preparation_id)?;
+            require_same_pull_request(&source, &candidate)?;
+            let old = self.list(source_preparation_id)?;
+            let replacements = self.list_replacements(source_preparation_id)?;
+            for preview in self.preview_anchor_repairs_with_index(
+                &source,
+                &candidate,
+                &index,
+                old,
+                replacements,
+                control,
+            )? {
+                previews.push((source_preparation_id.clone(), preview));
+            }
+        }
+        Ok(previews)
+    }
+
+    fn preview_anchor_repairs_with_index(
+        &self,
+        source: &PreparedBinding,
+        candidate: &PreparedBinding,
+        index: &crate::diff::DiffIndex,
+        old: DraftSnapshot,
+        replacements: CodeReplacementSnapshot,
+        control: &OperationControl,
+    ) -> Result<Vec<AnchorRepairPreview>, ContractError> {
         let mut previews = Vec::with_capacity(old.drafts.len() + replacements.drafts.len());
         for draft in old.drafts {
             let reattached_draft_id = repaired_draft_id(
                 &self.db,
-                &source_binding.context.context_id,
+                &source.context.context_id,
                 &draft.id,
                 draft.revision,
                 &candidate.context.context_id,
             )?;
             let exact_text = read_source(
-                Path::new(&source_binding.checkout),
-                &source_binding.context,
+                Path::new(&source.checkout),
+                &source.context,
                 &draft.source,
                 control,
             )
@@ -966,7 +1013,7 @@ impl DraftStore {
                         &candidate.context,
                         &draft.source,
                         text,
-                        &index,
+                        index,
                         control,
                     )?,
                     None => (
@@ -991,7 +1038,7 @@ impl DraftStore {
         for draft in replacements.drafts {
             let reattached_draft_id = repaired_draft_id(
                 &self.db,
-                &source_binding.context.context_id,
+                &source.context.context_id,
                 &draft.id,
                 draft.revision,
                 &candidate.context.context_id,
@@ -1008,7 +1055,7 @@ impl DraftStore {
                     &candidate.context,
                     &draft.source,
                     &draft.original_text,
-                    &index,
+                    index,
                     control,
                 )?
             };
@@ -1423,6 +1470,11 @@ impl DraftStore {
             [draft_id],
         )
         .map_err(db_error)?;
+        tx.execute(
+            "DELETE FROM draft_anchor_repairs WHERE candidate_context_id=?1 AND candidate_draft_id=?2",
+            params![prepared.context.context_id, draft_id],
+        )
+        .map_err(db_error)?;
         advance_workspace(&tx, pr, current)?;
         tx.commit().map_err(db_error)?;
         self.list_replacements(preparation_id)
@@ -1696,6 +1748,11 @@ impl DraftStore {
         tx.execute(
             "DELETE FROM manual_text_drafts WHERE draft_id=?1",
             [draft_id],
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            "DELETE FROM draft_anchor_repairs WHERE candidate_context_id=?1 AND candidate_draft_id=?2",
+            params![prepared.context.context_id, draft_id],
         )
         .map_err(db_error)?;
         let _workspace_revision = advance_workspace(&tx, pr, current_workspace)?;

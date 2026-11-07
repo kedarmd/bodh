@@ -1,0 +1,7 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.23s
+     Running tests/manual_drafts.rs (target/debug/deps/manual_drafts-d91f351bc1fae2d1)
+
+running 1 test
+test anchor_repair_preview_collects_drafts_from_every_earlier_preparation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.42s

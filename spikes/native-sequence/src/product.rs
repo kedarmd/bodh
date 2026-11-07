@@ -92,6 +92,12 @@ struct PriorSourcePreview {
     error: Option<String>,
 }
 
+#[derive(Clone)]
+struct AnchorRepairPreviewItem {
+    source_preparation_id: String,
+    preview: AnchorRepairPreview,
+}
+
 #[derive(Clone, Copy)]
 struct Palette {
     canvas: u32,
@@ -215,8 +221,7 @@ pub struct Product {
     latest_switch_preview: Option<bodh::LatestSwitchPreview>,
     freshness_loading: bool,
     last_freshness_check: Option<std::time::Instant>,
-    anchor_repair_source_id: Option<String>,
-    anchor_repair_previews: Vec<AnchorRepairPreview>,
+    anchor_repair_previews: Vec<AnchorRepairPreviewItem>,
     anchor_repair_loading: bool,
     committed_overview: CommittedOverviewView,
     overview_loading: bool,
@@ -362,7 +367,6 @@ impl Product {
             latest_switch_preview: None,
             freshness_loading: false,
             last_freshness_check: None,
-            anchor_repair_source_id: None,
             anchor_repair_previews: Vec::new(),
             anchor_repair_loading: false,
             committed_overview: CommittedOverviewView::default(),
@@ -1421,7 +1425,6 @@ impl Product {
                         this.selected_review = Some(binding.clone());
                         this.clear_publication_views();
                         this.refresh_committed_overview(cx);
-                        this.refresh_anchor_repair_previews(cx);
                         this.update_draft_counts(drafts.counts);
                         this.active_tab = this.prefs.active_tab.unwrap_or(WorkspaceTab::Overview);
                         if let Some(saved) = this
@@ -1458,6 +1461,9 @@ impl Product {
                                 this.persist_navigation();
                             }
                         }
+                        // Restoring a saved file selection cancels pending workspace
+                        // operations; start the anchor scan after that restoration.
+                        this.refresh_anchor_repair_previews(cx);
                     }
                     Err(error) => this.error = Some(format!("{}: {}", error.code, error.message)),
                 }
@@ -3297,7 +3303,6 @@ impl Product {
 
     fn refresh_anchor_repair_previews(&mut self, cx: &mut Context<Self>) {
         let Some(candidate) = self.selected_review.clone() else {
-            self.anchor_repair_source_id = None;
             self.anchor_repair_previews.clear();
             self.anchor_repair_loading = false;
             return;
@@ -3320,33 +3325,26 @@ impl Product {
         let control = OperationControl::with_timeout(Duration::from_secs(45));
         let token = self.operation_epoch.load(Ordering::Relaxed);
         self.anchor_repair_loading = true;
-        self.anchor_repair_source_id = None;
         self.anchor_repair_previews.clear();
         cx.spawn(async move |weak, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let store = DraftStore::open(Path::new(&state))?;
-                    for source_id in sources {
-                        let Ok(text) = store.list(&source_id) else {
-                            continue;
-                        };
-                        let Ok(replacements) = store.list_replacements(&source_id) else {
-                            continue;
-                        };
-                        if text.drafts.is_empty() && replacements.drafts.is_empty() {
-                            continue;
-                        }
-                        let previews = store.preview_anchor_repairs(
-                            &source_id,
-                            &candidate_id_for_work,
-                            &control,
-                        )?;
-                        if !previews.is_empty() {
-                            return Ok::<_, bodh::ContractError>(Some((source_id, previews)));
-                        }
-                    }
-                    Ok(None)
+                    let previews = store.preview_anchor_repairs_from_preparations(
+                        &sources,
+                        &candidate_id_for_work,
+                        &control,
+                    )?;
+                    Ok::<_, bodh::ContractError>(
+                        previews
+                            .into_iter()
+                            .map(|(source_preparation_id, preview)| AnchorRepairPreviewItem {
+                                source_preparation_id,
+                                preview,
+                            })
+                            .collect::<Vec<_>>(),
+                    )
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -3360,14 +3358,7 @@ impl Product {
                 }
                 this.anchor_repair_loading = false;
                 match result {
-                    Ok(Some((source_id, previews))) => {
-                        this.anchor_repair_source_id = Some(source_id);
-                        this.anchor_repair_previews = previews;
-                    }
-                    Ok(None) => {
-                        this.anchor_repair_source_id = None;
-                        this.anchor_repair_previews.clear();
-                    }
+                    Ok(previews) => this.anchor_repair_previews = previews,
                     Err(error) => {
                         this.error = Some(format!("{}: {}", error.code, error.message));
                     }
@@ -3387,20 +3378,19 @@ impl Product {
         if self.anchor_repair_loading || self.draft_saving {
             return;
         }
-        let (Some(candidate), Some(source_id)) = (
-            self.selected_review.clone(),
-            self.anchor_repair_source_id.clone(),
-        ) else {
+        let Some(candidate) = self.selected_review.clone() else {
             return;
         };
-        let Some(preview) = self
+        let Some(item) = self
             .anchor_repair_previews
             .iter()
-            .find(|preview| preview.draft_id == draft_id)
+            .find(|item| item.preview.draft_id == draft_id)
             .cloned()
         else {
             return;
         };
+        let source_id = item.source_preparation_id;
+        let preview = item.preview;
         let expected_workspace_revision = self
             .draft_snapshot
             .as_ref()
@@ -3414,6 +3404,18 @@ impl Product {
         let state = self.preparation_db.clone();
         let candidate_id = candidate.preparation_id.clone();
         let candidate_id_for_work = candidate_id.clone();
+        let source_ids = self
+            .prefs
+            .recent
+            .iter()
+            .filter(|review| {
+                review.preparation_id != candidate_id
+                    && review.owner == candidate.context.pr.owner
+                    && review.repository == candidate.context.pr.repository
+                    && review.number == candidate.context.pr.number
+            })
+            .map(|review| review.preparation_id.clone())
+            .collect::<Vec<_>>();
         let token = self.operation_epoch.load(Ordering::Relaxed);
         let control = OperationControl::with_timeout(Duration::from_secs(30));
         self.anchor_repair_loading = true;
@@ -3452,12 +3454,19 @@ impl Product {
                     };
                     let text = store.list(&candidate_id_for_work)?;
                     let replacements = store.list_replacements(&candidate_id_for_work)?;
-                    let previews = store.preview_anchor_repairs(
-                        &source_id,
-                        &candidate_id_for_work,
-                        &control,
-                    )?;
-                    Ok::<_, bodh::ContractError>((message, text, replacements, previews))
+                    let all_previews = store
+                        .preview_anchor_repairs_from_preparations(
+                            &source_ids,
+                            &candidate_id_for_work,
+                            &control,
+                        )?
+                        .into_iter()
+                        .map(|(source_preparation_id, preview)| AnchorRepairPreviewItem {
+                            source_preparation_id,
+                            preview,
+                        })
+                        .collect::<Vec<_>>();
+                    Ok::<_, bodh::ContractError>((message, text, replacements, all_previews))
                 })
                 .await;
             let _ = weak.update(cx, |this, cx| {
@@ -8532,7 +8541,8 @@ impl Product {
                 .child("A relocation is only a proposal. Confirm it after checking the exact text and both locations; the original draft stays on its earlier review."),
         );
         let selected_source = self.source_ref.clone();
-        for preview in self.anchor_repair_previews.clone() {
+        for item in self.anchor_repair_previews.clone() {
+            let preview = item.preview;
             let old_location = anchor_label(&preview.source);
             let status = match preview.status {
                 AnchorRepairStatus::Current => "Current anchor remains valid",
@@ -8603,7 +8613,7 @@ impl Product {
                 if let Some(proposed) = preview.proposed_source.clone() {
                     let id = preview.draft_id.clone();
                     card = card.child(button(
-                        &format!("confirm-anchor-repair-{id}"),
+                        &format!("confirm-anchor-repair-{}-{id}", item.source_preparation_id),
                         "Confirm proposed relocation",
                         p,
                         move |this, _, _, cx| {
@@ -8624,7 +8634,7 @@ impl Product {
                 {
                     let id = preview.draft_id.clone();
                     card = card.child(button(
-                        &format!("reattach-anchor-here-{id}"),
+                        &format!("reattach-anchor-here-{}-{id}", item.source_preparation_id),
                         "Attach to selected diff line",
                         p,
                         move |this, _, _, cx| {

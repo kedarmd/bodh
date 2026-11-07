@@ -284,7 +284,7 @@ fn moved_exact_anchor_is_proposed_and_requires_explicit_reattachment() {
         )
         .unwrap();
     assert_eq!(copied_again.draft.id, copied.draft.id);
-    let reopened = DraftStore::open(&fixture.state).unwrap();
+    let mut reopened = DraftStore::open(&fixture.state).unwrap();
     let recovered = reopened
         .preview_anchor_repairs(
             &fixture.preparation_id,
@@ -297,6 +297,107 @@ fn moved_exact_anchor_is_proposed_and_requires_explicit_reattachment() {
         recovered[0].reattached_draft_id.as_deref(),
         Some(copied.draft.id.as_str())
     );
+
+    let discarded = reopened
+        .discard(
+            &candidate,
+            &copied.draft.id,
+            copied.workspace_revision,
+            copied.draft.revision,
+        )
+        .unwrap();
+    assert!(discarded.drafts.is_empty());
+    let available = reopened
+        .preview_anchor_repairs(
+            &fixture.preparation_id,
+            &candidate,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_eq!(available[0].status, AnchorRepairStatus::RelocationProposed);
+    let replacement_copy = reopened
+        .reattach_text_comment(
+            &fixture.preparation_id,
+            &candidate,
+            &old.draft.id,
+            old.draft.revision,
+            discarded.workspace_revision,
+            &proposed,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    assert_ne!(replacement_copy.draft.id, copied.draft.id);
+    assert_eq!(
+        reopened.list(&fixture.preparation_id).unwrap().drafts.len(),
+        1
+    );
+}
+
+#[test]
+fn anchor_repair_preview_collects_drafts_from_every_earlier_preparation() {
+    let fixture = Fixture::new();
+    let preparations = PreparationStore::open(&fixture.state).unwrap();
+    let original = preparations.load(&fixture.preparation_id).unwrap();
+    let second_context = bodh::ReviewContext {
+        context_id: "manual-draft-second-source-context".into(),
+        ..original.context.clone()
+    };
+    let second_files = diff_index(&fixture.repo, &second_context, &OperationControl::default())
+        .unwrap()
+        .files;
+    let second_source = preparations
+        .save(
+            &second_context,
+            &original.checkout,
+            "Second earlier preparation",
+            original.description.as_deref(),
+            &second_files,
+        )
+        .unwrap()
+        .preparation_id;
+    let mut drafts = DraftStore::open(&fixture.state).unwrap();
+    let first_draft = drafts
+        .save(
+            &fixture.preparation_id,
+            None,
+            "First preparation draft.",
+            &fixture.source,
+            0,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    drafts
+        .save(
+            &second_source,
+            None,
+            "Second preparation draft.",
+            &fixture.source,
+            1,
+            0,
+            &OperationControl::default(),
+        )
+        .unwrap();
+    let candidate = prepare_candidate(
+        &fixture,
+        "// inserted line\nfn main() {\n    let count = 2;\n}\n",
+        "manual-draft-multiple-source-context",
+    );
+
+    let previews = drafts
+        .preview_anchor_repairs_from_preparations(
+            &[fixture.preparation_id.clone(), second_source.clone()],
+            &candidate,
+            &OperationControl::default(),
+        )
+        .unwrap();
+
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0].0, fixture.preparation_id);
+    assert_eq!(previews[0].1.draft_id, first_draft.draft.id);
+    assert_eq!(previews[1].0, second_source);
+    assert_eq!(previews[1].1.status, AnchorRepairStatus::RelocationProposed);
+    assert_eq!(previews[0].1.status, AnchorRepairStatus::RelocationProposed);
 }
 
 #[test]
