@@ -16,7 +16,7 @@ use std::{
     os::fd::AsRawFd,
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{ChildStdin, Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -1496,64 +1496,102 @@ fn run_gh_process(
         .process_group(0)
         .spawn()
         .map_err(|e| ProcessFailure::NotStarted(format!("Cannot start gh: {e}")))?;
+    let started = std::time::Instant::now();
     let out = child.stdout.take().expect("piped stdout");
     let err = child.stderr.take().expect("piped stderr");
-    if let Err(error) = set_nonblocking(&out).and_then(|()| set_nonblocking(&err)) {
+    let stdin = child.stdin.take();
+    if input.is_some() && stdin.is_none() {
+        kill_process_group(&mut child);
+        let _ = child.wait();
+        return Err(ProcessFailure::Uncertain(
+            "Could not open the prepared request pipe after starting gh".into(),
+        ));
+    }
+    let setup = set_nonblocking(&out).and_then(|()| set_nonblocking(&err));
+    let setup = match (stdin.as_ref(), setup) {
+        (Some(stdin), Ok(())) => set_nonblocking(stdin),
+        (_, result) => result,
+    };
+    if let Err(error) = setup {
         kill_process_group(&mut child);
         let _ = child.wait();
         return Err(ProcessFailure::Uncertain(format!(
-            "Could not prepare bounded GitHub output readers: {error}"
+            "Could not prepare bounded GitHub process pipes: {error}"
         )));
     }
-    let stop_readers = Arc::new(AtomicBool::new(false));
-    let out_stop = Arc::clone(&stop_readers);
-    let err_stop = Arc::clone(&stop_readers);
+    let stop_io = Arc::new(AtomicBool::new(false));
+    let out_stop = Arc::clone(&stop_io);
+    let err_stop = Arc::clone(&stop_io);
     let out_reader = std::thread::spawn(move || read_bounded_output(out, 1_048_577, out_stop));
     let err_reader = std::thread::spawn(move || read_bounded_output(err, 65_537, err_stop));
-    if let Some(input) = input
-        && let Some(mut stdin) = child.stdin.take()
-        && stdin.write_all(input.to_string().as_bytes()).is_err()
-    {
-        stop_readers.store(true, Ordering::Release);
-        kill_process_group(&mut child);
-        let _ = child.wait();
-        let _ = out_reader.join();
-        let _ = err_reader.join();
-        return Err(ProcessFailure::Uncertain(
-            "Could not deliver the prepared request after starting gh".into(),
-        ));
-    }
-    let started = std::time::Instant::now();
-    let status = loop {
+    let writer = match (input, stdin) {
+        (Some(input), Some(stdin)) => {
+            let stop_writer = Arc::clone(&stop_io);
+            let bytes = input.to_string().into_bytes();
+            Some(std::thread::spawn(move || {
+                write_bounded_input(stdin, bytes, stop_writer)
+            }))
+        }
+        _ => None,
+    };
+    let mut status = None;
+    loop {
         if control.check().is_err() || started.elapsed() >= timeout {
-            stop_readers.store(true, Ordering::Release);
+            stop_io.store(true, Ordering::Release);
             kill_process_group(&mut child);
             let _ = child.wait();
+            if let Some(writer) = writer {
+                let _ = writer.join();
+            }
             let _ = out_reader.join();
             let _ = err_reader.join();
             return Err(ProcessFailure::Uncertain(
-                "Timed out or cancelled after starting GitHub publication; inspect remote state"
-                    .into(),
+                "Timed out or cancelled during GitHub publication I/O; inspect remote state".into(),
             ));
         }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => {
-                stop_readers.store(true, Ordering::Release);
-                kill_process_group(&mut child);
-                let _ = child.wait();
-                let _ = out_reader.join();
-                let _ = err_reader.join();
-                return Err(ProcessFailure::Uncertain(format!(
-                    "Could not determine publication outcome: {e}"
-                )));
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(Some(exit)) => status = Some(exit),
+                Ok(None) => {}
+                Err(error) => {
+                    stop_io.store(true, Ordering::Release);
+                    kill_process_group(&mut child);
+                    let _ = child.wait();
+                    if let Some(writer) = writer {
+                        let _ = writer.join();
+                    }
+                    let _ = out_reader.join();
+                    let _ = err_reader.join();
+                    return Err(ProcessFailure::Uncertain(format!(
+                        "Could not determine publication outcome: {error}"
+                    )));
+                }
             }
         }
-    };
+        let writer_finished = writer
+            .as_ref()
+            .is_none_or(std::thread::JoinHandle::is_finished);
+        if status.is_some() && writer_finished {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let status = status.expect("the child status was checked before leaving the loop");
+    if let Some(writer) = writer {
+        writer
+            .join()
+            .map_err(|_| {
+                ProcessFailure::Uncertain("Could not deliver the prepared request".into())
+            })?
+            .map_err(|_| {
+                ProcessFailure::Uncertain(
+                    "Could not deliver the complete prepared request after starting gh".into(),
+                )
+            })?;
+    }
     while !out_reader.is_finished() || !err_reader.is_finished() {
         if control.check().is_err() || started.elapsed() >= timeout {
-            stop_readers.store(true, Ordering::Release);
+            stop_io.store(true, Ordering::Release);
             kill_process_group(&mut child);
             let _ = child.wait();
             let _ = out_reader.join();
@@ -1631,6 +1669,32 @@ fn read_bounded_output<R: Read>(
             Err(error) => return (Err(error), bytes),
         }
     }
+}
+
+fn write_bounded_input(
+    mut stream: ChildStdin,
+    bytes: Vec<u8>,
+    stop: Arc<AtomicBool>,
+) -> io::Result<()> {
+    let mut written = 0;
+    while written < bytes.len() {
+        if stop.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "request delivery cancelled",
+            ));
+        }
+        match stream.write(&bytes[written..]) {
+            Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
+            Ok(count) => written += count,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 fn kill_process_group(child: &mut std::process::Child) {
     unsafe {
@@ -1872,6 +1936,36 @@ mod publication_process_tests {
             &root,
             &[],
             None,
+            &OperationControl::default(),
+            Duration::from_millis(200),
+        );
+
+        assert!(matches!(result, Err(ProcessFailure::Uncertain(_))));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn request_write_remains_bounded_when_direct_child_does_not_read_stdin() {
+        let root = std::env::temp_dir().join(format!(
+            "bodh-publication-stdin-timeout-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let executable = root.join("fake-gh");
+        std::fs::write(&executable, "#!/bin/sh\nsleep 5\n").unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+
+        let input = json!({"payload": "x".repeat(1_048_576)});
+        let started = Instant::now();
+        let result = run_gh_process(
+            &executable,
+            &root,
+            &[],
+            Some(&input),
             &OperationControl::default(),
             Duration::from_millis(200),
         );
