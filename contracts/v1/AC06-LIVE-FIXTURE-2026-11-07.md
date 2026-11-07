@@ -28,6 +28,14 @@ PR #54 was closed after verification and its remote fixture branch was deleted. 
 
 The focused regression suites passed after these fixes. The complete `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` run passed on commit `fa49a53`; a fresh desktop run for the follow-up normalization fix is recorded in [the follow-up validation log](VALIDATE-AC06-ROOT-ID-NORMALIZATION-2026-11-07.log). The runner includes formatting, lint/type checks, shared-service tests, CLI checks, GPUI checks and native sequence-spike checks.
 
+## Native draft-only replay
+
+Using a clone of the isolated fixture database (not the closed PR's live state), the native UI rendered the reply editor, accepted clearly marked test text, and saved it locally. The saved reply used numeric root ID `4500714976` and thread ID `PRRT_kwDOVghYd860zl9O`. Finish Review showed the staged reply and COMMENT event and explicitly stated that nothing is sent until confirmation. After closing and reopening the app against the same clone, the selected reply and COMMENT event were restored. The local intent query recorded one selected reply and event `COMMENT`; no publication/confirmation action was activated. Screenshots: [reply editor](../../spikes/native-sequence/evidence/issue-37-ac06-native-reply-editor-2026-11-07.png), [Finish Review draft](../../spikes/native-sequence/evidence/issue-37-ac06-native-finish-review-draft-2026-11-07.png), and [recovered Finish Review draft](../../spikes/native-sequence/evidence/issue-37-ac06-native-finish-review-recovered-2026-11-07.png).
+
+The discussion heading was also adjusted so its Show/Collapse control remains visible beside a short heading, with the filename on a separate line. This addresses the native UI obstruction observed during the replay.
+
+`CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passed on the final local changes; see [native draft validation log](VALIDATE-AC06-NATIVE-DRAFT-2026-11-07.log). The run includes formatting, tests, lint/type checks and native sequence checks.
+
 ## Limits
 
-This establishes live endpoint compatibility and the shared publication services' comment/reply/resolve behavior against a disposable PR. The inline comment was saved in the isolated Bodh workspace, but the native comment editor did not accept the simulated typing during this trial; reply/action plan staging and publication were driven through Bodh's shared service APIs. Therefore the full installed native editor → Finish Review → restart → remote reconciliation workflow is still not established, and AC-06 remains partial. This fixture does not qualify the other ten V1 acceptance criteria or make PR #38 ready to merge.
+This establishes live endpoint compatibility and the shared publication services' comment/reply/resolve behavior against a disposable PR. The native reply editor, local save, Finish Review selection and restart recovery were exercised against cloned local state only; the native UI did not publish. Native confirmation/reconciliation has not been exercised. AC-06 remains partial. This fixture does not qualify the other ten V1 acceptance criteria or make PR #38 ready to merge.

@@ -7350,30 +7350,50 @@ impl Product {
             .pt_3()
             .border_t_1()
             .border_color(rgb(p.border));
-        let mut heading = div()
+        let heading = div()
             .flex()
-            .items_center()
-            .justify_between()
-            .child(section_title(
-                &format!("Review discussion · {selected_path}"),
-                p,
-            ));
-        let expanded = self.discussion_expanded;
-        heading = heading.child(button(
-            "toggle-inline-discussions",
-            if expanded { "Collapse" } else { "Show" },
-            p,
-            |this, _, _, cx| {
-                this.discussion_expanded = !this.discussion_expanded;
-                this.discussion_state = serde_json::json!({"available":false,"threads":[]});
-                this.discussion_loaded_for = None;
-                if this.discussion_expanded {
-                    this.load_selected_file_discussions(cx);
-                }
-                cx.notify();
-            },
-            cx,
-        ));
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(section_title("Review discussion", p))
+                    .child(
+                        button(
+                            "toggle-inline-discussions",
+                            if self.discussion_expanded {
+                                "Collapse"
+                            } else {
+                                "Show"
+                            },
+                            p,
+                            |this, _, _, cx| {
+                                this.discussion_expanded = !this.discussion_expanded;
+                                this.discussion_state =
+                                    serde_json::json!({"available":false,"threads":[]});
+                                this.discussion_loaded_for = None;
+                                if this.discussion_expanded {
+                                    this.load_selected_file_discussions(cx);
+                                }
+                                cx.notify();
+                            },
+                            cx,
+                        )
+                        .flex_shrink_0(),
+                    ),
+            )
+            .child(
+                div().text_size(px(11.)).text_color(rgb(p.muted)).child(
+                    Path::new(selected_path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(selected_path)
+                        .to_owned(),
+                ),
+            );
         view = view.child(heading);
         if !self.discussion_expanded {
             return view;
