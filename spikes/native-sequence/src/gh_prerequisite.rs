@@ -1,7 +1,7 @@
 use std::{
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -35,6 +35,35 @@ pub fn probe_gh_cli_with(executable: &Path, timeout: Duration) -> GhCliStatus {
     let Some(stdout) = child.stdout.take() else {
         return GhCliStatus::Failed("Could not read the GitHub CLI version.".into());
     };
+    probe_running_gh_child(child, stdout, executable, timeout)
+}
+
+trait GhProbeChild {
+    fn try_wait(&mut self) -> std::io::Result<Option<bool>>;
+    fn kill(&mut self) -> std::io::Result<()>;
+    fn wait(&mut self) -> std::io::Result<()>;
+}
+
+impl GhProbeChild for Child {
+    fn try_wait(&mut self) -> std::io::Result<Option<bool>> {
+        Child::try_wait(self).map(|status| status.map(|status| status.success()))
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        Child::kill(self)
+    }
+
+    fn wait(&mut self) -> std::io::Result<()> {
+        Child::wait(self).map(|_| ())
+    }
+}
+
+fn probe_running_gh_child(
+    mut child: impl GhProbeChild,
+    stdout: impl Read + Send + 'static,
+    executable: &Path,
+    timeout: Duration,
+) -> GhCliStatus {
     let reader = thread::spawn(move || {
         let mut output = Vec::new();
         let _ = stdout.take(4097).read_to_end(&mut output);
@@ -43,9 +72,9 @@ pub fn probe_gh_cli_with(executable: &Path, timeout: Duration) -> GhCliStatus {
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
+            Ok(Some(success)) => {
                 let output = reader.join().unwrap_or_default();
-                if !status.success() || output.len() > 4096 {
+                if !success || output.len() > 4096 {
                     return GhCliStatus::Failed("GitHub CLI version check failed.".into());
                 }
                 let version = String::from_utf8_lossy(&output)
@@ -120,11 +149,15 @@ pub fn resolve_repository_path(raw: &str, home: &Path) -> Result<PathBuf, bodh::
 
 #[cfg(test)]
 mod tests {
-    use super::{GhCliStatus, expand_repository_path, probe_gh_cli_with, resolve_repository_path};
+    use super::{
+        GhCliStatus, GhProbeChild, expand_repository_path, probe_gh_cli_with,
+        probe_running_gh_child, resolve_repository_path,
+    };
     use std::{
-        fs,
+        fs, io,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
+        sync::{Arc, Mutex},
         time::Duration,
     };
     use tempfile::TempDir;
@@ -172,13 +205,38 @@ mod tests {
 
     #[test]
     fn preflight_terminates_a_stalled_cli_at_its_deadline() {
-        let root = temp_dir();
-        let gh = root.path().join("gh");
-        fs::write(&gh, "#!/bin/sh\nwhile :; do :; done\n").unwrap();
-        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+        #[derive(Default)]
+        struct ChildState {
+            killed: bool,
+            waited: bool,
+        }
 
+        struct StalledChild(Arc<Mutex<ChildState>>);
+
+        impl GhProbeChild for StalledChild {
+            fn try_wait(&mut self) -> io::Result<Option<bool>> {
+                Ok(None)
+            }
+
+            fn kill(&mut self) -> io::Result<()> {
+                self.0.lock().unwrap().killed = true;
+                Ok(())
+            }
+
+            fn wait(&mut self) -> io::Result<()> {
+                self.0.lock().unwrap().waited = true;
+                Ok(())
+            }
+        }
+
+        let state = Arc::new(Mutex::new(ChildState::default()));
         let started = std::time::Instant::now();
-        let status = probe_gh_cli_with(&gh, Duration::from_millis(100));
+        let status = probe_running_gh_child(
+            StalledChild(state.clone()),
+            io::empty(),
+            Path::new("gh"),
+            Duration::from_millis(100),
+        );
 
         assert_eq!(
             status,
@@ -189,6 +247,9 @@ mod tests {
             "preflight did not stop the stalled CLI promptly: {:?}",
             started.elapsed()
         );
+        let state = state.lock().unwrap();
+        assert!(state.killed, "stalled child must be killed at the deadline");
+        assert!(state.waited, "stalled child must be reaped after killing");
     }
 
     #[test]
