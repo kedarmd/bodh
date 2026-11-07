@@ -125,7 +125,6 @@ mod tests {
         fs,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
-        process::Command,
         time::Duration,
     };
     use tempfile::TempDir;
@@ -164,18 +163,7 @@ mod tests {
             version,
         } = status
         else {
-            let direct_spawn = match Command::new(&gh).arg("--version").output() {
-                Ok(output) => format!(
-                    "exit={:?}, stdout={:?}, stderr={:?}",
-                    output.status.code(),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                ),
-                Err(error) => format!("spawn error: {error}"),
-            };
-            panic!(
-                "controlled gh executable should be available, got {status:?}; direct spawn diagnostic: {direct_spawn}"
-            );
+            panic!("controlled gh executable should be available, got {status:?}");
         };
 
         assert_eq!(executable, gh);
