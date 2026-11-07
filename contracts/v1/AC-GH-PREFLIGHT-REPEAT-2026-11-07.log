@@ -1,0 +1,100 @@
+Run 1
+    Finished `test` profile [unoptimized] target(s) in 0.86s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 2
+    Finished `test` profile [unoptimized] target(s) in 0.26s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 3
+    Finished `test` profile [unoptimized] target(s) in 0.24s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 4
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 5
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 6
+    Finished `test` profile [unoptimized] target(s) in 0.24s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 7
+    Finished `test` profile [unoptimized] target(s) in 0.24s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 8
+    Finished `test` profile [unoptimized] target(s) in 0.27s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 9
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
+Run 10
+    Finished `test` profile [unoptimized] target(s) in 0.24s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.02s
+
