@@ -171,6 +171,27 @@ mod tests {
     }
 
     #[test]
+    fn preflight_terminates_a_stalled_cli_at_its_deadline() {
+        let root = temp_dir();
+        let gh = root.path().join("gh");
+        fs::write(&gh, "#!/bin/sh\nwhile :; do :; done\n").unwrap();
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let started = std::time::Instant::now();
+        let status = probe_gh_cli_with(&gh, Duration::from_millis(100));
+
+        assert_eq!(
+            status,
+            GhCliStatus::Failed("Timed out checking the GitHub CLI.".into())
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "preflight did not stop the stalled CLI promptly: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
     fn resolver_expands_a_tilde_path_and_returns_an_absolute_checkout() {
         let root = temp_dir();
         let checkout = root.path().join("dev/nayati");
