@@ -1,0 +1,14 @@
+GitHub CLI preflight fixture stabilization — 2026-11-07
+
+Hosted observation at integration head a9c02e1:
+- Push run 42321586855 failed twice in the core job at `gh_prerequisite::tests::available_cli_result_keeps_the_executable_path_for_follow_up_calls`; its sibling installed-version test passed. The first failure and rerun both reported the generic assertion `controlled gh executable should be available`.
+- Pull-request run 42321590139 was still running during diagnosis; it is not used as evidence for this change.
+
+The test helper previously formed directories from only the process ID and an atomic per-process counter, manually removed them, and gave the executable probe a 1-second timeout. This was not reproduced locally. The fixture now uses `tempfile::TempDir` for unique per-test paths and automatic cleanup; success-case fixture timeouts are 3 seconds. The assertion includes the returned `GhCliStatus` if the controlled executable is still unavailable. Production probing and user-facing error strings are unchanged.
+
+Validation at the changed tree:
+- Focused test `available_cli_result_keeps_the_executable_path_for_follow_up_calls`: 10/10 separate invocations passed; see [AC-GH-PREFLIGHT-REPEAT-2026-11-07.log](AC-GH-PREFLIGHT-REPEAT-2026-11-07.log).
+- `TMPDIR=/home/kedarmd/tmp/bodh-build-tmp CARGO_TARGET_DIR=/home/kedarmd/tmp/bodh-issue-39-target CARGO_BUILD_JOBS=2 ./scripts/validate desktop` passed; full output is [VALIDATE-GH-PREFLIGHT-FLAKE-FINAL-2026-11-07.log](VALIDATE-GH-PREFLIGHT-FLAKE-FINAL-2026-11-07.log).
+- An earlier validation attempt stopped at rustfmt before tests; it is preserved in [VALIDATE-GH-PREFLIGHT-FLAKE-INITIAL-FAIL-2026-11-07.log](VALIDATE-GH-PREFLIGHT-FLAKE-INITIAL-FAIL-2026-11-07.log). The formatting issue was corrected before the passing run.
+
+The original hosted failure was not reproduced in this local environment. The refreshed GitHub Actions result is still needed to confirm whether the fixture hardening eliminates the hosted failure.

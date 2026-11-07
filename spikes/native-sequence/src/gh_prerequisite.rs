@@ -125,18 +125,12 @@ mod tests {
         fs,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
-        sync::atomic::{AtomicUsize, Ordering},
         time::Duration,
     };
+    use tempfile::TempDir;
 
-    static NEXT_TEMP_DIR: AtomicUsize = AtomicUsize::new(0);
-
-    fn temp_dir() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "bodh-gh-preflight-{}-{}",
-            std::process::id(),
-            NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed)
-        ))
+    fn temp_dir() -> TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[test]
@@ -149,7 +143,7 @@ mod tests {
 
     #[test]
     fn preflight_reports_a_missing_executable_separately() {
-        let missing = temp_dir().join("gh");
+        let missing = temp_dir().path().join("gh");
         assert_eq!(
             probe_gh_cli_with(&missing, Duration::from_secs(1)),
             GhCliStatus::Missing
@@ -159,51 +153,47 @@ mod tests {
     #[test]
     fn preflight_reports_the_installed_cli_version() {
         let root = temp_dir();
-        fs::create_dir_all(&root).unwrap();
-        let gh = root.join("gh");
+        let gh = root.path().join("gh");
         fs::write(&gh, "#!/bin/sh\nprintf 'gh version 2.9.1 (test)\\n'\n").unwrap();
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(
-            probe_gh_cli_with(&gh, Duration::from_secs(1)),
+            probe_gh_cli_with(&gh, Duration::from_secs(3)),
             GhCliStatus::Available {
                 executable: gh.clone(),
                 version: "gh version 2.9.1 (test)".into(),
             }
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn available_cli_result_keeps_the_executable_path_for_follow_up_calls() {
         let root = temp_dir();
-        fs::create_dir_all(&root).unwrap();
-        let gh = root.join("gh");
+        let gh = root.path().join("gh");
         fs::write(&gh, "#!/bin/sh\nprintf 'gh version 2.9.1 (test)\\n'\n").unwrap();
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
 
+        let status = probe_gh_cli_with(&gh, Duration::from_secs(3));
         let GhCliStatus::Available {
             executable,
             version,
-        } = probe_gh_cli_with(&gh, Duration::from_secs(1))
+        } = status
         else {
-            panic!("controlled gh executable should be available");
+            panic!("controlled gh executable should be available, got {status:?}");
         };
 
         assert_eq!(executable, gh);
         assert_eq!(version, "gh version 2.9.1 (test)");
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn resolver_expands_a_tilde_path_and_returns_an_absolute_checkout() {
         let root = temp_dir();
-        let checkout = root.join("dev/nayati");
+        let checkout = root.path().join("dev/nayati");
         fs::create_dir_all(&checkout).unwrap();
         assert_eq!(
-            resolve_repository_path("~/dev/nayati", &root).unwrap(),
+            resolve_repository_path("~/dev/nayati", root.path()).unwrap(),
             checkout.canonicalize().unwrap()
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

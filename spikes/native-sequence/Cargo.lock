@@ -705,6 +705,7 @@ dependencies = [
  "pulldown-cmark",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
