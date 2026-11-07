@@ -1,0 +1,24 @@
+{
+  "preparation_id": "prep-31a2b2-18e58fb3dab65e02-0",
+  "context_id": "v1-2139b40eee085fc35bd046e495fa48274faaa25c87b5fbcb67b52f04352e5baa",
+  "base_sha": "7f19442b70d09214421ec3424ef7a80222e96b41",
+  "head_sha": "3b5dceaf0906e0166307cdf83b9c4833f6ab004f",
+  "source": {
+    "end_line": 12,
+    "path": ".agents/skills/pr-review/SKILL.md",
+    "revision": "head",
+    "start_line": 12
+  },
+  "draft_id": "d-31f710-18e5901ee7e6922a-1",
+  "workspace_revision": 1,
+  "draft_counts": {
+    "code_replacements": 0,
+    "inline_comments": 1,
+    "replies": 0,
+    "review_comments": 0,
+    "thread_intents": 0
+  },
+  "body": "Installed no-AI qualification: this exact prepared Head line rendered beside its added-file diff. Keep this note local for the restart and Finish Review check.",
+  "remote_write": false,
+  "summary_harness_note": "The initial evidence-summary script saved this draft successfully but stopped when it looked for context_id at the wrong JSON level; this verification reread the persisted state and wrote this record."
+}

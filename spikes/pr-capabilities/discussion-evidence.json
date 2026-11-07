@@ -1,0 +1,4514 @@
+{
+  "fixture": "github.com/cli/cli#14858",
+  "metadata": {
+    "id": "PR_kwDODKw3uc8AAAABLWLloQ",
+    "url": "https://github.com/cli/cli/pull/14858",
+    "baseRefOid": "f7a06a18a91eef5c0b218b549dab64b86f36f8b9",
+    "headRefOid": "b17c1554e635b794ff9dbb6607e15575bd9ea387",
+    "isCrossRepository": false,
+    "viewerCanUpdate": false,
+    "baseRepository": {
+      "nameWithOwner": "cli/cli"
+    },
+    "headRepository": {
+      "nameWithOwner": "cli/cli"
+    }
+  },
+  "merge_base": "f7a06a18a91eef5c0b218b549dab64b86f36f8b9",
+  "comparison": {
+    "version": "spike-1",
+    "identity": "github.com/cli/cli#14858",
+    "base": "f7a06a18a91eef5c0b218b549dab64b86f36f8b9",
+    "head": "b17c1554e635b794ff9dbb6607e15575bd9ea387",
+    "merge_base": "f7a06a18a91eef5c0b218b549dab64b86f36f8b9",
+    "diff": "git:u3:rename50:noext:notextconv",
+    "patch_sha256": "11bd699bc8e23d21dc9b3f3e5f26bd11c9ba1cc9fe6c08ca013aa3c8ecc9805f",
+    "context": "ce8cc45a330c1322091685c85d90da3404a78d9efbad341aa6cd72ec8f3910a3",
+    "files": {
+      ".github/skills/writing-acceptance-tests/SKILL.md": {
+        "old_path": ".github/skills/writing-acceptance-tests/SKILL.md",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 40,
+            "new": 40,
+            "kind": "context"
+          },
+          {
+            "old": 41,
+            "new": 41,
+            "kind": "context"
+          },
+          {
+            "old": 42,
+            "new": 42,
+            "kind": "context"
+          },
+          {
+            "old": 43,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 43,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 44,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 45,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 46,
+            "kind": "add"
+          },
+          {
+            "old": 44,
+            "new": 47,
+            "kind": "context"
+          },
+          {
+            "old": 45,
+            "new": 48,
+            "kind": "context"
+          },
+          {
+            "old": 46,
+            "new": 49,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-checkout-with-url-from-fork.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-checkout-with-url-from-fork.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 12,
+            "new": 12,
+            "kind": "context"
+          },
+          {
+            "old": 13,
+            "new": 13,
+            "kind": "context"
+          },
+          {
+            "old": 14,
+            "new": 14,
+            "kind": "context"
+          },
+          {
+            "old": 15,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 15,
+            "kind": "add"
+          },
+          {
+            "old": 16,
+            "new": 16,
+            "kind": "context"
+          },
+          {
+            "old": 17,
+            "new": 17,
+            "kind": "context"
+          },
+          {
+            "old": 18,
+            "new": 18,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-checkout-worktree-from-fork.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-checkout-worktree-from-fork.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 15,
+            "new": 15,
+            "kind": "context"
+          },
+          {
+            "old": 16,
+            "new": 16,
+            "kind": "context"
+          },
+          {
+            "old": 17,
+            "new": 17,
+            "kind": "context"
+          },
+          {
+            "old": 18,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 18,
+            "kind": "add"
+          },
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 21,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-create-guesses-remote-from-sha-with-branch-name-slash.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-create-guesses-remote-from-sha-with-branch-name-slash.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 18,
+            "new": 18,
+            "kind": "context"
+          },
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 21,
+            "kind": "add"
+          },
+          {
+            "old": 22,
+            "new": 22,
+            "kind": "context"
+          },
+          {
+            "old": 23,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-create-guesses-remote-from-sha.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-create-guesses-remote-from-sha.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 18,
+            "new": 18,
+            "kind": "context"
+          },
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 21,
+            "kind": "add"
+          },
+          {
+            "old": 22,
+            "new": 22,
+            "kind": "context"
+          },
+          {
+            "old": 23,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-create-push-default-upstream-no-merge-ref-fork.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-create-push-default-upstream-no-merge-ref-fork.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 21,
+            "kind": "context"
+          },
+          {
+            "old": 22,
+            "new": 22,
+            "kind": "context"
+          },
+          {
+            "old": 23,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 23,
+            "kind": "add"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          },
+          {
+            "old": 25,
+            "new": 25,
+            "kind": "context"
+          },
+          {
+            "old": 26,
+            "new": 26,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-create-remote-ref-with-branch-name-slash.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-create-remote-ref-with-branch-name-slash.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 21,
+            "kind": "context"
+          },
+          {
+            "old": 22,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 22,
+            "kind": "add"
+          },
+          {
+            "old": 23,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          },
+          {
+            "old": 25,
+            "new": 25,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-create-respects-branch-pushremote.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-create-respects-branch-pushremote.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 21,
+            "kind": "context"
+          },
+          {
+            "old": 22,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 22,
+            "kind": "add"
+          },
+          {
+            "old": 23,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          },
+          {
+            "old": 25,
+            "new": 25,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-create-respects-push-destination.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-create-respects-push-destination.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 21,
+            "kind": "context"
+          },
+          {
+            "old": 22,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 22,
+            "kind": "add"
+          },
+          {
+            "old": 23,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          },
+          {
+            "old": 25,
+            "new": 25,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-create-respects-remote-pushdefault.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-create-respects-remote-pushdefault.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 21,
+            "kind": "context"
+          },
+          {
+            "old": 22,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 22,
+            "kind": "add"
+          },
+          {
+            "old": 23,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          },
+          {
+            "old": 25,
+            "new": 25,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-create-respects-user-colon-branch-syntax.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-create-respects-user-colon-branch-syntax.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 21,
+            "kind": "context"
+          },
+          {
+            "old": 22,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 22,
+            "kind": "add"
+          },
+          {
+            "old": 23,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          },
+          {
+            "old": 25,
+            "new": 25,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-status-respects-cross-org.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-status-respects-cross-org.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 21,
+            "kind": "context"
+          },
+          {
+            "old": 22,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 22,
+            "kind": "add"
+          },
+          {
+            "old": 23,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 24,
+            "new": 24,
+            "kind": "context"
+          },
+          {
+            "old": 25,
+            "new": 25,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-view-same-org-fork.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-view-same-org-fork.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 13,
+            "new": 13,
+            "kind": "context"
+          },
+          {
+            "old": 14,
+            "new": 14,
+            "kind": "context"
+          },
+          {
+            "old": 15,
+            "new": 15,
+            "kind": "context"
+          },
+          {
+            "old": 16,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 16,
+            "kind": "add"
+          },
+          {
+            "old": 17,
+            "new": 17,
+            "kind": "context"
+          },
+          {
+            "old": 18,
+            "new": 18,
+            "kind": "context"
+          },
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-view-status-respects-branch-pushremote.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-view-status-respects-branch-pushremote.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 13,
+            "new": 13,
+            "kind": "context"
+          },
+          {
+            "old": 14,
+            "new": 14,
+            "kind": "context"
+          },
+          {
+            "old": 15,
+            "new": 15,
+            "kind": "context"
+          },
+          {
+            "old": 16,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 16,
+            "kind": "add"
+          },
+          {
+            "old": 17,
+            "new": 17,
+            "kind": "context"
+          },
+          {
+            "old": 18,
+            "new": 18,
+            "kind": "context"
+          },
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/pr/pr-view-status-respects-remote-pushdefault.txtar": {
+        "old_path": "acceptance/testdata/pr/pr-view-status-respects-remote-pushdefault.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 13,
+            "new": 13,
+            "kind": "context"
+          },
+          {
+            "old": 14,
+            "new": 14,
+            "kind": "context"
+          },
+          {
+            "old": 15,
+            "new": 15,
+            "kind": "context"
+          },
+          {
+            "old": 16,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 16,
+            "kind": "add"
+          },
+          {
+            "old": 17,
+            "new": 17,
+            "kind": "context"
+          },
+          {
+            "old": 18,
+            "new": 18,
+            "kind": "context"
+          },
+          {
+            "old": 19,
+            "new": 19,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/repo/repo-delete-private-forks.txtar": {
+        "old_path": "acceptance/testdata/repo/repo-delete-private-forks.txtar",
+        "status": "A",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": null,
+            "new": 1,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 2,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 3,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 4,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 5,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 6,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 7,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 8,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 9,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 10,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 11,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 12,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 13,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 14,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 15,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 16,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 17,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 18,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 19,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 20,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 21,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 22,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 23,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 24,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 25,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 26,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 27,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 28,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 29,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 30,
+            "kind": "add"
+          }
+        ]
+      },
+      "acceptance/testdata/repo/repo-fork-sync.txtar": {
+        "old_path": "acceptance/testdata/repo/repo-fork-sync.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 9,
+            "new": 9,
+            "kind": "context"
+          },
+          {
+            "old": 10,
+            "new": 10,
+            "kind": "context"
+          },
+          {
+            "old": 11,
+            "new": 11,
+            "kind": "context"
+          },
+          {
+            "old": 12,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 12,
+            "kind": "add"
+          },
+          {
+            "old": 13,
+            "new": 13,
+            "kind": "context"
+          },
+          {
+            "old": 14,
+            "new": 14,
+            "kind": "context"
+          },
+          {
+            "old": 15,
+            "new": 15,
+            "kind": "context"
+          }
+        ]
+      },
+      "acceptance/testdata/secret/secret-require-remote-disambiguation.txtar": {
+        "old_path": "acceptance/testdata/secret/secret-require-remote-disambiguation.txtar",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 12,
+            "new": 12,
+            "kind": "context"
+          },
+          {
+            "old": 13,
+            "new": 13,
+            "kind": "context"
+          },
+          {
+            "old": 14,
+            "new": 14,
+            "kind": "context"
+          },
+          {
+            "old": 15,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 15,
+            "kind": "add"
+          },
+          {
+            "old": 16,
+            "new": 16,
+            "kind": "context"
+          },
+          {
+            "old": 17,
+            "new": 17,
+            "kind": "context"
+          },
+          {
+            "old": 18,
+            "new": 18,
+            "kind": "context"
+          }
+        ]
+      },
+      "pkg/cmd/repo/delete/delete.go": {
+        "old_path": "pkg/cmd/repo/delete/delete.go",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 9,
+            "new": 9,
+            "kind": "context"
+          },
+          {
+            "old": 10,
+            "new": 10,
+            "kind": "context"
+          },
+          {
+            "old": 11,
+            "new": 11,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 12,
+            "kind": "add"
+          },
+          {
+            "old": 12,
+            "new": 13,
+            "kind": "context"
+          },
+          {
+            "old": 13,
+            "new": 14,
+            "kind": "context"
+          },
+          {
+            "old": 14,
+            "new": 15,
+            "kind": "context"
+          },
+          {
+            "old": 16,
+            "new": 17,
+            "kind": "context"
+          },
+          {
+            "old": 17,
+            "new": 18,
+            "kind": "context"
+          },
+          {
+            "old": 18,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 20,
+            "kind": "add"
+          },
+          {
+            "old": 19,
+            "new": 21,
+            "kind": "context"
+          },
+          {
+            "old": 20,
+            "new": 22,
+            "kind": "context"
+          },
+          {
+            "old": 21,
+            "new": 23,
+            "kind": "context"
+          },
+          {
+            "old": 22,
+            "new": 24,
+            "kind": "context"
+          },
+          {
+            "old": 23,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 24,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 25,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 26,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 27,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 28,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 25,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 26,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 27,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 28,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 29,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 30,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 31,
+            "kind": "add"
+          },
+          {
+            "old": 29,
+            "new": 32,
+            "kind": "context"
+          },
+          {
+            "old": 30,
+            "new": 33,
+            "kind": "context"
+          },
+          {
+            "old": 31,
+            "new": 34,
+            "kind": "context"
+          },
+          {
+            "old": 48,
+            "new": 51,
+            "kind": "context"
+          },
+          {
+            "old": 49,
+            "new": 52,
+            "kind": "context"
+          },
+          {
+            "old": 50,
+            "new": 53,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 54,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 55,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 56,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 57,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 58,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 59,
+            "kind": "add"
+          },
+          {
+            "old": 51,
+            "new": 60,
+            "kind": "context"
+          },
+          {
+            "old": 52,
+            "new": 61,
+            "kind": "context"
+          },
+          {
+            "old": 53,
+            "new": 62,
+            "kind": "context"
+          },
+          {
+            "old": 57,
+            "new": 66,
+            "kind": "context"
+          },
+          {
+            "old": 58,
+            "new": 67,
+            "kind": "context"
+          },
+          {
+            "old": 59,
+            "new": 68,
+            "kind": "context"
+          },
+          {
+            "old": 60,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 61,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 69,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 70,
+            "kind": "add"
+          },
+          {
+            "old": 62,
+            "new": 71,
+            "kind": "context"
+          },
+          {
+            "old": 63,
+            "new": 72,
+            "kind": "context"
+          },
+          {
+            "old": 64,
+            "new": 73,
+            "kind": "context"
+          },
+          {
+            "old": 65,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 66,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 74,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 75,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 76,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 77,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 78,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 79,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 80,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 81,
+            "kind": "add"
+          },
+          {
+            "old": 67,
+            "new": 82,
+            "kind": "context"
+          },
+          {
+            "old": 68,
+            "new": 83,
+            "kind": "context"
+          },
+          {
+            "old": 69,
+            "new": 84,
+            "kind": "context"
+          },
+          {
+            "old": 80,
+            "new": 95,
+            "kind": "context"
+          },
+          {
+            "old": 81,
+            "new": 96,
+            "kind": "context"
+          },
+          {
+            "old": 82,
+            "new": 97,
+            "kind": "context"
+          },
+          {
+            "old": 83,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 98,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 99,
+            "kind": "add"
+          },
+          {
+            "old": 84,
+            "new": 100,
+            "kind": "context"
+          },
+          {
+            "old": 85,
+            "new": 101,
+            "kind": "context"
+          },
+          {
+            "old": 86,
+            "new": 102,
+            "kind": "context"
+          },
+          {
+            "old": 115,
+            "new": 131,
+            "kind": "context"
+          },
+          {
+            "old": 116,
+            "new": 132,
+            "kind": "context"
+          },
+          {
+            "old": 117,
+            "new": 133,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 134,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 135,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 136,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 137,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 138,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 139,
+            "kind": "add"
+          },
+          {
+            "old": 118,
+            "new": 140,
+            "kind": "context"
+          },
+          {
+            "old": 119,
+            "new": 141,
+            "kind": "context"
+          },
+          {
+            "old": 120,
+            "new": 142,
+            "kind": "context"
+          },
+          {
+            "old": 123,
+            "new": 145,
+            "kind": "context"
+          },
+          {
+            "old": 124,
+            "new": 146,
+            "kind": "context"
+          },
+          {
+            "old": 125,
+            "new": 147,
+            "kind": "context"
+          },
+          {
+            "old": 126,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 127,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 128,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 129,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 130,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 131,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 132,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 133,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 134,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 135,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 136,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 148,
+            "kind": "add"
+          },
+          {
+            "old": 137,
+            "new": 149,
+            "kind": "context"
+          },
+          {
+            "old": 138,
+            "new": 150,
+            "kind": "context"
+          },
+          {
+            "old": 139,
+            "new": 151,
+            "kind": "context"
+          },
+          {
+            "old": 146,
+            "new": 158,
+            "kind": "context"
+          },
+          {
+            "old": 147,
+            "new": 159,
+            "kind": "context"
+          },
+          {
+            "old": 148,
+            "new": 160,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 161,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 162,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 163,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 164,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 165,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 166,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 167,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 168,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 169,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 170,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 171,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 172,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 173,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 174,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 175,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 176,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 177,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 178,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 179,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 180,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 181,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 182,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 183,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 184,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 185,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 186,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 187,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 188,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 189,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 190,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 191,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 192,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 193,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 194,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 195,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 196,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 197,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 198,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 199,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 200,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 201,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 202,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 203,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 204,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 205,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 206,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 207,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 208,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 209,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 210,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 211,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 212,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 213,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 214,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 215,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 216,
+            "kind": "add"
+          }
+        ]
+      },
+      "pkg/cmd/repo/delete/delete_test.go": {
+        "old_path": "pkg/cmd/repo/delete/delete_test.go",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 2,
+            "new": 2,
+            "kind": "context"
+          },
+          {
+            "old": 3,
+            "new": 3,
+            "kind": "context"
+          },
+          {
+            "old": 4,
+            "new": 4,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 5,
+            "kind": "add"
+          },
+          {
+            "old": 5,
+            "new": 6,
+            "kind": "context"
+          },
+          {
+            "old": 6,
+            "new": 7,
+            "kind": "context"
+          },
+          {
+            "old": 7,
+            "new": 8,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 9,
+            "kind": "add"
+          },
+          {
+            "old": 8,
+            "new": 10,
+            "kind": "context"
+          },
+          {
+            "old": 9,
+            "new": 11,
+            "kind": "context"
+          },
+          {
+            "old": 10,
+            "new": 12,
+            "kind": "context"
+          },
+          {
+            "old": 12,
+            "new": 14,
+            "kind": "context"
+          },
+          {
+            "old": 13,
+            "new": 15,
+            "kind": "context"
+          },
+          {
+            "old": 14,
+            "new": 16,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 17,
+            "kind": "add"
+          },
+          {
+            "old": 15,
+            "new": 18,
+            "kind": "context"
+          },
+          {
+            "old": 16,
+            "new": 19,
+            "kind": "context"
+          },
+          {
+            "old": 17,
+            "new": 20,
+            "kind": "context"
+          },
+          {
+            "old": 77,
+            "new": 80,
+            "kind": "context"
+          },
+          {
+            "old": 78,
+            "new": 81,
+            "kind": "context"
+          },
+          {
+            "old": 79,
+            "new": 82,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 83,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 84,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 85,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 86,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 87,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 88,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 89,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 90,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 91,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 92,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 93,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 94,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 95,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 96,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 97,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 98,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 99,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 100,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 101,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 102,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 103,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 104,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 105,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 106,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 107,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 108,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 109,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 110,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 111,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 112,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 113,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 114,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 115,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 116,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 117,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 118,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 119,
+            "kind": "add"
+          },
+          {
+            "old": 80,
+            "new": 120,
+            "kind": "context"
+          },
+          {
+            "old": 81,
+            "new": 121,
+            "kind": "context"
+          },
+          {
+            "old": 82,
+            "new": 122,
+            "kind": "context"
+          },
+          {
+            "old": 87,
+            "new": 127,
+            "kind": "context"
+          },
+          {
+            "old": 88,
+            "new": 128,
+            "kind": "context"
+          },
+          {
+            "old": 89,
+            "new": 129,
+            "kind": "context"
+          },
+          {
+            "old": 90,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 130,
+            "kind": "add"
+          },
+          {
+            "old": 91,
+            "new": 131,
+            "kind": "context"
+          },
+          {
+            "old": 92,
+            "new": 132,
+            "kind": "context"
+          },
+          {
+            "old": 93,
+            "new": 133,
+            "kind": "context"
+          },
+          {
+            "old": 101,
+            "new": 141,
+            "kind": "context"
+          },
+          {
+            "old": 102,
+            "new": 142,
+            "kind": "context"
+          },
+          {
+            "old": 103,
+            "new": 143,
+            "kind": "context"
+          },
+          {
+            "old": 104,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 105,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 144,
+            "kind": "add"
+          },
+          {
+            "old": 106,
+            "new": 145,
+            "kind": "context"
+          },
+          {
+            "old": 107,
+            "new": 146,
+            "kind": "context"
+          },
+          {
+            "old": 108,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 147,
+            "kind": "add"
+          },
+          {
+            "old": 109,
+            "new": 148,
+            "kind": "context"
+          },
+          {
+            "old": 110,
+            "new": 149,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 150,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 151,
+            "kind": "add"
+          },
+          {
+            "old": 111,
+            "new": 152,
+            "kind": "context"
+          },
+          {
+            "old": 112,
+            "new": 153,
+            "kind": "context"
+          },
+          {
+            "old": 113,
+            "new": 154,
+            "kind": "context"
+          },
+          {
+            "old": 114,
+            "new": 155,
+            "kind": "context"
+          },
+          {
+            "old": 115,
+            "new": 156,
+            "kind": "context"
+          },
+          {
+            "old": 116,
+            "new": 157,
+            "kind": "context"
+          },
+          {
+            "old": 117,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 118,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 119,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 120,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 121,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 122,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 123,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 124,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 125,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 158,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 159,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 160,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 161,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 162,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 163,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 164,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 165,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 166,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 167,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 168,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 169,
+            "kind": "add"
+          },
+          {
+            "old": 126,
+            "new": 170,
+            "kind": "context"
+          },
+          {
+            "old": 127,
+            "new": 171,
+            "kind": "context"
+          },
+          {
+            "old": 128,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 129,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 130,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 131,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 172,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 173,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 174,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 175,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 176,
+            "kind": "add"
+          },
+          {
+            "old": 132,
+            "new": 177,
+            "kind": "context"
+          },
+          {
+            "old": 133,
+            "new": 178,
+            "kind": "context"
+          },
+          {
+            "old": 134,
+            "new": 179,
+            "kind": "context"
+          },
+          {
+            "old": 135,
+            "new": 180,
+            "kind": "context"
+          },
+          {
+            "old": 136,
+            "new": 181,
+            "kind": "context"
+          },
+          {
+            "old": 137,
+            "new": 182,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 183,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 184,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 185,
+            "kind": "add"
+          },
+          {
+            "old": 138,
+            "new": 186,
+            "kind": "context"
+          },
+          {
+            "old": 139,
+            "new": 187,
+            "kind": "context"
+          },
+          {
+            "old": 140,
+            "new": 188,
+            "kind": "context"
+          },
+          {
+            "old": 141,
+            "new": 189,
+            "kind": "context"
+          },
+          {
+            "old": 142,
+            "new": 190,
+            "kind": "context"
+          },
+          {
+            "old": 143,
+            "new": 191,
+            "kind": "context"
+          },
+          {
+            "old": 144,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 145,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 146,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 147,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 192,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 193,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 194,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 195,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 196,
+            "kind": "add"
+          },
+          {
+            "old": 148,
+            "new": 197,
+            "kind": "context"
+          },
+          {
+            "old": 149,
+            "new": 198,
+            "kind": "context"
+          },
+          {
+            "old": 150,
+            "new": 199,
+            "kind": "context"
+          },
+          {
+            "old": 151,
+            "new": 200,
+            "kind": "context"
+          },
+          {
+            "old": 152,
+            "new": 201,
+            "kind": "context"
+          },
+          {
+            "old": 153,
+            "new": 202,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 203,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 204,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 205,
+            "kind": "add"
+          },
+          {
+            "old": 154,
+            "new": 206,
+            "kind": "context"
+          },
+          {
+            "old": 155,
+            "new": 207,
+            "kind": "context"
+          },
+          {
+            "old": 156,
+            "new": 208,
+            "kind": "context"
+          },
+          {
+            "old": 163,
+            "new": 215,
+            "kind": "context"
+          },
+          {
+            "old": 164,
+            "new": 216,
+            "kind": "context"
+          },
+          {
+            "old": 165,
+            "new": 217,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 218,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 219,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 220,
+            "kind": "add"
+          },
+          {
+            "old": 166,
+            "new": 221,
+            "kind": "context"
+          },
+          {
+            "old": 167,
+            "new": 222,
+            "kind": "context"
+          },
+          {
+            "old": 168,
+            "new": 223,
+            "kind": "context"
+          },
+          {
+            "old": 169,
+            "new": 224,
+            "kind": "context"
+          },
+          {
+            "old": 170,
+            "new": 225,
+            "kind": "context"
+          },
+          {
+            "old": 171,
+            "new": 226,
+            "kind": "context"
+          },
+          {
+            "old": 172,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 173,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 174,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 175,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 227,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 228,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 229,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 230,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 231,
+            "kind": "add"
+          },
+          {
+            "old": 176,
+            "new": 232,
+            "kind": "context"
+          },
+          {
+            "old": 177,
+            "new": 233,
+            "kind": "context"
+          },
+          {
+            "old": 178,
+            "new": 234,
+            "kind": "context"
+          },
+          {
+            "old": 182,
+            "new": 238,
+            "kind": "context"
+          },
+          {
+            "old": 183,
+            "new": 239,
+            "kind": "context"
+          },
+          {
+            "old": 184,
+            "new": 240,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 241,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 242,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 243,
+            "kind": "add"
+          },
+          {
+            "old": 185,
+            "new": 244,
+            "kind": "context"
+          },
+          {
+            "old": 186,
+            "new": 245,
+            "kind": "context"
+          },
+          {
+            "old": 187,
+            "new": 246,
+            "kind": "context"
+          },
+          {
+            "old": 194,
+            "new": 253,
+            "kind": "context"
+          },
+          {
+            "old": 195,
+            "new": 254,
+            "kind": "context"
+          },
+          {
+            "old": 196,
+            "new": 255,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 256,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 257,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 258,
+            "kind": "add"
+          },
+          {
+            "old": 197,
+            "new": 259,
+            "kind": "context"
+          },
+          {
+            "old": 198,
+            "new": 260,
+            "kind": "context"
+          },
+          {
+            "old": 199,
+            "new": 261,
+            "kind": "context"
+          },
+          {
+            "old": 204,
+            "new": 266,
+            "kind": "context"
+          },
+          {
+            "old": 205,
+            "new": 267,
+            "kind": "context"
+          },
+          {
+            "old": 206,
+            "new": 268,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 269,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 270,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 271,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 272,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 273,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 274,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 275,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 276,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 277,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 278,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 279,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 280,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 281,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 282,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 283,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 284,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 285,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 286,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 287,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 288,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 289,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 290,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 291,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 292,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 293,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 294,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 295,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 296,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 297,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 298,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 299,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 300,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 301,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 302,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 303,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 304,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 305,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 306,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 307,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 308,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 309,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 310,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 311,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 312,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 313,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 314,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 315,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 316,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 317,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 318,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 319,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 320,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 321,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 322,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 323,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 324,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 325,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 326,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 327,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 328,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 329,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 330,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 331,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 332,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 333,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 334,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 335,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 336,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 337,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 338,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 339,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 340,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 341,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 342,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 343,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 344,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 345,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 346,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 347,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 348,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 349,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 350,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 351,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 352,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 353,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 354,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 355,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 356,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 357,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 358,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 359,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 360,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 361,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 362,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 363,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 364,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 365,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 366,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 367,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 368,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 369,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 370,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 371,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 372,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 373,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 374,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 375,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 376,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 377,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 378,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 379,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 380,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 381,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 382,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 383,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 384,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 385,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 386,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 387,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 388,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 389,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 390,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 391,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 392,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 393,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 394,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 395,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 396,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 397,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 398,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 399,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 400,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 401,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 402,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 403,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 404,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 405,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 406,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 407,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 408,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 409,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 410,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 411,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 412,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 413,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 414,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 415,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 416,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 417,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 418,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 419,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 420,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 421,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 422,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 423,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 424,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 425,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 426,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 427,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 428,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 429,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 430,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 431,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 432,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 433,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 434,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 435,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 436,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 437,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 438,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 439,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 440,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 441,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 442,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 443,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 444,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 445,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 446,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 447,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 448,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 449,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 450,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 451,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 452,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 453,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 454,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 455,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 456,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 457,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 458,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 459,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 460,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 461,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 462,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 463,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 464,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 465,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 466,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 467,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 468,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 469,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 470,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 471,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 472,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 473,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 474,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 475,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 476,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 477,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 478,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 479,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 480,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 481,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 482,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 483,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 484,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 485,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 486,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 487,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 488,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 489,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 490,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 491,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 492,
+            "kind": "add"
+          },
+          {
+            "old": 207,
+            "new": 493,
+            "kind": "context"
+          },
+          {
+            "old": 208,
+            "new": 494,
+            "kind": "context"
+          },
+          {
+            "old": 209,
+            "new": 495,
+            "kind": "context"
+          },
+          {
+            "old": 233,
+            "new": 519,
+            "kind": "context"
+          },
+          {
+            "old": 234,
+            "new": 520,
+            "kind": "context"
+          },
+          {
+            "old": 235,
+            "new": 521,
+            "kind": "context"
+          },
+          {
+            "old": 236,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 237,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 238,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 239,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 522,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 523,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 524,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 525,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 526,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 527,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 528,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 529,
+            "kind": "add"
+          },
+          {
+            "old": 240,
+            "new": 530,
+            "kind": "context"
+          },
+          {
+            "old": 241,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": 242,
+            "new": 531,
+            "kind": "context"
+          },
+          {
+            "old": 243,
+            "new": 532,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 533,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 534,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 535,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 536,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 537,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 538,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 539,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 540,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 541,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 542,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 543,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 544,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 545,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 546,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 547,
+            "kind": "add"
+          },
+          {
+            "old": 244,
+            "new": 548,
+            "kind": "context"
+          },
+          {
+            "old": 245,
+            "new": 549,
+            "kind": "context"
+          },
+          {
+            "old": 246,
+            "new": 550,
+            "kind": "context"
+          }
+        ]
+      },
+      "pkg/cmd/repo/delete/http.go": {
+        "old_path": "pkg/cmd/repo/delete/http.go",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 1,
+            "new": 1,
+            "kind": "context"
+          },
+          {
+            "old": 2,
+            "new": 2,
+            "kind": "context"
+          },
+          {
+            "old": 3,
+            "new": 3,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 4,
+            "kind": "add"
+          },
+          {
+            "old": 4,
+            "new": 5,
+            "kind": "context"
+          },
+          {
+            "old": 5,
+            "new": 6,
+            "kind": "context"
+          },
+          {
+            "old": 6,
+            "new": 7,
+            "kind": "context"
+          },
+          {
+            "old": 8,
+            "new": 9,
+            "kind": "context"
+          },
+          {
+            "old": 9,
+            "new": 10,
+            "kind": "context"
+          },
+          {
+            "old": 10,
+            "new": 11,
+            "kind": "context"
+          },
+          {
+            "old": null,
+            "new": 12,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 13,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 14,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 15,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 16,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 17,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 18,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 19,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 20,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 21,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 22,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 23,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 24,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 25,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 26,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 27,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 28,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 29,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 30,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 31,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 32,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 33,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 34,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 35,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 36,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 37,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 38,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 39,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 40,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 41,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 42,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 43,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 44,
+            "kind": "add"
+          },
+          {
+            "old": null,
+            "new": 45,
+            "kind": "add"
+          },
+          {
+            "old": 11,
+            "new": 46,
+            "kind": "context"
+          },
+          {
+            "old": 12,
+            "new": 47,
+            "kind": "context"
+          },
+          {
+            "old": 13,
+            "new": 48,
+            "kind": "context"
+          }
+        ]
+      }
+    }
+  },
+  "discussions": {
+    "threads": [
+      {
+        "id": "PRRT_kwDODKw3uc6xSgGc",
+        "path": "acceptance/testdata/repo/repo-delete-private-forks.txtar",
+        "diffSide": "RIGHT",
+        "startDiffSide": null,
+        "line": 15,
+        "startLine": 15,
+        "originalLine": 15,
+        "originalStartLine": null,
+        "isResolved": true,
+        "isOutdated": false,
+        "viewerCanResolve": false,
+        "viewerCanUnresolve": false,
+        "viewerCanReply": true,
+        "comments": [
+          {
+            "id": "PRRC_kwDODKw3uc8AAAABBpIcrA",
+            "databaseId": 4405206188,
+            "body": "\ud83d\uded1 Requirement: Poll for the fork count instead of using a fixed sleep\n\nIf GitHub takes more than five seconds to update the upstream's fork count, this test fails before exercising either deletion path. Replace the sleep and one-shot lookup with bounded polling until the count is 1, failing on timeout before attempting deletion. This follows the condition-based wait requirement in .github/skills/writing-acceptance-tests/SKILL.md:94-96 and the existing wait-for-repository-ready helper pattern.",
+            "url": "https://github.com/cli/cli/pull/14858#discussion_r4405206188",
+            "author": {
+              "login": "copilot-pull-request-reviewer"
+            },
+            "replyTo": null,
+            "line": 15,
+            "startLine": null,
+            "originalLine": 15,
+            "originalStartLine": null,
+            "diffHunk": "@@ -0,0 +1,30 @@\n+# requires-user-capability: false\n+\n+fixture-repo none\n+\n+env REPO=${SCRIPT_NAME}-${RANDOM_STRING}\n+env FORK=${REPO}-fork\n+\n+# Register cleanup first because cleanup-repo ignores repositories that are already gone\n+defer cleanup-repo ${REPO}\n+defer cleanup-repo ${FORK}\n+\n+# Create a private upstream and fork it within the org\n+exec gh repo create ${ORG}/${REPO} --add-readme --private\n+exec gh repo fork ${ORG}/${REPO} --org ${ORG} --fork-name ${FORK}\n+sleep 5",
+            "viewerCanUpdate": false,
+            "viewerCanDelete": false,
+            "viewerDidAuthor": false,
+            "createdAt": "2026-10-28T19:34:26Z",
+            "updatedAt": "2026-10-28T19:34:27Z"
+          },
+          {
+            "id": "PRRC_kwDODKw3uc8AAAABBqus7A",
+            "databaseId": 4406881516,
+            "body": "I mean, yeah but this is a problem with a bunch of tests already so gonna leave it",
+            "url": "https://github.com/cli/cli/pull/14858#discussion_r4406881516",
+            "author": {
+              "login": "BagToad"
+            },
+            "replyTo": {
+              "id": "PRRC_kwDODKw3uc8AAAABBpIcrA",
+              "databaseId": 4405206188
+            },
+            "line": 15,
+            "startLine": null,
+            "originalLine": 15,
+            "originalStartLine": null,
+            "diffHunk": "@@ -0,0 +1,30 @@\n+# requires-user-capability: false\n+\n+fixture-repo none\n+\n+env REPO=${SCRIPT_NAME}-${RANDOM_STRING}\n+env FORK=${REPO}-fork\n+\n+# Register cleanup first because cleanup-repo ignores repositories that are already gone\n+defer cleanup-repo ${REPO}\n+defer cleanup-repo ${FORK}\n+\n+# Create a private upstream and fork it within the org\n+exec gh repo create ${ORG}/${REPO} --add-readme --private\n+exec gh repo fork ${ORG}/${REPO} --org ${ORG} --fork-name ${FORK}\n+sleep 5",
+            "viewerCanUpdate": false,
+            "viewerCanDelete": false,
+            "viewerDidAuthor": false,
+            "createdAt": "2026-10-28T22:45:08Z",
+            "updatedAt": "2026-10-28T22:45:08Z"
+          }
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "scope": "threads",
+        "expected": 1,
+        "fetched": 1,
+        "complete": true,
+        "error": null
+      },
+      {
+        "scope": "comments:PRRT_kwDODKw3uc6xSgGc",
+        "expected": 2,
+        "fetched": 2,
+        "complete": true,
+        "error": null
+      }
+    ],
+    "complete": true,
+    "consistency": "paginated observation, not an atomic server snapshot"
+  },
+  "integrity": true,
+  "snapshots": {
+    "before": {
+      "head": "8a437efdb971e3eaac810b3a38d8e36cfe1daa07",
+      "branch": "refs/heads/trial",
+      "index": "8a99f56bd3599f16165eb30aa3c8c626923a7d63855907a5b97b98b5c6cdea2b",
+      "files": {
+        "dirty": [
+          33188,
+          "e47efdf75d37123100404a138612c985cae304950cf1a9eb40db9ee8e7eb8bb4"
+        ]
+      }
+    },
+    "after": {
+      "head": "8a437efdb971e3eaac810b3a38d8e36cfe1daa07",
+      "branch": "refs/heads/trial",
+      "index": "8a99f56bd3599f16165eb30aa3c8c626923a7d63855907a5b97b98b5c6cdea2b",
+      "files": {
+        "dirty": [
+          33188,
+          "e47efdf75d37123100404a138612c985cae304950cf1a9eb40db9ee8e7eb8bb4"
+        ]
+      }
+    }
+  }
+}

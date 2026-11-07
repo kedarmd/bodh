@@ -1,0 +1,110 @@
+Validation mode: desktop
+Revision: 23ff4c5a4d6c5fbfb6a256dd4d46b177c0a42ae8
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-28/target
+Spike Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-28/spikes/native-sequence/target
+test_core_runs_from_another_directory_with_quoted_manifest (test_validate.ValidationRunnerTests.test_core_runs_from_another_directory_with_quoted_manifest) ... ok
+test_desktop_includes_native_checks_without_launching_gui (test_validate.ValidationRunnerTests.test_desktop_includes_native_checks_without_launching_gui) ... ok
+test_failed_lint_stops_before_tests (test_validate.ValidationRunnerTests.test_failed_lint_stops_before_tests) ... ok
+test_gui_and_profile_use_locked_release_cargo_run_even_on_failure (test_validate.ValidationRunnerTests.test_gui_and_profile_use_locked_release_cargo_run_even_on_failure) ... ok
+test_invalid_mode_runs_no_tools (test_validate.ValidationRunnerTests.test_invalid_mode_runs_no_tools) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 1.261s
+
+OK
+test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes (test_harness.AcquisitionTests.test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes) ... ok
+test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility (test_harness.AnchorTests.test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility) ... ok
+test_pages_threads_and_each_threads_replies_independently (test_harness.DiscussionTests.test_pages_threads_and_each_threads_replies_independently) ... ok
+test_reports_partial_data_and_cursor_failure_without_claiming_complete (test_harness.DiscussionTests.test_reports_partial_data_and_cursor_failure_without_claiming_complete) ... ok
+test_timeout_retains_preceding_page_and_identifies_incomplete_connection (test_harness.DiscussionTests.test_timeout_retains_preceding_page_and_identifies_incomplete_connection) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.376s
+
+OK
+    Checking bodh v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-28)
+warning: type `AuthorizedWork` is more private than the item `consume_approval`
+   --> src/replacement_authorization.rs:339:1
+    |
+339 | / pub(crate) fn consume_approval(
+340 | |     tx: &Transaction<'_>,
+341 | |     prepared: &PreparedBinding,
+342 | |     expected_workspace_revision: u64,
+...   |
+345 | |     approval_id: &str,
+346 | | ) -> Result<AuthorizedWork, ContractError> {
+    | |__________________________________________^ function `consume_approval` is reachable at visibility `pub(crate)`
+    |
+note: but type `AuthorizedWork` is only usable at visibility `pub(self)`
+   --> src/replacement_authorization.rs:62:1
+    |
+ 62 | struct AuthorizedWork {
+    | ^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `AuthorizedWork` is more private than the item `clear_authorized_work`
+   --> src/replacement_authorization.rs:467:1
+    |
+467 | / pub(crate) fn clear_authorized_work(
+468 | |     tx: &Transaction<'_>,
+469 | |     prepared: &PreparedBinding,
+470 | |     work: &AuthorizedWork,
+471 | | ) -> Result<(), ContractError> {
+    | |______________________________^ function `clear_authorized_work` is reachable at visibility `pub(crate)`
+    |
+note: but type `AuthorizedWork` is only usable at visibility `pub(self)`
+   --> src/replacement_authorization.rs:62:1
+    |
+ 62 | struct AuthorizedWork {
+    | ^^^^^^^^^^^^^^^^^^^^^
+
+error: type `AuthorizedWork` is private
+   --> src/generated_review.rs:250:26
+    |
+250 |           let authorized = if snapshot.preview.total_unpublished_work > 0 {
+    |  __________________________^
+251 | |             let Some(approval_id) = approval_id else {
+252 | |                 return Err(ContractError::new(
+253 | |                     "APPROVAL_REQUIRED",
+...   |
+267 | |             None
+268 | |         };
+    | |_________^ private type
+
+error: type `AuthorizedWork` is private
+   --> src/generated_review.rs:269:37
+    |
+269 |         if approval_id.is_some() && authorized.is_none() {
+    |                                     ^^^^^^^^^^^^^^^^^^^^ private type
+
+error: type `AuthorizedWork` is private
+   --> src/generated_review.rs:276:29
+    |
+276 |         if let Some(work) = authorized {
+    |                             ^^^^^^^^^^ private type
+
+error: type `AuthorizedWork` is private
+   --> src/generated_review.rs:276:16
+    |
+276 |         if let Some(work) = authorized {
+    |                ^^^^^^^^^^ private type
+
+error: type `AuthorizedWork` is private
+   --> src/generated_review.rs:277:13
+    |
+277 |             replacement_authorization::clear_authorized_work(&tx, &binding, &work)?;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ private type
+
+error: type `AuthorizedWork` is private
+   --> src/generated_review.rs:277:77
+    |
+277 |             replacement_authorization::clear_authorized_work(&tx, &binding, &work)?;
+    |                                                                             ^^^^^ private type
+
+warning: `bodh` (lib) generated 2 warnings
+error: could not compile `bodh` (lib) due to 6 previous errors; 2 warnings emitted
+Validation failed: mode=desktop status=101 line=49

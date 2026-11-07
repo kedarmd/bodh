@@ -1,0 +1,7 @@
+flow=0 operation=select native_cpu_ms p50=93.149 p95=141.262
+flow=0 operation=resize native_cpu_ms p50=17.522 p95=17.811
+flow=1 operation=select native_cpu_ms p50=87.594 p95=140.598
+flow=1 operation=resize native_cpu_ms p50=12.059 p95=15.752
+flow=2 operation=select native_cpu_ms p50=110.752 p95=116.911
+flow=2 operation=resize native_cpu_ms p50=25.054 p95=28.047
+16.7ms diagnostic frame budget: EXCEEDED (excludes compositor/GPU presentation)

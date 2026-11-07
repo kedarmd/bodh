@@ -1,0 +1,2 @@
+STATE_UNAVAILABLE: Cannot read or write local preparation state
+{"error":{"code":"STATE_UNAVAILABLE","message":"Cannot read or write local preparation state","pointer":""},"ok":false,"protocol_version":"1.0"}

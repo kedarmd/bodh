@@ -1,0 +1,13 @@
+Initial focused-build failure while implementing workspace-root focus handoff
+
+Command:
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/home/kedarmd/dev/bodh/target cargo test --locked --manifest-path spikes/native-sequence/Cargo.toml keyboard_focus_tests -- --nocapture
+
+Compiler result before the handler signature correction:
+error[E0596]: cannot borrow `*window` as mutable, as it is behind a `&` reference
+    --> src/product.rs:3650:25
+     |
+3650 |                         window.focus(&self.focus);
+     |                         ^^^^^^ `window` is a `&` reference, so it cannot be borrowed as mutable
+
+The workspace key handler was changed to accept `&mut Window`; formatting was then applied and the focused test passed. The subsequent full desktop validation also passed. The later passing logs are VALIDATE-16-FOCUS-ENTRY-FINAL.log and VALIDATE-16-FOCUS-ENTRY-DESKTOP.log.

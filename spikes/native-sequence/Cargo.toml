@@ -1,0 +1,30 @@
+[package]
+name = "bodh-sequence-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = ["desktop"]
+desktop = ["dep:gpui"]
+
+[dependencies]
+gpui = { version = "=0.2.2", optional = true }
+bodh = { path = "../.." }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+pulldown-cmark = { version = "=0.13.4", default-features = false }
+
+[dev-dependencies]
+gpui = { version = "=0.2.2", features = ["test-support"] }
+tempfile = "=3.27.0"
+
+[patch.crates-io]
+xattr = { path = "vendor/xattr" }
+
+[[bin]]
+name = "bodh-sequence-spike"
+required-features = ["desktop"]
+
+[profile.dev]
+debug = 0

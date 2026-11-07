@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/complete.rs (target/debug/deps/complete-aa83cfda8dd62830)
+
+running 4 tests
+test complete_validator_accepts_empty_results_and_all_supported_diagram_steps ... ok
+test follow_up_requires_real_prior_concerns_and_current_actionable_findings ... ok
+test cli_complete_fixture_reports_full_semantic_validation_and_rejects_bad_steps ... ok
+test diagrams_reject_broken_ids_participants_returns_branches_and_code_links ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s

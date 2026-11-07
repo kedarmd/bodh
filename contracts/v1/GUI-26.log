@@ -1,0 +1,104 @@
+Validation mode: gui
+Revision: 0149db76a6d921279f45300c10af0254b19e2c9d
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/target
+Spike Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 28.72s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `spikes/native-sequence/target/release/bodh-sequence-spike`
+Validation mode: gui
+Revision: 0149db76a6d921279f45300c10af0254b19e2c9d
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/target
+Spike Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 26.78s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `spikes/native-sequence/target/release/bodh-sequence-spike`
+Validation mode: gui
+Revision: 0149db76a6d921279f45300c10af0254b19e2c9d
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/target
+Spike Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 22.33s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `spikes/native-sequence/target/release/bodh-sequence-spike`
+Validation mode: gui
+Revision: 0149db76a6d921279f45300c10af0254b19e2c9d
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/target
+Spike Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence)
+error[E0308]: `if` and `else` have incompatible types
+    --> src/product.rs:5352:13
+     |
+5336 | /          if narrow_workspace {
+5337 | |/             div()
+5338 | ||                 .w_full()
+5339 | ||                 .min_w_0()
+5340 | ||                 .flex()
+...    ||
+5350 | ||                 .child(panes)
+     | ||_____________________________- expected because of this
+5351 | |          } else {
+5352 | |              panes
+     | |              ^^^^^ expected `Div`, found `Stateful<Div>`
+5353 | |          }
+     | |__________- `if` and `else` have incompatible types
+     |
+     = note: expected struct `Div`
+                found struct `gpui::Stateful<Div>`
+help: you could change the return type to be a boxed trait object
+     |
+4885 -     ) -> impl IntoElement {
+4885 +     ) -> Box<dyn IntoElement> {
+     |
+help: if you change the return type to expect trait objects, box the returned expressions
+     |
+5337 ~             Box::new(div()
+5338 |                 .w_full()
+ ...
+5349 |                 )
+5350 ~                 .child(panes))
+5351 |         } else {
+5352 ~             Box::new(panes)
+     |
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `bodh-sequence-spike` (bin "bodh-sequence-spike") due to 1 previous error
+Validation failed: mode=gui status=101 line=69
+Validation mode: gui
+Revision: 0149db76a6d921279f45300c10af0254b19e2c9d
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/target
+Spike Cargo target: /home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-26/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 22.48s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `spikes/native-sequence/target/release/bodh-sequence-spike`

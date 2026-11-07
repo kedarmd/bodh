@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+binary="$app_dir/bodh-gui"
+if [[ ! -x $binary ]]; then
+  printf 'Bodh could not find its installed native application at %s. Re-run scripts/install-local.\n' "$binary" >&2
+  exit 1
+fi
+
+if [[ -z ${WAYLAND_DISPLAY:-} && -z ${WAYLAND_SOCKET:-} && -z ${DISPLAY:-} ]]; then
+  printf 'Bodh needs an active Wayland or X11 graphical session. Start it from your desktop session and try again.\n' >&2
+  exit 1
+fi
+
+if command -v ldd >/dev/null 2>&1; then
+  linkage=$(ldd "$binary" 2>/dev/null || true)
+  missing=$(printf '%s\n' "$linkage" | awk '/not found/ { print $1 }')
+  if [[ -n $missing ]]; then
+    printf 'Bodh cannot start because native libraries are missing: %s. Install the distribution packages that provide these libraries, then try again.\n' "${missing//$'\n'/, }" >&2
+    exit 1
+  fi
+fi
+
+exec "$binary" "$@"

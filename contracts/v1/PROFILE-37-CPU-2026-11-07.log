@@ -1,0 +1,27 @@
+Validation mode: profile
+Revision: b74b59a305dd9aea70492a03a1da6c3471f01d71
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/dev/bodh/target
+Spike Cargo target: /home/kedarmd/dev/bodh/spikes/native-sequence/target
+Build mode: release; initial GPUI compilation can take several minutes.
+Measurement: native CPU redraw preparation; excludes physical input/GPU/compositor latency.
+   Compiling bodh v0.1.0 (/home/kedarmd/dev/bodh)
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 52.24s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `spikes/native-sequence/target/release/bodh-sequence-spike --profile`
+native CPU viewport: Size { 1280px × 800px }
+workload flow=0 title="Prepare pinned review" participants=3 interactions=7 warmup=2 samples=10
+flow=0 operation=select native_cpu_ms p50=1.600 p95=2.298
+flow=0 operation=resize native_cpu_ms p50=0.860 p95=1.001
+workload flow=1 title="Stress · 12 participants / 120 steps" participants=12 interactions=120 warmup=2 samples=10
+flow=1 operation=select native_cpu_ms p50=1.938 p95=2.176
+flow=1 operation=resize native_cpu_ms p50=0.670 p95=0.796
+workload flow=2 title="Stress · 24 participants / 1000 steps" participants=24 interactions=1000 warmup=2 samples=10
+flow=2 operation=select native_cpu_ms p50=2.340 p95=3.229
+flow=2 operation=resize native_cpu_ms p50=1.110 p95=1.628
+16.7ms diagnostic frame budget: MET (excludes compositor/GPU presentation)

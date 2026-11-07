@@ -1,0 +1,22 @@
+   Compiling bodh v0.1.0 (/home/kedarmd/dev/bodh-worktrees/ticket-11)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.14s
+     Running tests/findings.rs (/home/kedarmd/dev/bodh/spikes/native-sequence/target/debug/deps/findings-f7ee60b81f7f1fc6)
+
+running 1 test
+test repository_diff_presentation_settings_cannot_change_canonical_hunk_mapping ... FAILED
+
+failures:
+
+---- repository_diff_presentation_settings_cannot_change_canonical_hunk_mapping stdout ----
+
+thread 'repository_diff_presentation_settings_cannot_change_canonical_hunk_mapping' (112928) panicked at tests/findings.rs:523:87:
+called `Result::unwrap()` on an `Err` value: ContractError { code: "GIT_DIFF_INVALID", message: "Git comparison output is incomplete or unsupported", pointer: "", line: None, column: None }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    repository_diff_presentation_settings_cannot_change_canonical_hunk_mapping
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.12s
+
+error: test failed, to rerun pass `--test findings`

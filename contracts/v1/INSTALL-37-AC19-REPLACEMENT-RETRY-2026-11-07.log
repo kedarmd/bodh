@@ -1,0 +1,9 @@
+Building Bodh CLI and native app with the pinned lockfiles…
+    Finished `release` profile [optimized] target(s) in 0.30s
+    Finished `release` profile [optimized] target(s) in 0.86s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+Installed Bodh CLI: /home/kedarmd/tmp/bodh-37-ac19-replacement/prefix/bin/bodh
+Installed Bodh GUI: /home/kedarmd/tmp/bodh-37-ac19-replacement/prefix/bin/bodh-gui
+Installed desktop entry: /home/kedarmd/tmp/bodh-37-ac19-replacement/data/applications/bodh.desktop
+Review state defaults to ~/.local/state/bodh (or $XDG_STATE_HOME/bodh).

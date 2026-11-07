@@ -1,0 +1,8 @@
+native CPU viewport: Size { 1280px × 800px }
+flow=0 operation=select native_cpu_ms p50=1.438 p95=2.305
+flow=0 operation=resize native_cpu_ms p50=0.658 p95=0.940
+flow=1 operation=select native_cpu_ms p50=10.238 p95=10.600
+flow=1 operation=resize native_cpu_ms p50=9.582 p95=9.991
+flow=2 operation=select native_cpu_ms p50=93.785 p95=97.131
+flow=2 operation=resize native_cpu_ms p50=91.774 p95=95.918
+16.7ms diagnostic frame budget: EXCEEDED (excludes compositor/GPU presentation)

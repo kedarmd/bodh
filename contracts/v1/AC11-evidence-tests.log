@@ -1,0 +1,17 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/evidence.rs (target/debug/deps/evidence-9b2417654facfe32)
+
+running 11 tests
+test cancellation_timeout_and_blob_limits_fail_without_checkout_mutation ... ok
+test historical_source_reads_exact_commit_and_reports_missing_objects ... ok
+test cli_timeout_covers_descendants_retaining_output_pipes ... ok
+test evidence_requires_an_exact_valid_preparation_and_real_commit_graph ... ok
+test cli_evidence_validation_uses_shared_rules_and_ignores_ambient_git_redirection ... ok
+test review_evidence_reads_pinned_merge_base_and_head_without_touching_dirty_checkout ... ok
+test pinned_reads_ignore_replace_refs_and_legacy_grafts_and_reject_shallow_history ... ok
+test oversized_committed_blobs_have_an_explicit_bound ... ok
+test key_changes_and_coverage_require_explained_nonempty_content ... ok
+test unsafe_or_unsupported_source_locators_fail_without_using_worktree_content ... ok
+test intent_quotes_are_exact_contiguous_original_claim_occurrences ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s

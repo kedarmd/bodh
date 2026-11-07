@@ -1,0 +1,14 @@
+[package]
+name = "bodh"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+schemars = "=1.2.3"
+jsonschema = { version = "=0.46.10", default-features = false }
+libc = "=0.2.191"
+rusqlite = { version = "=0.38.0", features = ["bundled"] }
+sha2 = "=0.10.9"

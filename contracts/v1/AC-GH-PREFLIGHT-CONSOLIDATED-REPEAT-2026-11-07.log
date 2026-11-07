@@ -1,0 +1,291 @@
+Run 1
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/tmp/bodh-gh-prerequisite-stability/spikes/native-sequence)
+    Finished `test` profile [unoptimized] target(s) in 6.35s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 2
+    Finished `test` profile [unoptimized] target(s) in 1.05s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 3
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 4
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 5
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 6
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 7
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 8
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 9
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+Run 10
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-cf840f99f15ac497)
+
+running 1 test
+test gh_prerequisite::tests::preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.02s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-ffcd430b6898ed5e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-3c29220a989ec854)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-084a5708cc1a43f2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+

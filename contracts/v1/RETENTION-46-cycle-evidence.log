@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/generated_review.rs (/home/kedarmd/dev/bodh/target/debug/deps/generated_review-38e3ef3fbb35d5f5)
+
+running 1 test
+generated retention cycles: preparations=2 bytes=2833 deleted_preparations=2 deleted_bytes=1306
+test generated_import_follow_up_publication_restart_and_failed_prune_cycles ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.65s
+

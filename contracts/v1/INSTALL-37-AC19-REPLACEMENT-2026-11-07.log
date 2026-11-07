@@ -1,0 +1,7 @@
+Building Bodh CLI and native app with the pinned lockfiles…
+    Finished `release` profile [optimized] target(s) in 0.23s
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh/spikes/native-sequence)
+    Finished `release` profile [optimized] target(s) in 22.85s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+install: error writing '/tmp/bodh-37-ac19-replacement/prefix/bin/bodh-gui': No space left on device

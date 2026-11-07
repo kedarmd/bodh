@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "context": {
+    "base_sha": "7f19442b70d09214421ec3424ef7a80222e96b41",
+    "context_id": "v1-045a323c7dc02da908238ad64b3694883a3db450fcd702e59b2313d2958405bd",
+    "head_sha": "f8d5e31a07db3ab4bdd544f2291c4a24d6df963b",
+    "merge_base_sha": "7f19442b70d09214421ec3424ef7a80222e96b41",
+    "pr": {
+      "host": "github.com",
+      "number": 38,
+      "owner": "kedarmd",
+      "repository": "bodh"
+    }
+  },
+  "overview": {
+    "implementation_summary": "This follow-up is pinned to the corrected PR #38 head and reviews the publication output-drain fix prompted by the previous prepared review. The original finding is addressed by nonblocking readers and deadline checks that remain active until both output streams finish.",
+    "key_changes": [
+      {
+        "summary": "The publication process now bounds stdout/stderr collection and checks the configured timeout and cancellation state until output readers complete.",
+        "evidence": [
+          {
+            "source": {
+              "path": "src/publication.rs",
+              "revision": "head",
+              "start_line": 1551,
+              "end_line": 1632
+            },
+            "explanation": "Pinned Head code shows nonblocking output readers and the deadline check in the collection loop; timeout stops the readers and returns an uncertain result."
+          }
+        ]
+      }
+    ],
+    "intent_assessments": []
+  },
+  "findings": [],
+  "diagrams": [],
+  "follow_up": [],
+  "coverage": {
+    "examined_areas": [
+      "Fresh pinned preparation at PR head f8d5e31a07db3ab4bdd544f2291c4a24d6df963b.",
+      "All changed-file pages, PR description, complete discussion acquisition (zero threads), and prior-result availability.",
+      "The changed publication process lifecycle and the exact code added to close the timeout finding from the immediately preceding fcf2cba preparation.",
+      "The direct-child-exits/descendant-inherits-pipes regression and full local desktop validation output."
+    ],
+    "checks": [
+      {
+        "name": "Publication output-drain regression",
+        "status": "passed",
+        "details": "The regression starts a fake direct child that exits while a background descendant inherits stdout/stderr; the operation returns an uncertain timeout outcome in about 200 ms instead of waiting for the descendant."
+      },
+      {
+        "name": "CARGO_BUILD_JOBS=2 ./scripts/validate desktop",
+        "status": "passed",
+        "details": "Full local desktop validation passed on commit f8d5e31; output is contracts/v1/VALIDATE-37-PUBLICATION-OUTPUT-DRAIN-2026-11-07.log."
+      },
+      {
+        "name": "Hosted push and pull-request validation",
+        "status": "not_run",
+        "details": "Runs 42342831804 and 42342835017 were still in progress when this candidate was prepared."
+      }
+    ],
+    "excluded_areas": [
+      {
+        "area": "The other changes in the 438-file integrated PR",
+        "reason": "This is a targeted follow-up on the publication-timeout fix, not a second complete semantic review of the integration."
+      },
+      {
+        "area": "Remote review publication, authorization, or merge",
+        "reason": "No external review or write action was attempted."
+      }
+    ],
+    "limitations": [
+      "The prior finding is corrected for the tested inherited-pipe case; the remainder of the integration is not re-reviewed by this narrow follow-up candidate.",
+      "No prior result or protected local drafts existed in this isolated review database. Discussions were complete and contained zero threads.",
+      "The hosted runs were in progress during candidate preparation and their final conclusions must be added to evidence after completion."
+    ]
+  }
+}

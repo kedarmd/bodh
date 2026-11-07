@@ -1,0 +1,447 @@
+{
+  "versions": {
+    "git": "git version 2.55.0",
+    "gh": "gh version 2.101.0 (2026-09-15)",
+    "python": "3.14.7",
+    "system": "Linux-7.2.7-1-cachyos-x86_64-with-glibc2.44"
+  },
+  "revision": "f4e42e06870a349e73df764753add0f06dbb49db",
+  "dirty": true,
+  "host": "github.com",
+  "live_publication_tested": false,
+  "local": {
+    "integrity": {
+      "success": true,
+      "failure": true,
+      "cancelled": true
+    },
+    "snapshots": {
+      "before": {
+        "head": "d578ead39c07329eaf5998f9c49780765a274b52",
+        "branch": "refs/heads/main",
+        "index": "36f3df8f6d7d5b390adbfb71ada13a28f4bfa6594705582d0654ac05e4f81045",
+        "files": {
+          "binary.bin": [
+            33188,
+            "2a6013f83555ed1c5f4c16e2eba14a1cf64b3bf6be8268fe291e2a000378193d"
+          ],
+          "crlf.txt": [
+            33188,
+            "1937187ec7a9f6f77ab4c74c5b5efb20b4579dc16392eca9bc25b49ce5dda89c"
+          ],
+          "deleted.txt": [
+            33188,
+            "e33dbd20d732ad6d5c1f8228c36213c9385547f29b4746940bdaccfd52852a21"
+          ],
+          "edit.txt": [
+            33188,
+            "eeb163f1b51260e2c3dceeb33ce52b8b1463576e139aacc110635c89c893bc2c"
+          ],
+          "no-newline.txt": [
+            33188,
+            "cba06b5736faf67e54b07b561eae94395e774c517a7d910a54369e1263ccfbd4"
+          ],
+          "rename.txt": [
+            33188,
+            "5767b8f73118ee9ecf590e4a84884e5c470726e8dcadfb121f56451238b37188"
+          ],
+          "untracked": [
+            33188,
+            "501bca5468dd9151c1e1b6892cde9f462be7fd291b3e84f19fba58ac8573a391"
+          ]
+        }
+      },
+      "success": {
+        "head": "d578ead39c07329eaf5998f9c49780765a274b52",
+        "branch": "refs/heads/main",
+        "index": "36f3df8f6d7d5b390adbfb71ada13a28f4bfa6594705582d0654ac05e4f81045",
+        "files": {
+          "binary.bin": [
+            33188,
+            "2a6013f83555ed1c5f4c16e2eba14a1cf64b3bf6be8268fe291e2a000378193d"
+          ],
+          "crlf.txt": [
+            33188,
+            "1937187ec7a9f6f77ab4c74c5b5efb20b4579dc16392eca9bc25b49ce5dda89c"
+          ],
+          "deleted.txt": [
+            33188,
+            "e33dbd20d732ad6d5c1f8228c36213c9385547f29b4746940bdaccfd52852a21"
+          ],
+          "edit.txt": [
+            33188,
+            "eeb163f1b51260e2c3dceeb33ce52b8b1463576e139aacc110635c89c893bc2c"
+          ],
+          "no-newline.txt": [
+            33188,
+            "cba06b5736faf67e54b07b561eae94395e774c517a7d910a54369e1263ccfbd4"
+          ],
+          "rename.txt": [
+            33188,
+            "5767b8f73118ee9ecf590e4a84884e5c470726e8dcadfb121f56451238b37188"
+          ],
+          "untracked": [
+            33188,
+            "501bca5468dd9151c1e1b6892cde9f462be7fd291b3e84f19fba58ac8573a391"
+          ]
+        }
+      },
+      "failure": {
+        "head": "d578ead39c07329eaf5998f9c49780765a274b52",
+        "branch": "refs/heads/main",
+        "index": "36f3df8f6d7d5b390adbfb71ada13a28f4bfa6594705582d0654ac05e4f81045",
+        "files": {
+          "binary.bin": [
+            33188,
+            "2a6013f83555ed1c5f4c16e2eba14a1cf64b3bf6be8268fe291e2a000378193d"
+          ],
+          "crlf.txt": [
+            33188,
+            "1937187ec7a9f6f77ab4c74c5b5efb20b4579dc16392eca9bc25b49ce5dda89c"
+          ],
+          "deleted.txt": [
+            33188,
+            "e33dbd20d732ad6d5c1f8228c36213c9385547f29b4746940bdaccfd52852a21"
+          ],
+          "edit.txt": [
+            33188,
+            "eeb163f1b51260e2c3dceeb33ce52b8b1463576e139aacc110635c89c893bc2c"
+          ],
+          "no-newline.txt": [
+            33188,
+            "cba06b5736faf67e54b07b561eae94395e774c517a7d910a54369e1263ccfbd4"
+          ],
+          "rename.txt": [
+            33188,
+            "5767b8f73118ee9ecf590e4a84884e5c470726e8dcadfb121f56451238b37188"
+          ],
+          "untracked": [
+            33188,
+            "501bca5468dd9151c1e1b6892cde9f462be7fd291b3e84f19fba58ac8573a391"
+          ]
+        }
+      },
+      "cancelled": {
+        "head": "d578ead39c07329eaf5998f9c49780765a274b52",
+        "branch": "refs/heads/main",
+        "index": "36f3df8f6d7d5b390adbfb71ada13a28f4bfa6594705582d0654ac05e4f81045",
+        "files": {
+          "binary.bin": [
+            33188,
+            "2a6013f83555ed1c5f4c16e2eba14a1cf64b3bf6be8268fe291e2a000378193d"
+          ],
+          "crlf.txt": [
+            33188,
+            "1937187ec7a9f6f77ab4c74c5b5efb20b4579dc16392eca9bc25b49ce5dda89c"
+          ],
+          "deleted.txt": [
+            33188,
+            "e33dbd20d732ad6d5c1f8228c36213c9385547f29b4746940bdaccfd52852a21"
+          ],
+          "edit.txt": [
+            33188,
+            "eeb163f1b51260e2c3dceeb33ce52b8b1463576e139aacc110635c89c893bc2c"
+          ],
+          "no-newline.txt": [
+            33188,
+            "cba06b5736faf67e54b07b561eae94395e774c517a7d910a54369e1263ccfbd4"
+          ],
+          "rename.txt": [
+            33188,
+            "5767b8f73118ee9ecf590e4a84884e5c470726e8dcadfb121f56451238b37188"
+          ],
+          "untracked": [
+            33188,
+            "501bca5468dd9151c1e1b6892cde9f462be7fd291b3e84f19fba58ac8573a391"
+          ]
+        }
+      }
+    },
+    "missing_before": true,
+    "base": "2c9caf4c9dec3aaf1e032965f7e78f27b260bca0",
+    "head": "44eeb22c1609bfcd11e24441a0dd38a2aa133840",
+    "merge_base": "d578ead39c07329eaf5998f9c49780765a274b52",
+    "source_base": "d578ead39c07329eaf5998f9c49780765a274b52",
+    "context": "f676c84ffdf814a35cce5a8cb07a9addad90189ae5966c1f58acf4c238164b8c",
+    "deterministic": true,
+    "crlf_preserved": true,
+    "missing_newline_preserved": true,
+    "anchors": {
+      "added.txt": {
+        "old_path": "added.txt",
+        "status": "A",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": null,
+            "new": 1,
+            "kind": "add"
+          }
+        ]
+      },
+      "binary.bin": {
+        "old_path": "binary.bin",
+        "status": "M",
+        "unsupported": "binary",
+        "lines": []
+      },
+      "crlf.txt": {
+        "old_path": "crlf.txt",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 1,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 1,
+            "kind": "add"
+          },
+          {
+            "old": 2,
+            "new": 2,
+            "kind": "context"
+          }
+        ]
+      },
+      "deleted.txt": {
+        "old_path": "deleted.txt",
+        "status": "D",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 1,
+            "new": null,
+            "kind": "delete"
+          }
+        ]
+      },
+      "edit.txt": {
+        "old_path": "edit.txt",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 1,
+            "new": 1,
+            "kind": "context"
+          },
+          {
+            "old": 2,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 2,
+            "kind": "add"
+          },
+          {
+            "old": 3,
+            "new": 3,
+            "kind": "context"
+          },
+          {
+            "old": 4,
+            "new": 4,
+            "kind": "context"
+          },
+          {
+            "old": 5,
+            "new": 5,
+            "kind": "context"
+          }
+        ]
+      },
+      "module": {
+        "old_path": "module",
+        "status": "A",
+        "unsupported": "submodule",
+        "lines": []
+      },
+      "no-newline.txt": {
+        "old_path": "no-newline.txt",
+        "status": "M",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 1,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 1,
+            "kind": "add"
+          }
+        ]
+      },
+      "renamed.txt": {
+        "old_path": "rename.txt",
+        "status": "R086",
+        "unsupported": null,
+        "lines": [
+          {
+            "old": 1,
+            "new": 1,
+            "kind": "context"
+          },
+          {
+            "old": 2,
+            "new": null,
+            "kind": "delete"
+          },
+          {
+            "old": null,
+            "new": 2,
+            "kind": "add"
+          },
+          {
+            "old": 3,
+            "new": 3,
+            "kind": "context"
+          },
+          {
+            "old": 4,
+            "new": 4,
+            "kind": "context"
+          },
+          {
+            "old": 5,
+            "new": 5,
+            "kind": "context"
+          }
+        ]
+      }
+    }
+  },
+  "live": {
+    "fixture": "github.com/cli/cli#14854",
+    "metadata": {
+      "id": "PR_kwDODKw3uc8AAAABLMFf_w",
+      "url": "https://github.com/cli/cli/pull/14854",
+      "baseRefOid": "93d24ce9ffefb6cc86bde89b50271457bb0ef9cb",
+      "headRefOid": "4a64788a49b73d793419d4ffb0e416da11e2e37b",
+      "isCrossRepository": true,
+      "viewerCanUpdate": false,
+      "baseRepository": {
+        "nameWithOwner": "cli/cli"
+      },
+      "headRepository": {
+        "nameWithOwner": "bobrik/github-cli"
+      }
+    },
+    "merge_base": "93d24ce9ffefb6cc86bde89b50271457bb0ef9cb",
+    "comparison": {
+      "version": "spike-1",
+      "identity": "github.com/cli/cli#14854",
+      "base": "93d24ce9ffefb6cc86bde89b50271457bb0ef9cb",
+      "head": "4a64788a49b73d793419d4ffb0e416da11e2e37b",
+      "merge_base": "93d24ce9ffefb6cc86bde89b50271457bb0ef9cb",
+      "diff": "git:u3:rename50:noext:notextconv",
+      "patch_sha256": "1d5954e0f63162c7a334faff32259433284da7443ad84321ebd05ff9fb420c8c",
+      "context": "8692303755436c0e81442b318620314c5e10a2127d3170f1ade2ec3b6350c383",
+      "files": {
+        "pkg/cmd/extension/command_test.go": {
+          "old_path": "pkg/cmd/extension/command_test.go",
+          "status": "M",
+          "unsupported": null,
+          "lines": [
+            {
+              "old": 281,
+              "new": 281,
+              "kind": "context"
+            },
+            {
+              "old": 282,
+              "new": 282,
+              "kind": "context"
+            },
+            {
+              "old": 283,
+              "new": 283,
+              "kind": "context"
+            },
+            {
+              "old": 284,
+              "new": null,
+              "kind": "delete"
+            },
+            {
+              "old": null,
+              "new": 284,
+              "kind": "add"
+            },
+            {
+              "old": 285,
+              "new": 285,
+              "kind": "context"
+            },
+            {
+              "old": 286,
+              "new": 286,
+              "kind": "context"
+            },
+            {
+              "old": 287,
+              "new": 287,
+              "kind": "context"
+            }
+          ]
+        }
+      }
+    },
+    "discussions": {
+      "threads": [],
+      "connections": [
+        {
+          "scope": "threads",
+          "expected": 0,
+          "fetched": 0,
+          "complete": true,
+          "error": null
+        }
+      ],
+      "complete": true,
+      "consistency": "paginated observation, not an atomic server snapshot"
+    },
+    "integrity": true,
+    "snapshots": {
+      "before": {
+        "head": "94d21df422d468dfc02412c58fa627ad8c8cb4f9",
+        "branch": "refs/heads/trial",
+        "index": "8a99f56bd3599f16165eb30aa3c8c626923a7d63855907a5b97b98b5c6cdea2b",
+        "files": {
+          "dirty": [
+            33188,
+            "e47efdf75d37123100404a138612c985cae304950cf1a9eb40db9ee8e7eb8bb4"
+          ]
+        }
+      },
+      "after": {
+        "head": "94d21df422d468dfc02412c58fa627ad8c8cb4f9",
+        "branch": "refs/heads/trial",
+        "index": "8a99f56bd3599f16165eb30aa3c8c626923a7d63855907a5b97b98b5c6cdea2b",
+        "files": {
+          "dirty": [
+            33188,
+            "e47efdf75d37123100404a138612c985cae304950cf1a9eb40db9ee8e7eb8bb4"
+          ]
+        }
+      }
+    }
+  },
+  "negative_api_checks": {
+    "invalid_token": {
+      "exit": 1,
+      "http_401_observed": true
+    },
+    "missing_or_inaccessible_resource": {
+      "exit": 1,
+      "http_404_observed": true
+    }
+  }
+}

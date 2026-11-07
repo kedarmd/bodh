@@ -1,0 +1,10 @@
+Validation mode: desktop
+Revision: d4a94e735bd02c515ec5476214151091d46b70a2
+Working tree: dirty (results include local changes)
+Command: CARGO_BUILD_JOBS=1 ./scripts/validate desktop
+Outcome: exit 1 at the native spike formatting gate after core checks/tests passed.
+
+Failure:
+  cargo fmt --manifest-path spikes/native-sequence/Cargo.toml --all --check
+
+Cause: new overview.rs had a Rust parse error in an unparenthesized match expression used in a comparison. After fixing that expression, cargo fmt also identified formatting differences in product.rs. Both were fixed with cargo fmt. The complete rerun is recorded in VALIDATE-29.log and passed.

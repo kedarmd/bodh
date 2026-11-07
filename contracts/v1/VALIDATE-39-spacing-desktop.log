@@ -1,0 +1,164 @@
+Validation mode: desktop
+Revision: adb380c78ea2c9c91a84837c2b737ebe2bdb2d00
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/tmp/bodh-issue-39-target
+Spike Cargo target: /home/kedarmd/tmp/bodh-issue-39-target
+test_install_exposes_headless_cli_and_bodh_desktop_launcher (test_install_local.LocalInstallTests.test_install_exposes_headless_cli_and_bodh_desktop_launcher) ... ok
+test_core_runs_from_another_directory_with_quoted_manifest (test_validate.ValidationRunnerTests.test_core_runs_from_another_directory_with_quoted_manifest) ... ok
+test_desktop_includes_native_checks_without_launching_gui (test_validate.ValidationRunnerTests.test_desktop_includes_native_checks_without_launching_gui) ... ok
+test_failed_lint_stops_before_tests (test_validate.ValidationRunnerTests.test_failed_lint_stops_before_tests) ... ok
+test_gui_and_profile_use_locked_release_cargo_run_even_on_failure (test_validate.ValidationRunnerTests.test_gui_and_profile_use_locked_release_cargo_run_even_on_failure) ... ok
+test_invalid_mode_runs_no_tools (test_validate.ValidationRunnerTests.test_invalid_mode_runs_no_tools) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 1.403s
+
+OK
+test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes (test_harness.AcquisitionTests.test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes) ... ok
+test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility (test_harness.AnchorTests.test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility) ... ok
+test_pages_threads_and_each_threads_replies_independently (test_harness.DiscussionTests.test_pages_threads_and_each_threads_replies_independently) ... ok
+test_reports_partial_data_and_cursor_failure_without_claiming_complete (test_harness.DiscussionTests.test_reports_partial_data_and_cursor_failure_without_claiming_complete) ... ok
+test_timeout_retains_preceding_page_and_identifies_incomplete_connection (test_harness.DiscussionTests.test_timeout_retains_preceding_page_and_identifies_incomplete_connection) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.399s
+
+OK
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh-a16c0c225b334b2a)
+
+running 9 tests
+test acquisition::tests::cancelled_fetch_preserves_checkout_state ... ok
+test retention::tests::byte_budget_evicts_orphan_cache_but_protects_orphan_generated_and_draft_payloads ... ok
+test retention::tests::byte_estimator_uses_utf8_storage_length_not_character_count ... ok
+test retention::tests::concurrent_resume_pin_and_prune_never_leave_a_pin_to_deleted_preparation ... ok
+test retention::tests::consumed_replacement_approval_tombstone_survives_until_expiry ... ok
+test retention::tests::prunes_lru_candidates_with_count_budget_and_keeps_current_active_and_draft ... ok
+test retention::tests::publication_recovery_and_failed_cleanup_keep_source_state_atomic ... ok
+test retention::tests::repeated_prepare_discussion_publication_restart_cycles_stay_bounded_and_reload_recovery ... ok
+test retention::tests::reports_protected_per_repository_floor_and_enforces_byte_budget_on_lru ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.69s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh-b4b8c7ab5e1b331c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/cli-5eab248536501307)
+
+running 3 tests
+test cli_discovers_schema_and_rejects_bad_input_without_a_gui ... ok
+test malformed_input_includes_location_without_echoing_untrusted_text ... ok
+test non_unicode_arguments_produce_the_protocol_error_instead_of_panicking ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/complete.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/complete-aa83cfda8dd62830)
+
+running 4 tests
+test cli_complete_fixture_reports_full_semantic_validation_and_rejects_bad_steps ... ok
+test complete_validator_accepts_empty_results_and_all_supported_diagram_steps ... ok
+test diagrams_reject_broken_ids_participants_returns_branches_and_code_links ... ok
+test follow_up_requires_real_prior_concerns_and_current_actionable_findings ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.77s
+
+     Running tests/contract.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/contract-f651f1a48f6f62e3)
+
+running 7 tests
+test committed_canonical_schema_cannot_drift_from_rust ... ok
+test complete_fixture_corpus_agrees_with_schema_rust_service_and_cli ... ok
+test discover_and_validate_an_empty_structural_result_without_a_workspace ... ok
+test exact_limits_accept_without_truncation_and_oversized_documents_fail ... ok
+test negative_contract_corpus_agrees_across_all_public_interfaces ... ok
+test schema_and_strict_rust_reject_oversized_strings_and_collections ... ok
+test unsupported_versions_have_a_stable_error_and_pointer ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.65s
+
+     Running tests/discussion_drafts.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/discussion_drafts-87e6a1a4391ce37b)
+
+running 5 tests
+test cli_reply_and_action_commands_return_revision_checked_json_without_remote_writes ... ok
+test confirmed_discussion_marker_hides_only_its_exact_draft_revision ... ok
+test reply_and_thread_intent_persist_as_distinct_unpublished_work ... ok
+test shared_version_two_migration_repairs_tables_from_independent_ticket_orderings ... ok
+test stale_revision_and_remote_permission_loss_reject_without_mutating_pending_work ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.04s
+
+     Running tests/discussion_publication.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/discussion_publication-507a6a219e652f30)
+
+running 15 tests
+test a_failed_reopen_action_can_be_retried_after_a_fresh_permission_check ... ok
+test a_partial_plan_can_retry_only_its_failed_steps_as_a_new_plan ... ok
+test ambiguous_or_unavailable_read_only_evidence_keeps_the_step_unknown ... ok
+test changed_draft_revision_is_detected_after_confirmation_before_any_write ... ok
+test desired_thread_state_is_recorded_as_already_achieved_not_published_by_reviewer ... ok
+test failed_replies_can_be_retried_after_restart_and_keep_the_exact_payload ... ok
+test grouped_review_is_confirmed_before_dependent_operations_and_order_survives_reopen ... ok
+test independent_outcomes_confirm_only_accepted_steps_and_keep_reply_payload_exact ... ok
+test interrupted_sending_step_becomes_unknown_and_cannot_be_retried ... ok
+test permission_loss_and_already_achieved_action_send_nothing_and_never_claim_publication ... ok
+test rejected_or_uncertain_grouped_review_keeps_dependent_steps_unsent_after_restart ... ok
+test reply_only_and_thread_only_plans_confirm_only_real_selected_operations ... ok
+test retry_includes_eligible_unsent_steps_and_never_repeats_confirmed_steps ... ok
+test unique_read_only_reply_match_confirms_only_the_exact_unknown_step ... ok
+test unknown_or_stale_discussion_work_cannot_be_retried ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.29s
+
+     Running tests/discussion_reconciliation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/discussion_reconciliation-639d4694aa0169a2)
+
+running 4 tests
+test gh_reader_confirms_only_one_exact_reply_by_the_authenticated_actor ... ok
+test gh_reader_keeps_stale_head_and_unavailable_reads_unknown ... ok
+test gh_reader_keeps_wrong_actor_and_duplicate_exact_replies_unknown ... ok
+test lost_reply_acknowledgment_stays_unknown_after_reply_permission_is_lost ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+     Running tests/discussions.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/discussions-79e0c76529ed9509)
+
+running 15 tests
+test discussion_cache_keeps_the_latest_attempt_and_one_complete_fallback ... ok
+test duplicate_rest_comment_ids_make_the_enrichment_incomplete ... ok
+test fetches_outer_threads_and_each_nested_reply_connection_and_survives_restart ... ok
+test graphql_partial_permission_error_is_reported_without_discarding_pages ... ok
+test inspection_cli_returns_persisted_observation_and_manifest_summary ... ok
+test joins_graphql_discussion_identity_to_rest_current_and_original_locations ... ok
+test later_page_permission_failure_preserves_acquired_outer_and_reply_pages ... ok
+test later_rest_page_permission_failure_keeps_the_enrichment_page ... ok
+test mismatched_rest_reply_identity_marks_the_join_incomplete ... ok
+test missing_rest_comment_match_marks_only_the_rest_join_incomplete ... ok
+test nested_page_timeout_keeps_the_prior_page_durable ... FAILED
+test nested_reply_cursor_repetition_is_tracked_per_thread_connection ... ok
+test paginates_rest_review_comments_and_keeps_graphql_thread_complete ... ok
+test repeated_cursors_duplicates_null_nodes_and_count_changes_are_incomplete ... ok
+test rest_permission_failure_keeps_graphql_pages_and_marks_original_sides_unavailable ... ok
+
+failures:
+
+---- nested_page_timeout_keeps_the_prior_page_durable stdout ----
+
+thread 'nested_page_timeout_keeps_the_prior_page_durable' (4065094) panicked at tests/discussions.rs:314:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    nested_page_timeout_keeps_the_prior_page_durable
+
+test result: FAILED. 14 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.37s
+
+error: test failed, to rerun pass `--test discussions`
+Validation failed: mode=desktop status=101 line=51

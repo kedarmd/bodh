@@ -1,0 +1,639 @@
+{
+  "schema_version": "1.0",
+  "context": {
+    "pr": {
+      "host": "github.com",
+      "owner": "example",
+      "repository": "demo",
+      "number": 7
+    },
+    "context_id": "fixture",
+    "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "merge_base_sha": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "overview": {
+    "implementation_summary": "The service responds synchronously",
+    "key_changes": [
+      {
+        "summary": "Return path",
+        "evidence": [
+          {
+            "source": {
+              "path": "src/service.rs",
+              "revision": "head",
+              "start_line": 1,
+              "end_line": 2
+            },
+            "explanation": "Pinned implementation inspected"
+          }
+        ]
+      }
+    ],
+    "intent_assessments": [
+      {
+        "quote": "Responds synchronously",
+        "occurrence": 1,
+        "status": "aligned",
+        "explanation": "Illustrative structural fixture",
+        "evidence": [
+          {
+            "source": {
+              "path": "src/service.rs",
+              "revision": "head",
+              "start_line": 1,
+              "end_line": 2
+            },
+            "explanation": "Pinned implementation inspected"
+          }
+        ],
+        "finding_ids": [
+          "f1"
+        ]
+      },
+      {
+        "quote": "Responds synchronously",
+        "occurrence": 1,
+        "status": "partial",
+        "explanation": "Illustrative structural fixture",
+        "evidence": [
+          {
+            "source": {
+              "path": "src/service.rs",
+              "revision": "head",
+              "start_line": 1,
+              "end_line": 2
+            },
+            "explanation": "Pinned implementation inspected"
+          }
+        ],
+        "finding_ids": [
+          "f1"
+        ]
+      },
+      {
+        "quote": "Responds synchronously",
+        "occurrence": 1,
+        "status": "mismatch",
+        "explanation": "Illustrative structural fixture",
+        "evidence": [
+          {
+            "source": {
+              "path": "src/service.rs",
+              "revision": "head",
+              "start_line": 1,
+              "end_line": 2
+            },
+            "explanation": "Pinned implementation inspected"
+          }
+        ],
+        "finding_ids": [
+          "f1"
+        ]
+      },
+      {
+        "quote": "Responds synchronously",
+        "occurrence": 1,
+        "status": "unverified",
+        "explanation": "Illustrative structural fixture",
+        "evidence": [
+          {
+            "source": {
+              "path": "src/service.rs",
+              "revision": "head",
+              "start_line": 1,
+              "end_line": 2
+            },
+            "explanation": "Pinned implementation inspected"
+          }
+        ],
+        "finding_ids": [
+          "f1"
+        ]
+      }
+    ]
+  },
+  "diagrams": [
+    {
+      "id": "flow",
+      "title": "Request flow",
+      "description": "A complete structural union fixture",
+      "participants": [
+        {
+          "id": "a",
+          "label": "Actor",
+          "category": "actor"
+        },
+        {
+          "id": "s",
+          "label": "Service",
+          "category": "service"
+        },
+        {
+          "id": "d",
+          "label": "Database",
+          "category": "database"
+        },
+        {
+          "id": "q",
+          "label": "Queue",
+          "category": "queue"
+        },
+        {
+          "id": "e",
+          "label": "External",
+          "category": "external"
+        },
+        {
+          "id": "u",
+          "label": "Uncategorized",
+          "category": null
+        }
+      ],
+      "steps": [
+        {
+          "kind": "message",
+          "id": "m1",
+          "from": "a",
+          "to": "s",
+          "label": "Request",
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          }
+        },
+        {
+          "kind": "return",
+          "id": "r1",
+          "from": "s",
+          "to": "a",
+          "label": "Response",
+          "in_reply_to": "m1",
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          }
+        },
+        {
+          "kind": "self_call",
+          "id": "s1",
+          "participant": "s",
+          "label": "Compute",
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          }
+        },
+        {
+          "kind": "note",
+          "id": "n1",
+          "participants": [
+            "s"
+          ],
+          "text": "Supporting context"
+        },
+        {
+          "kind": "alt",
+          "id": "a1",
+          "label": "Choice",
+          "branches": [
+            {
+              "label": "Success",
+              "steps": [
+                {
+                  "kind": "message",
+                  "id": "m1-success",
+                  "from": "a",
+                  "to": "s",
+                  "label": "Request",
+                  "source": {
+                    "path": "src/service.rs",
+                    "revision": "head",
+                    "start_line": 1,
+                    "end_line": 2
+                  }
+                },
+                {
+                  "kind": "return",
+                  "id": "r1-success",
+                  "from": "s",
+                  "to": "a",
+                  "label": "Response",
+                  "in_reply_to": "m1",
+                  "source": {
+                    "path": "src/service.rs",
+                    "revision": "head",
+                    "start_line": 1,
+                    "end_line": 2
+                  }
+                },
+                {
+                  "kind": "self_call",
+                  "id": "s1-success",
+                  "participant": "s",
+                  "label": "Compute",
+                  "source": {
+                    "path": "src/service.rs",
+                    "revision": "head",
+                    "start_line": 1,
+                    "end_line": 2
+                  }
+                },
+                {
+                  "kind": "note",
+                  "id": "n1-success",
+                  "participants": [
+                    "s"
+                  ],
+                  "text": "Supporting context"
+                }
+              ]
+            },
+            {
+              "label": "Failure",
+              "steps": [
+                {
+                  "kind": "note",
+                  "id": "failure",
+                  "participants": [
+                    "s"
+                  ],
+                  "text": "Unavailable",
+                  "source": null
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "opt",
+          "id": "o1",
+          "label": "Optional",
+          "steps": [
+            {
+              "kind": "message",
+              "id": "m1-optional",
+              "from": "a",
+              "to": "s",
+              "label": "Request",
+              "source": {
+                "path": "src/service.rs",
+                "revision": "head",
+                "start_line": 1,
+                "end_line": 2
+              }
+            },
+            {
+              "kind": "return",
+              "id": "r1-optional",
+              "from": "s",
+              "to": "a",
+              "label": "Response",
+              "in_reply_to": "m1",
+              "source": {
+                "path": "src/service.rs",
+                "revision": "head",
+                "start_line": 1,
+                "end_line": 2
+              }
+            },
+            {
+              "kind": "self_call",
+              "id": "s1-optional",
+              "participant": "s",
+              "label": "Compute",
+              "source": {
+                "path": "src/service.rs",
+                "revision": "head",
+                "start_line": 1,
+                "end_line": 2
+              }
+            },
+            {
+              "kind": "note",
+              "id": "n1-optional",
+              "participants": [
+                "s"
+              ],
+              "text": "Supporting context"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "f1",
+      "title": "Illustrative concern",
+      "severity": "critical",
+      "confidence": "medium",
+      "summary": "A concern",
+      "reason": "Observed evidence",
+      "impact": "Potential impact",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "explanation": "Pinned implementation inspected"
+        }
+      ],
+      "locations": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "primary": true
+        },
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "base",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "primary": false
+        }
+      ],
+      "suggestions": [
+        {
+          "kind": "text_comment",
+          "id": "t",
+          "body": "Please consider this path",
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          }
+        },
+        {
+          "kind": "code_replacement",
+          "id": "c",
+          "body": "Alternative implementation",
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "original_text": "old\n",
+          "replacement": "new\n"
+        }
+      ],
+      "related_thread_ids": [
+        "PRRT_fixture"
+      ]
+    },
+    {
+      "id": "f2",
+      "title": "Illustrative concern",
+      "severity": "high",
+      "confidence": "low",
+      "summary": "A concern",
+      "reason": "Observed evidence",
+      "impact": "Potential impact",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "explanation": "Pinned implementation inspected"
+        }
+      ],
+      "locations": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "primary": true
+        },
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "base",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "primary": false
+        }
+      ],
+      "suggestions": [],
+      "related_thread_ids": [
+        "PRRT_fixture"
+      ]
+    },
+    {
+      "id": "f3",
+      "title": "Illustrative concern",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "A concern",
+      "reason": "Observed evidence",
+      "impact": "Potential impact",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "explanation": "Pinned implementation inspected"
+        }
+      ],
+      "locations": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "primary": true
+        },
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "base",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "primary": false
+        }
+      ],
+      "suggestions": [],
+      "related_thread_ids": [
+        "PRRT_fixture"
+      ]
+    },
+    {
+      "id": "f4",
+      "title": "Illustrative concern",
+      "severity": "low",
+      "confidence": "medium",
+      "summary": "A concern",
+      "reason": "Observed evidence",
+      "impact": "Potential impact",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "explanation": "Pinned implementation inspected"
+        }
+      ],
+      "locations": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "primary": true
+        },
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "base",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "primary": false
+        }
+      ],
+      "suggestions": [],
+      "related_thread_ids": [
+        "PRRT_fixture"
+      ]
+    }
+  ],
+  "follow_up": [
+    {
+      "prior_concern_id": "prior-resolved",
+      "status": "resolved",
+      "explanation": "Fixture assessment",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "explanation": "Pinned implementation inspected"
+        }
+      ]
+    },
+    {
+      "prior_concern_id": "prior-unresolved",
+      "status": "unresolved",
+      "explanation": "Fixture assessment",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "explanation": "Pinned implementation inspected"
+        }
+      ],
+      "finding_id": "f1"
+    },
+    {
+      "prior_concern_id": "prior-regressed",
+      "status": "regressed",
+      "explanation": "Fixture assessment",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "explanation": "Pinned implementation inspected"
+        }
+      ],
+      "finding_id": "f1"
+    },
+    {
+      "prior_concern_id": "prior-uncertain",
+      "status": "uncertain",
+      "explanation": "Fixture assessment",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/service.rs",
+            "revision": "head",
+            "start_line": 1,
+            "end_line": 2
+          },
+          "explanation": "Pinned implementation inspected"
+        }
+      ],
+      "finding_id": "f1"
+    }
+  ],
+  "coverage": {
+    "examined_areas": [
+      "service"
+    ],
+    "checks": [
+      {
+        "name": "fixture-only",
+        "status": "passed",
+        "details": "Illustrative, not an execution claim"
+      },
+      {
+        "name": "fixture-only",
+        "status": "failed",
+        "details": "Illustrative, not an execution claim"
+      },
+      {
+        "name": "fixture-only",
+        "status": "not_run",
+        "details": "Illustrative, not an execution claim"
+      },
+      {
+        "name": "fixture-only",
+        "status": "unavailable",
+        "details": "Illustrative, not an execution claim"
+      }
+    ],
+    "excluded_areas": [
+      {
+        "area": "network",
+        "reason": "Not run in structural validation"
+      }
+    ],
+    "limitations": [
+      "No semantic truth is certified"
+    ]
+  }
+}

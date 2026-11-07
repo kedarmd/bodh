@@ -1,0 +1,28 @@
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/dev/bodh/spikes/native-sequence)
+    Finished `test` profile [unoptimized] target(s) in 5.01s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/bodh_sequence_spike-220d798a8f59e455)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/bodh_sequence_spike-6b990e67bf4e6e47)
+
+running 1 test
+test product::keyboard_focus_tests::tab_and_shift_tab_move_focus_between_visible_controls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s
+
+     Running tests/manual_review.rs (target/debug/deps/manual_review-b4a3b89d35e9412b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (target/debug/deps/navigation-5453806b85412449)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s

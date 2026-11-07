@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/discussions.rs (target/debug/deps/discussions-79e0c76529ed9509)
+
+running 15 tests
+test inspection_cli_returns_persisted_observation_and_manifest_summary ... ok
+test duplicate_rest_comment_ids_make_the_enrichment_incomplete ... ok
+test joins_graphql_discussion_identity_to_rest_current_and_original_locations ... ok
+test graphql_partial_permission_error_is_reported_without_discarding_pages ... ok
+test later_rest_page_permission_failure_keeps_the_enrichment_page ... ok
+test later_page_permission_failure_preserves_acquired_outer_and_reply_pages ... ok
+test fetches_outer_threads_and_each_nested_reply_connection_and_survives_restart ... ok
+test mismatched_rest_reply_identity_marks_the_join_incomplete ... ok
+test missing_rest_comment_match_marks_only_the_rest_join_incomplete ... ok
+test nested_reply_cursor_repetition_is_tracked_per_thread_connection ... ok
+test paginates_rest_review_comments_and_keeps_graphql_thread_complete ... ok
+test repeated_cursors_duplicates_null_nodes_and_count_changes_are_incomplete ... ok
+test rest_permission_failure_keeps_graphql_pages_and_marks_original_sides_unavailable ... ok
+test nested_page_timeout_keeps_the_prior_page_durable ... ok
+test discussion_cache_keeps_the_latest_attempt_and_one_complete_fallback ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
