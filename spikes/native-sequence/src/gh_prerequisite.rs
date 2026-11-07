@@ -125,6 +125,7 @@ mod tests {
         fs,
         os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
+        process::Command,
         time::Duration,
     };
     use tempfile::TempDir;
@@ -151,22 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn preflight_reports_the_installed_cli_version() {
-        let root = temp_dir();
-        let gh = root.path().join("gh");
-        fs::write(&gh, "#!/bin/sh\nprintf 'gh version 2.9.1 (test)\\n'\n").unwrap();
-        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(
-            probe_gh_cli_with(&gh, Duration::from_secs(3)),
-            GhCliStatus::Available {
-                executable: gh.clone(),
-                version: "gh version 2.9.1 (test)".into(),
-            }
-        );
-    }
-
-    #[test]
-    fn available_cli_result_keeps_the_executable_path_for_follow_up_calls() {
+    fn preflight_reports_the_installed_version_and_keeps_executable_path_for_follow_up_calls() {
         let root = temp_dir();
         let gh = root.path().join("gh");
         fs::write(&gh, "#!/bin/sh\nprintf 'gh version 2.9.1 (test)\\n'\n").unwrap();
@@ -178,7 +164,18 @@ mod tests {
             version,
         } = status
         else {
-            panic!("controlled gh executable should be available, got {status:?}");
+            let direct_spawn = match Command::new(&gh).arg("--version").output() {
+                Ok(output) => format!(
+                    "exit={:?}, stdout={:?}, stderr={:?}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+                Err(error) => format!("spawn error: {error}"),
+            };
+            panic!(
+                "controlled gh executable should be available, got {status:?}; direct spawn diagnostic: {direct_spawn}"
+            );
         };
 
         assert_eq!(executable, gh);
