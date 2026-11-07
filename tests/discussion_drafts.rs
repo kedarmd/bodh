@@ -118,7 +118,7 @@ fn reply_and_thread_intent_persist_as_distinct_unpublished_work() {
         )
         .unwrap();
     assert_eq!(reply.reply.thread_id, "thread-1");
-    assert_eq!(reply.reply.root_comment_id, "comment-root");
+    assert_eq!(reply.reply.root_comment_id, "101");
     assert_eq!(reply.counts.replies, 1);
     let moved_root = store
         .save_reply(
@@ -317,9 +317,9 @@ fn stale_revision_and_remote_permission_loss_reject_without_mutating_pending_wor
 #[test]
 fn cli_reply_and_action_commands_return_revision_checked_json_without_remote_writes() {
     let (_root, state, prep) = populated();
-    // Live observations have GraphQL node IDs, while reply publication uses
-    // GitHub's numeric REST comment ID. The numeric ID must validate too.
-    let input = serde_json::json!({"thread_id":"thread-1","root_comment_id":"101","body":"CLI local reply","expected_workspace_revision":0,"expected_draft_revision":0});
+    // The native UI selects the GraphQL node ID; the stored draft must contain
+    // GitHub's numeric REST comment ID for the eventual reply endpoint.
+    let input = serde_json::json!({"thread_id":"thread-1","root_comment_id":"comment-root","body":"CLI local reply","expected_workspace_revision":0,"expected_draft_revision":0});
     let reply = invoke_cli(&prep, &state, "reply-save", &input);
     assert!(
         reply.status.success(),
@@ -340,6 +340,24 @@ fn cli_reply_and_action_commands_return_revision_checked_json_without_remote_wri
     assert_eq!(envelope["data"]["action"]["action"], "resolve");
     assert_eq!(envelope["data"]["counts"]["replies"], 1);
     assert_eq!(envelope["data"]["counts"]["thread_intents"], 1);
+}
+
+#[test]
+fn reply_save_accepts_numeric_rest_comment_id_as_well_as_graphql_node_id() {
+    let (_root, state, prep) = populated();
+    let saved = DraftStore::open(&state)
+        .unwrap()
+        .save_reply(
+            &prep,
+            None,
+            "thread-1",
+            "101",
+            "Numeric REST selection",
+            0,
+            0,
+        )
+        .unwrap();
+    assert_eq!(saved.reply.root_comment_id, "101");
 }
 
 #[test]

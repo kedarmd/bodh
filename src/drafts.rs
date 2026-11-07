@@ -455,7 +455,14 @@ impl DraftStore {
         let _prepared = load_binding(&self.db, preparation_id)?;
         let discussions = load_latest_discussions(&self.path, preparation_id)?;
         let thread = find_thread(&discussions, thread_id)?;
-        if thread["viewerCanReply"] != true || !root_comment_exists(&thread, root_comment_id) {
+        let Some(rest_comment_id) = root_comment_rest_id(&thread, root_comment_id) else {
+            return Err(ContractError::new(
+                "REPLY_NOT_ALLOWED",
+                "Reply target is unavailable or reply permission was not observed",
+                "/thread_id",
+            ));
+        };
+        if thread["viewerCanReply"] != true {
             return Err(ContractError::new(
                 "REPLY_NOT_ALLOWED",
                 "Reply target is unavailable or reply permission was not observed",
@@ -466,7 +473,7 @@ impl DraftStore {
             preparation_id,
             draft_id,
             thread_id,
-            Some(root_comment_id),
+            Some(&rest_comment_id),
             body,
             None,
             expected_workspace_revision,
@@ -1873,21 +1880,28 @@ fn find_thread(
             )
         })
 }
-fn root_comment_exists(thread: &serde_json::Value, root_id: &str) -> bool {
+fn root_comment_rest_id(thread: &serde_json::Value, selected_id: &str) -> Option<String> {
     thread["comments"]
         .as_array()
         .into_iter()
         .flatten()
-        .any(|comment| {
-            // Discussion observations expose GraphQL node IDs as `id` and
-            // GitHub REST comment IDs as `databaseId`. Reply publication uses
-            // the latter, so validate the identifier the publisher consumes.
-            (comment["databaseId"].as_str() == Some(root_id)
+        .find_map(|comment| {
+            let is_selected = comment["id"].as_str() == Some(selected_id)
+                || comment["databaseId"].as_str() == Some(selected_id)
                 || comment["databaseId"]
                     .as_u64()
-                    .is_some_and(|id| id.to_string() == root_id)
-                || comment["id"].as_str() == Some(root_id))
-                && comment["replyTo"].is_null()
+                    .is_some_and(|id| id.to_string() == selected_id);
+            if !is_selected || !comment["replyTo"].is_null() {
+                return None;
+            }
+            // The UI identifies comments with GraphQL node IDs. The GitHub
+            // reply endpoint requires the REST database ID, so normalize the
+            // selected root before persisting the draft.
+            comment["databaseId"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| comment["databaseId"].as_u64().map(|id| id.to_string()))
+                .or_else(|| selected_id.parse::<u64>().ok().map(|id| id.to_string()))
         })
 }
 

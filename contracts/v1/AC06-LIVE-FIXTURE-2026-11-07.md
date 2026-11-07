@@ -24,9 +24,9 @@ PR #54 was closed after verification and its remote fixture branch was deleted. 
 ## Defects found and fixed
 
 1. GitHub's CLI JSON projection used by the review preflight rejected `viewerPermission` as a requested PR field. The preflight now queries GitHub GraphQL and reads `viewerPermission` from `Repository`, where the field is supported. Discussion PR-state inspection also stopped requesting `viewerPermission` from `PullRequest`. Unit fixtures were updated.
-2. Live discussion observations expose a GraphQL comment `id` and a numeric REST `databaseId`. Reply publication requires the numeric REST ID, but draft validation previously accepted only the GraphQL ID. Validation now accepts either observed ID and has a regression case for numeric `databaseId`.
+2. Live discussion observations expose a GraphQL comment `id` and a numeric REST `databaseId`. The native composer selects the GraphQL ID, while reply publication requires the numeric REST ID. Draft saving now resolves either selected ID to the root comment and persists its numeric REST ID. Regression coverage checks both the native GraphQL selection and direct numeric selection.
 
-The focused regression suites passed after these fixes. The complete `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` run also passed; raw output is preserved in [the validation log](VALIDATE-AC06-LIVE-FIXTURE-2026-11-07.log). It includes formatting, lint/type checks, shared-service tests, CLI checks, GPUI checks and native sequence-spike checks.
+The focused regression suites passed after these fixes. The complete `CARGO_BUILD_JOBS=2 ./scripts/validate desktop` run passed on commit `fa49a53`; a fresh desktop run for the follow-up normalization fix is recorded in [the follow-up validation log](VALIDATE-AC06-ROOT-ID-NORMALIZATION-2026-11-07.log). The runner includes formatting, lint/type checks, shared-service tests, CLI checks, GPUI checks and native sequence-spike checks.
 
 ## Limits
 
