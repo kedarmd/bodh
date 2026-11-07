@@ -1,0 +1,14 @@
+Command: TMPDIR=/home/kedarmd/tmp/bodh-build-tmp CARGO_BUILD_JOBS=2 cargo test --locked --test contract
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/contract.rs (target/debug/deps/contract-f651f1a48f6f62e3)
+
+running 7 tests
+test unsupported_versions_have_a_stable_error_and_pointer ... ok
+test committed_canonical_schema_cannot_drift_from_rust ... ok
+test discover_and_validate_an_empty_structural_result_without_a_workspace ... ok
+test schema_and_strict_rust_reject_oversized_strings_and_collections ... ok
+test exact_limits_accept_without_truncation_and_oversized_documents_fail ... ok
+test negative_contract_corpus_agrees_across_all_public_interfaces ... ok
+test complete_fixture_corpus_agrees_with_schema_rust_service_and_cli ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.08s
