@@ -1,0 +1,1 @@
+Temporary Bodh qualification fixture for issue #37. This file exists only to validate live review and discussion publication; it contains no product change.
