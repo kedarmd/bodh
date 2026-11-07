@@ -11,3 +11,8 @@ Controlled `gh` fixtures cover multiple outer, nested and REST pages, an empty d
 An independent Standards review found that the original REST command supplied `-F` fields without `--method GET`, which makes `gh api` default to POST. The request now explicitly sets GET, and the GET-only controlled fixture reproduced the missing-method failure before the correction and passed afterward.
 
 `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/home/kedarmd/dev/bodh/target cargo test --locked --test discussions -- --nocapture` passed all 15 discussion acquisition tests. `CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/home/kedarmd/dev/bodh/target ./scripts/validate desktop` passed; full runner output is preserved in [VALIDATE-15-final.log](VALIDATE-15-final.log). No GUI trial applies to this headless acquisition slice.
+
+
+## Deadline fixture stabilization — 2026-11-07
+
+The controlled nested-page timeout fixture used a 100 ms total operation deadline, which also covered process startup and first-page acquisition. It failed intermittently even though its delayed page was deliberately held for 3 seconds. Ten isolated baseline runs produced 6 passes and 4 failures, with failures observing no durable first-page comment. Increasing only the fixture deadline to 1 second (still 2 seconds shorter than the controlled delayed response) produced 10/10 focused passes and 15/15 passes in the complete discussion integration suite. The repeated-run results are recorded in [AC15-DISCUSSION-TIMEOUT-CALIBRATION-2026-11-07.log](AC15-DISCUSSION-TIMEOUT-CALIBRATION-2026-11-07.log); the final complete desktop run is [VALIDATE-39-SPACING-FINAL-2026-11-07.log](VALIDATE-39-SPACING-FINAL-2026-11-07.log). This changes test calibration only; the production timeout behavior is unchanged.

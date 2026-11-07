@@ -306,7 +306,7 @@ esac"#,
     let result = acquire_discussions_with_gh(
         &binding,
         &state,
-        &OperationControl::with_timeout(std::time::Duration::from_millis(100)),
+        &OperationControl::with_timeout(std::time::Duration::from_secs(1)),
         &gh,
     )
     .unwrap();
