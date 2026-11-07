@@ -1,0 +1,1491 @@
+Validation mode: desktop
+Revision: 168cc393a0b612e88d9350479980a9df78a308bb
+Working tree: dirty (results include local changes)
+System: Linux 7.2.7-1-cachyos x86_64
+rustc 1.99.0 (b940084d7 2026-09-28)
+cargo 1.99.0 (5f94df478 2026-08-27)
+Application Cargo target: /home/kedarmd/tmp/bodh-issue-39-target
+Spike Cargo target: /home/kedarmd/tmp/bodh-issue-39-target
+test_install_exposes_headless_cli_and_bodh_desktop_launcher (test_install_local.LocalInstallTests.test_install_exposes_headless_cli_and_bodh_desktop_launcher) ... ok
+test_core_runs_from_another_directory_with_quoted_manifest (test_validate.ValidationRunnerTests.test_core_runs_from_another_directory_with_quoted_manifest) ... ok
+test_desktop_includes_native_checks_without_launching_gui (test_validate.ValidationRunnerTests.test_desktop_includes_native_checks_without_launching_gui) ... ok
+test_failed_lint_stops_before_tests (test_validate.ValidationRunnerTests.test_failed_lint_stops_before_tests) ... ok
+test_gui_and_profile_use_locked_release_cargo_run_even_on_failure (test_validate.ValidationRunnerTests.test_gui_and_profile_use_locked_release_cargo_run_even_on_failure) ... ok
+test_invalid_mode_runs_no_tools (test_validate.ValidationRunnerTests.test_invalid_mode_runs_no_tools) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 1.442s
+
+OK
+test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes (test_harness.AcquisitionTests.test_missing_fork_objects_preserve_dirty_checkout_on_all_outcomes) ... ok
+test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility (test_harness.AnchorTests.test_ranges_distinguish_reading_from_inline_and_suggestion_eligibility) ... ok
+test_pages_threads_and_each_threads_replies_independently (test_harness.DiscussionTests.test_pages_threads_and_each_threads_replies_independently) ... ok
+test_reports_partial_data_and_cursor_failure_without_claiming_complete (test_harness.DiscussionTests.test_reports_partial_data_and_cursor_failure_without_claiming_complete) ... ok
+test_timeout_retains_preceding_page_and_identifies_incomplete_connection (test_harness.DiscussionTests.test_timeout_retains_preceding_page_and_identifies_incomplete_connection) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.397s
+
+OK
+    Checking bodh v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.37s
+    Checking bodh v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.10s
+   Compiling bodh v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 30.46s
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh-a16c0c225b334b2a)
+
+running 9 tests
+test retention::tests::byte_estimator_uses_utf8_storage_length_not_character_count ... ok
+test acquisition::tests::cancelled_fetch_preserves_checkout_state ... ok
+test retention::tests::concurrent_resume_pin_and_prune_never_leave_a_pin_to_deleted_preparation ... ok
+test retention::tests::byte_budget_evicts_orphan_cache_but_protects_orphan_generated_and_draft_payloads ... ok
+test retention::tests::consumed_replacement_approval_tombstone_survives_until_expiry ... ok
+test retention::tests::reports_protected_per_repository_floor_and_enforces_byte_budget_on_lru ... ok
+test retention::tests::prunes_lru_candidates_with_count_budget_and_keeps_current_active_and_draft ... ok
+test retention::tests::publication_recovery_and_failed_cleanup_keep_source_state_atomic ... ok
+test retention::tests::repeated_prepare_discussion_publication_restart_cycles_stay_bounded_and_reload_recovery ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.85s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh-b4b8c7ab5e1b331c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/cli-5eab248536501307)
+
+running 3 tests
+test malformed_input_includes_location_without_echoing_untrusted_text ... ok
+test non_unicode_arguments_produce_the_protocol_error_instead_of_panicking ... ok
+test cli_discovers_schema_and_rejects_bad_input_without_a_gui ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/complete.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/complete-aa83cfda8dd62830)
+
+running 4 tests
+test complete_validator_accepts_empty_results_and_all_supported_diagram_steps ... ok
+test follow_up_requires_real_prior_concerns_and_current_actionable_findings ... ok
+test cli_complete_fixture_reports_full_semantic_validation_and_rejects_bad_steps ... ok
+test diagrams_reject_broken_ids_participants_returns_branches_and_code_links ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+     Running tests/contract.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/contract-f651f1a48f6f62e3)
+
+running 7 tests
+test unsupported_versions_have_a_stable_error_and_pointer ... ok
+test committed_canonical_schema_cannot_drift_from_rust ... ok
+test discover_and_validate_an_empty_structural_result_without_a_workspace ... ok
+test exact_limits_accept_without_truncation_and_oversized_documents_fail ... ok
+test schema_and_strict_rust_reject_oversized_strings_and_collections ... ok
+test negative_contract_corpus_agrees_across_all_public_interfaces ... ok
+test complete_fixture_corpus_agrees_with_schema_rust_service_and_cli ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+
+     Running tests/discussion_drafts.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/discussion_drafts-87e6a1a4391ce37b)
+
+running 5 tests
+test shared_version_two_migration_repairs_tables_from_independent_ticket_orderings ... ok
+test cli_reply_and_action_commands_return_revision_checked_json_without_remote_writes ... ok
+test reply_and_thread_intent_persist_as_distinct_unpublished_work ... ok
+test confirmed_discussion_marker_hides_only_its_exact_draft_revision ... ok
+test stale_revision_and_remote_permission_loss_reject_without_mutating_pending_work ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s
+
+     Running tests/discussion_publication.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/discussion_publication-507a6a219e652f30)
+
+running 15 tests
+test a_failed_reopen_action_can_be_retried_after_a_fresh_permission_check ... ok
+test changed_draft_revision_is_detected_after_confirmation_before_any_write ... ok
+test desired_thread_state_is_recorded_as_already_achieved_not_published_by_reviewer ... ok
+test ambiguous_or_unavailable_read_only_evidence_keeps_the_step_unknown ... ok
+test independent_outcomes_confirm_only_accepted_steps_and_keep_reply_payload_exact ... ok
+test a_partial_plan_can_retry_only_its_failed_steps_as_a_new_plan ... ok
+test failed_replies_can_be_retried_after_restart_and_keep_the_exact_payload ... ok
+test grouped_review_is_confirmed_before_dependent_operations_and_order_survives_reopen ... ok
+test interrupted_sending_step_becomes_unknown_and_cannot_be_retried ... ok
+test permission_loss_and_already_achieved_action_send_nothing_and_never_claim_publication ... ok
+test unique_read_only_reply_match_confirms_only_the_exact_unknown_step ... ok
+test retry_includes_eligible_unsent_steps_and_never_repeats_confirmed_steps ... ok
+test reply_only_and_thread_only_plans_confirm_only_real_selected_operations ... ok
+test unknown_or_stale_discussion_work_cannot_be_retried ... ok
+test rejected_or_uncertain_grouped_review_keeps_dependent_steps_unsent_after_restart ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.52s
+
+     Running tests/discussion_reconciliation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/discussion_reconciliation-639d4694aa0169a2)
+
+running 4 tests
+test lost_reply_acknowledgment_stays_unknown_after_reply_permission_is_lost ... ok
+test gh_reader_keeps_stale_head_and_unavailable_reads_unknown ... ok
+test gh_reader_confirms_only_one_exact_reply_by_the_authenticated_actor ... ok
+test gh_reader_keeps_wrong_actor_and_duplicate_exact_replies_unknown ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/discussions.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/discussions-79e0c76529ed9509)
+
+running 15 tests
+test inspection_cli_returns_persisted_observation_and_manifest_summary ... ok
+test later_page_permission_failure_preserves_acquired_outer_and_reply_pages ... ok
+test duplicate_rest_comment_ids_make_the_enrichment_incomplete ... ok
+test graphql_partial_permission_error_is_reported_without_discarding_pages ... ok
+test joins_graphql_discussion_identity_to_rest_current_and_original_locations ... ok
+test later_rest_page_permission_failure_keeps_the_enrichment_page ... ok
+test fetches_outer_threads_and_each_nested_reply_connection_and_survives_restart ... ok
+test discussion_cache_keeps_the_latest_attempt_and_one_complete_fallback ... ok
+test mismatched_rest_reply_identity_marks_the_join_incomplete ... ok
+test missing_rest_comment_match_marks_only_the_rest_join_incomplete ... ok
+test repeated_cursors_duplicates_null_nodes_and_count_changes_are_incomplete ... ok
+test nested_reply_cursor_repetition_is_tracked_per_thread_connection ... ok
+test paginates_rest_review_comments_and_keeps_graphql_thread_complete ... ok
+test rest_permission_failure_keeps_graphql_pages_and_marks_original_sides_unavailable ... ok
+test nested_page_timeout_keeps_the_prior_page_durable ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.60s
+
+     Running tests/evidence.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/evidence-9b2417654facfe32)
+
+running 11 tests
+test historical_source_reads_exact_commit_and_reports_missing_objects ... ok
+test cancellation_timeout_and_blob_limits_fail_without_checkout_mutation ... ok
+test cli_timeout_covers_descendants_retaining_output_pipes ... ok
+test evidence_requires_an_exact_valid_preparation_and_real_commit_graph ... ok
+test cli_evidence_validation_uses_shared_rules_and_ignores_ambient_git_redirection ... ok
+test review_evidence_reads_pinned_merge_base_and_head_without_touching_dirty_checkout ... ok
+test oversized_committed_blobs_have_an_explicit_bound ... ok
+test pinned_reads_ignore_replace_refs_and_legacy_grafts_and_reject_shallow_history ... ok
+test key_changes_and_coverage_require_explained_nonempty_content ... ok
+test unsafe_or_unsupported_source_locators_fail_without_using_worktree_content ... ok
+test intent_quotes_are_exact_contiguous_original_claim_occurrences ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running tests/findings.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/findings-075f7cb621c407b4)
+
+running 11 tests
+test non_utf8_git_paths_are_reported_as_unsupported_without_becoming_anchors ... ok
+test file_to_directory_changes_are_distinct_path_entries_with_correct_anchor_sides ... ok
+test repository_diff_presentation_settings_cannot_change_canonical_hunk_mapping ... ok
+test triage_order_prioritizes_severity_and_keeps_original_order_within_it ... ok
+test cli_reports_shared_finding_errors_without_claiming_complete_semantic_validation ... ok
+test findings_need_explained_source_and_one_primary_without_mutating_checkout ... ok
+test inline_comments_use_exact_old_new_hunks_while_unchanged_source_remains_readable ... ok
+test related_threads_must_be_observed_and_incomplete_absence_is_explicit ... ok
+test scoped_finding_and_suggestion_ids_and_overview_relationships_resolve_before_use ... ok
+test replacements_require_head_hunk_spans_and_byte_exact_original_lines ... ok
+test additions_deletions_edited_renames_and_exact_crlf_ranges_have_literal_anchors ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.73s
+
+     Running tests/freshness.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/freshness-6537b451900b4393)
+
+running 11 tests
+test base_movement_and_branch_renames_are_reported_separately ... ok
+test observing_a_new_head_reports_staleness_without_changing_the_pinned_review ... ok
+test unavailable_metadata_is_unknown_and_keeps_the_pinned_binding ... ok
+Initialized empty Git repository in /home/kedarmd/tmp/bodh-build-tmp/bodh-freshness-4088165-2/checkout/.git/
+test load_latest_approval_expires_on_any_new_review_intent_revision ... ok
+test load_latest_approval_is_one_use_and_returns_the_complete_candidate ... ok
+test concurrent_draft_edit_rejects_load_latest_and_retains_both_preparations ... ok
+test review_intent_revision_is_part_of_the_load_latest_protection_fingerprint ... ok
+test finding_feedback_is_part_of_load_latest_protection ... ok
+test unresolved_discussion_payload_is_part_of_load_latest_protection ... ok
+test failed_or_cancelled_latest_acquisition_keeps_the_current_binding_selected ... ok
+test load_latest_switch_keeps_every_draft_attached_to_the_old_preparation ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s
+
+     Running tests/freshness_cli.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/freshness_cli-0cb8cc1b37df6f3c)
+
+running 1 test
+test cli_views_keep_every_draft_on_old_preparation_after_approved_switch ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests/generated_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/generated_review-38e3ef3fbb35d5f5)
+
+running 21 tests
+test a_newer_preparation_makes_an_older_candidate_stale ... ok
+test cli_rejects_invalid_full_result_without_writing ... ok
+test a_sql_failure_rolls_back_generation_and_result_as_one_transaction ... ok
+test a_failed_replacement_keeps_the_previous_complete_result_and_generation ... ok
+test a_staged_grouped_review_intent_blocks_changed_results ... ok
+test an_unpublished_replacement_blocks_changed_results ... ok
+test cli_replacement_authorization_requires_a_terminal ... ok
+test an_explicit_replacement_approval_is_bound_to_the_candidate_and_clears_only_its_drafts ... ok
+test cli_failed_validation_correction_rounds_preserve_committed_result_and_drafts ... ok
+test cli_validate_then_commit_reports_complete_validation_and_persists_result ... ok
+test declined_replacement_approval_does_not_change_result_or_work ... ok
+test independent_manual_finding_feedback_is_persisted_without_publication ... ok
+test replacement_approval_expires_when_a_protected_draft_revision_changes ... ok
+test replacement_keeps_only_compact_prior_concern_text_and_exact_source_metadata ... ok
+test finding_triage_is_bound_to_a_committed_finding_and_survives_reopen ... ok
+test stale_generation_and_invalid_result_leave_the_current_review_untouched ... ok
+test replacement_approval_is_one_use_and_rejects_a_different_candidate ... ok
+test unresolved_publication_payload_blocks_replacement_authorization ... ok
+test validation_is_read_only_and_commit_is_generation_checked_with_exact_retry_noop ... ok
+test generated_import_follow_up_publication_restart_and_failed_prune_cycles ... ok
+test switching_a_finding_alternative_preserves_other_edits_and_unstaging_keeps_drafts ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.40s
+
+     Running tests/manual_drafts.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_drafts-d91f351bc1fae2d1)
+
+running 15 tests
+test code_replacement_accepts_inclusive_multiline_head_range_and_preserves_final_newline ... ok
+test edited_renames_are_eligible_by_head_path_and_binary_spans_are_rejected ... ok
+test code_replacement_drafts_validate_exact_head_spans_and_keep_checkout_unchanged ... ok
+test code_replacements_reject_deleted_head_files_and_malformed_spans ... ok
+test concurrent_workspace_and_draft_revisions_reject_stale_writes_without_losing_text ... ok
+test code_replacements_reject_old_side_changed_source_and_stale_concurrent_saves ... ok
+test cli_save_list_and_discard_use_json_envelopes_without_publishing ... ok
+test readable_unchanged_source_cannot_become_an_inline_comment_draft ... ok
+test replacement_cli_uses_separate_list_and_save_envelopes ... ok
+test replacement_source_round_trips_crlf_and_missing_final_newline_exactly ... ok
+test saved_comment_draft_reopens_with_pinned_provenance_and_revision ... ok
+test moved_exact_anchor_is_proposed_and_requires_explicit_reattachment ... ok
+test renamed_file_relocation_uses_the_new_path_and_exact_eligible_lines ... ok
+test changed_and_ambiguous_anchor_text_is_never_auto_relocated ... ok
+test replacement_anchor_repair_captures_new_exact_text_and_preserves_the_original ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-df3152faafc00c56)
+
+running 9 tests
+test github_suggestion_markdown_is_built_from_structured_replacement_text ... ok
+test remote_preflight_uses_json_fields_and_retains_current_permission_observation ... ok
+test cli_stage_and_intent_round_trip_preserve_explicit_missing_event ... ok
+test event_must_be_chosen_and_confirmed_payload_binds_exact_draft_revision_and_head ... ok
+test interrupted_send_becomes_unknown_and_cannot_be_started_again ... ok
+test changed_head_or_permission_after_confirmation_blocks_send_without_starting_journal ... ok
+test controlled_gh_receives_exact_confirmed_group_and_returns_persisted_review_link ... ok
+test confirmed_replacement_publishes_exact_suggestion_and_only_then_removes_draft ... ok
+test rejection_is_definitive_but_timeout_after_request_is_unknown_and_not_retryable ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
+
+     Running tests/pinned_diff.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/pinned_diff-7bb62701fa5e85e5)
+
+running 3 tests
+test pinned_diff_rejects_paths_outside_the_prepared_change ... ok
+test pinned_diff_truncates_at_a_complete_utf8_line_boundary ... ok
+test pinned_diff_is_path_scoped_literal_and_leaves_checkout_unchanged ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/preparation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/preparation-98dd68de3af0d7d9)
+
+running 7 tests
+test concurrent_first_open_serializes_the_initial_schema_migration ... ok
+test repeated_preparations_keep_distinct_ids_and_generation_bindings_after_reopen ... ok
+test concurrent_workspace_store_open_serializes_feature_migrations ... ok
+test failed_legacy_migration_keeps_existing_workspace_data_intact ... ok
+test migration_lock_contention_waits_without_losing_a_saved_preparation ... ok
+test acquires_missing_fork_head_from_the_explicit_fork_ref_without_touching_checkout_state ... ok
+test prepares_ordinary_pr_from_pinned_local_commits_without_touching_checkout ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
+
+     Running tests/publication_history.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/publication_history-db29d4d5afd90dcc)
+
+running 2 tests
+test history_readers_return_empty_for_preparations_without_publications ... ok
+test history_readers_restore_persisted_operation_and_plan_after_reopen ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/publication_reconciliation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/publication_reconciliation-9570f033c3acfd47)
+
+running 6 tests
+test wrong_diff_side_is_not_an_exact_review_match ... ok
+test incomplete_remote_listing_and_unavailable_gh_never_resolve_unknown ... ok
+test duplicate_exact_remote_reviews_remain_unknown ... ok
+test one_exact_authenticated_review_match_confirms_and_keeps_payload_provenance ... ok
+test no_remote_match_leaves_the_payload_unknown_and_unpublished ... ok
+test wrong_actor_or_repository_never_confirms_an_exact_looking_review ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests/review_retry.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/review_retry-897319bc074b66b9)
+
+running 5 tests
+test a_definitive_rejection_can_be_retried_as_a_new_immutable_operation ... ok
+test a_rejected_replacement_retry_keeps_its_exact_suggestion_and_anchor ... ok
+test retry_excludes_draft_revisions_already_confirmed_by_another_operation ... ok
+test retry_rechecks_current_pr_and_draft_revisions ... ok
+test unknown_operations_cannot_be_retried_and_cannot_become_duplicate_attempts ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+   Doc-tests bodh
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+    Checking cfg-if v1.0.5
+   Compiling serde_core v1.0.229
+   Compiling libc v0.2.191
+   Compiling syn v3.0.9
+   Compiling syn v2.0.119
+   Compiling autocfg v1.5.1
+    Checking bitflags v2.13.2
+   Compiling libm v0.2.16
+   Compiling shlex v2.0.1
+   Compiling typeid v1.0.3
+   Compiling find-msvc-tools v0.1.15
+   Compiling erased-serde v0.4.11
+    Checking memchr v2.8.3
+   Compiling jobserver v0.1.35
+    Checking once_cell v1.21.4
+   Compiling cc v1.11.0
+    Checking serde_fmt v1.1.0
+    Checking value-bag-serde1 v1.14.1
+    Checking pin-project-lite v0.2.17
+    Checking value-bag v1.14.1
+    Checking smallvec v1.16.4
+    Checking log v0.4.35
+    Checking futures-core v0.3.34
+   Compiling version_check v0.9.5
+   Compiling serde_derive v1.0.229
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-utils v0.8.23
+   Compiling pkg-config v0.3.34
+    Checking stable_deref_trait v1.2.1
+    Checking futures-io v0.3.34
+   Compiling zerocopy v0.8.63
+   Compiling zerocopy-derive v0.8.63
+   Compiling rustix v1.1.6
+    Checking slab v0.4.12
+   Compiling synstructure v0.14.0
+   Compiling serde v1.0.229
+    Checking linux-raw-sys v0.12.1
+   Compiling zerofrom-derive v0.1.8
+   Compiling bytemuck_derive v1.12.1
+    Checking bytemuck v1.25.2
+    Checking zerofrom v0.1.8
+   Compiling yoke-derive v0.8.4
+    Checking getrandom v0.2.17
+    Checking typenum v1.20.1
+    Checking yoke v0.8.4
+    Checking parking v2.2.1
+   Compiling zerovec-derive v0.11.7
+    Checking zerovec v0.11.9
+   Compiling displaydoc v0.2.7
+   Compiling equivalent v1.0.3
+   Compiling hashbrown v0.17.1
+    Checking arrayvec v0.7.8
+   Compiling indexmap v2.14.2
+    Checking fastrand v2.5.0
+    Checking tinystr v0.8.5
+    Checking utf_types v1.0.0
+    Checking writeable v0.6.4
+    Checking litemap v0.8.3
+    Checking utf8_iter v1.1.0
+    Checking icu_locale_core v2.4.0
+    Checking zerotrie v0.2.5
+    Checking potential_utf v0.1.6
+    Checking concurrent-queue v2.5.0
+   Compiling generic-array v0.14.7
+    Checking atomic-waker v1.1.2
+   Compiling cfg_aliases v0.2.2
+    Checking futures-sink v0.3.34
+    Checking scopeguard v1.2.0
+   Compiling icu_normalizer_data v2.4.0
+    Checking simd-adler32 v0.3.10
+   Compiling icu_properties_data v2.4.0
+    Checking icu_provider v2.4.0
+    Checking icu_collections v2.4.0
+    Checking futures-lite v2.6.1
+    Checking event-listener v5.4.2
+    Checking itoa v1.0.18
+   Compiling rustversion v1.0.23
+    Checking event-listener-strategy v0.5.4
+    Checking rand_core v0.6.4
+    Checking libloading v0.8.9
+    Checking percent-encoding v2.3.2
+    Checking adler2 v2.0.1
+    Checking icu_properties v2.4.0
+    Checking icu_normalizer v2.4.0
+    Checking polling v3.11.0
+   Compiling getrandom v0.3.4
+    Checking futures-channel v0.3.34
+    Checking idna_adapter v1.2.2
+    Checking num-integer v0.1.47
+   Compiling async-io v2.6.0
+   Compiling thiserror-impl v2.0.21
+   Compiling zeroize_derive v1.5.0
+   Compiling crc32fast v1.5.4
+    Checking async-task v4.7.1
+    Checking zeroize v1.9.1
+    Checking idna v1.1.0
+    Checking miniz_oxide v0.9.1
+    Checking async-channel v2.5.0
+    Checking lock_api v0.4.14
+   Compiling futures-macro v0.3.34
+   Compiling vcpkg v0.2.15
+   Compiling zmij v1.0.23
+    Checking subtle v2.6.1
+    Checking futures-task v0.3.34
+    Checking bytes v1.12.1
+   Compiling winnow v1.0.4
+    Checking futures-util v0.3.34
+    Checking crypto-common v0.1.7
+    Checking piper v0.2.5
+    Checking either v1.19.0
+    Checking blocking v1.7.0
+    Checking flate2 v1.1.10
+   Compiling toml_parser v1.1.5+spec-1.1.0
+    Checking num-bigint v0.4.8
+    Checking form_urlencoded v1.2.2
+    Checking async-lock v3.5.0
+    Checking errno v0.3.14
+    Checking regex-syntax v0.8.11
+   Compiling heck v0.5.0
+   Compiling crossbeam-epoch v0.9.21
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling serde_json v1.0.154
+   Compiling thiserror v2.0.21
+   Compiling toml_edit v0.25.17+spec-1.1.0
+    Checking num-rational v0.4.2
+    Checking signal-hook-registry v1.4.8
+    Checking dlib v0.5.3
+    Checking tracing-core v0.1.36
+    Checking aho-corasick v1.1.5
+    Checking socket2 v0.6.5
+    Checking mio v1.2.4
+   Compiling tracing-attributes v0.1.31
+   Compiling enumflags2_derive v0.7.12
+   Compiling crossbeam-deque v0.8.8
+    Checking foldhash v0.2.0
+   Compiling crunchy v0.2.4
+   Compiling unicase v2.10.0
+   Compiling thiserror v1.0.69
+    Checking tracing v0.1.44
+    Checking regex-automata v0.4.18
+    Checking tokio v1.54.1
+    Checking async-signal v0.2.14
+   Compiling proc-macro-crate v3.5.0
+    Checking url v2.5.8
+   Compiling zvariant_utils v4.2.0
+    Checking async-executor v1.14.1
+    Checking block-buffer v0.10.4
+    Checking ppv-lite86 v0.2.21
+   Compiling wayland-sys v0.31.11
+   Compiling thiserror-impl v1.0.69
+   Compiling anyhow v1.0.104
+   Compiling rayon-core v1.13.0
+   Compiling getrandom v0.4.3
+   Compiling ref-cast v1.0.27
+   Compiling tiny-keccak v2.0.2
+   Compiling hybrid-array v0.4.15
+   Compiling zvariant_derive v5.15.1
+    Checking digest v0.10.7
+    Checking async-process v2.5.0
+    Checking spin v0.9.9
+    Checking num-complex v0.4.6
+   Compiling ring v0.17.14
+   Compiling wayland-backend v0.3.17
+   Compiling ref-cast-impl v1.0.27
+   Compiling parking_lot_core v0.9.12
+   Compiling strum_macros v0.26.4
+    Checking http v1.5.0
+    Checking rustls-pki-types v1.15.1
+   Compiling quick-xml v0.41.0
+   Compiling slotmap v1.1.1
+   Compiling equator-macro v0.4.2
+   Compiling wayland-client v0.31.15
+   Compiling object v0.39.1
+    Checking downcast-rs v1.2.1
+    Checking scoped-tls v1.0.1
+    Checking tinyvec v1.13.3
+    Checking bit-vec v0.8.0
+    Checking bit-set v0.8.0
+   Compiling wayland-scanner v0.31.11
+    Checking equator v0.4.2
+   Compiling const-random-macro v0.1.16
+    Checking lazy_static v1.5.1
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling enumflags2 v0.7.12
+   Compiling libz-sys v1.1.31
+    Checking rand_core v0.9.5
+    Checking num-iter v0.1.46
+   Compiling zcheapstr v1.2.0
+   Compiling ahash v0.8.12
+   Compiling rustix v0.38.44
+   Compiling paste v1.0.15
+   Compiling httparse v1.10.1
+   Compiling const-oid v0.10.2
+   Compiling endi v1.1.1
+    Checking untrusted v0.9.0
+   Compiling zvariant v5.15.1
+   Compiling digest v0.11.3
+    Checking rand_chacha v0.9.0
+    Checking parking_lot v0.12.5
+    Checking const-random v0.1.18
+    Checking aligned-vec v0.6.4
+    Checking http-body v1.1.0
+    Checking rayon v1.12.0
+    Checking tokio-util v0.7.20
+   Compiling mime_guess v2.0.5
+    Checking async-fs v2.2.0
+    Checking async-net v2.0.0
+   Compiling encoding_rs v0.8.44
+    Checking miniz_oxide v0.8.9
+    Checking half v2.7.1
+   Compiling bstr v1.13.1
+    Checking euclid v0.22.14
+    Checking memmap2 v0.9.12
+   Compiling pin-project-internal v1.1.13
+   Compiling serde_derive_internals v0.30.0
+    Checking try-lock v0.2.5
+    Checking fnv v1.0.7
+   Compiling rustls v0.23.46
+   Compiling cpufeatures v0.3.1
+    Checking cpufeatures v0.2.17
+    Checking same-file v1.0.6
+    Checking roxmltree v0.20.0
+   Compiling ash v0.38.0+1.3.281
+    Checking linux-raw-sys v0.4.15
+   Compiling semver v1.0.28
+    Checking allocator-api2 v0.2.21
+   Compiling rustc_version v0.4.1
+    Checking hashbrown v0.16.1
+    Checking fontconfig-parser v0.5.8
+   Compiling walkdir v2.5.0
+   Compiling sha2 v0.11.1
+    Checking want v0.3.2
+    Checking h2 v0.4.20
+   Compiling schemars_derive v1.2.3
+    Checking pin-project v1.1.13
+   Compiling globset v0.4.21
+   Compiling ar_archive_writer v0.5.3
+    Checking v_frame v0.3.9
+    Checking rand v0.9.5
+   Compiling zbus_names v4.3.5
+    Checking rustls-webpki v0.103.16
+    Checking num v0.4.3
+    Checking regex v1.13.1
+    Checking itertools v0.14.0
+    Checking block-padding v0.3.3
+    Checking fdeflate v0.3.7
+   Compiling nix v0.31.3
+    Checking as-slice v0.2.1
+   Compiling libgit2-sys v0.18.8+1.9.7
+    Checking core_maths v0.1.1
+   Compiling profiling-procmacros v1.0.18
+    Checking tower-service v0.3.3
+    Checking unicode-script v0.5.9
+   Compiling syn v1.0.109
+    Checking float-cmp v0.9.0
+   Compiling built v0.8.1
+   Compiling multiversion_no_op v1.0.0
+   Compiling mime v0.3.17
+   Compiling av-scenechange v0.14.1
+    Checking compression-core v0.4.34
+    Checking simdutf8 v0.1.5
+    Checking dyn-clone v1.0.20
+   Compiling rustc-hash v2.1.3
+    Checking unicode-properties v0.1.5
+    Checking sha1_smol v1.0.1
+    Checking deflate64 v0.1.12
+    Checking core_detect v1.0.0
+    Checking ryu v1.0.23
+    Checking compression-codecs v0.4.47
+    Checking uuid v1.29.0
+   Compiling gpui_collections v0.2.2
+    Checking schemars v1.2.3
+   Compiling rav1e v0.8.1
+    Checking strict-num v0.1.1
+    Checking profiling v1.0.18
+    Checking ttf-parser v0.25.1
+    Checking aligned v0.4.3
+    Checking inout v0.1.4
+   Compiling zbus_macros v5.19.0
+    Checking hyper v1.12.0
+   Compiling psm v0.1.32
+   Compiling rust-embed-utils v8.13.0
+   Compiling pathfinder_simd v0.5.6
+    Checking sha2 v0.10.9
+    Checking lyon_geom v1.0.20
+    Checking futures-executor v0.3.34
+   Compiling libsqlite3-sys v0.36.0
+    Checking async-broadcast v0.7.2
+   Compiling naga v25.0.1
+   Compiling nix v0.29.0
+    Checking font-types v0.12.7
+   Compiling freetype-sys v0.20.1
+   Compiling yeslogic-fontconfig-sys v6.0.1
+   Compiling pulp v0.22.3
+    Checking ordered-stream v0.2.0
+    Checking no_std_io2 v0.9.4
+    Checking nom v8.0.0
+    Checking gpu-alloc-types v0.3.1
+   Compiling async-trait v0.1.92
+   Compiling async-recursion v1.2.0
+   Compiling serde_repr v0.1.21
+   Compiling arg_enum_proc_macro v0.3.4
+    Checking rustc-hash v1.1.0
+    Checking base64 v0.22.1
+   Compiling foldhash v0.1.5
+   Compiling serde_json_lenient v0.2.4
+    Checking openssl-probe v0.2.2
+    Checking event-listener v2.5.3
+    Checking borrow-or-share v0.2.4
+    Checking hex v0.4.3
+   Compiling pastey v0.1.1
+    Checking quick-error v2.0.1
+    Checking unicode-width v0.2.3
+    Checking as-raw-xcb-connection v1.0.1
+   Compiling unicode-general-category v1.1.0
+   Compiling termcolor v1.4.1
+    Checking arrayref v0.3.9
+    Checking y4m v0.8.0
+    Checking xcursor v0.3.11
+    Checking codespan-reporting v0.12.0
+    Checking hashbrown v0.15.5
+    Checking tiny-skia-path v0.11.4
+    Checking zbus v5.19.0
+    Checking fluent-uri v0.4.1
+    Checking async-channel v1.9.0
+    Checking rustls-native-certs v0.8.5
+    Checking av1-grain v0.2.5
+    Checking bitstream-io v4.10.0
+    Checking read-fonts v0.41.0
+    Checking futures v0.3.34
+    Checking lyon_path v1.0.19
+    Checking tokio-rustls v0.26.6
+   Compiling rust-embed-impl v8.13.0
+    Checking hyper-util v0.1.21
+    Checking cipher v0.4.4
+   Compiling gpui_perf v0.2.2
+    Checking async-compression v0.4.52
+    Checking maybe-rayon v0.1.1
+   Compiling strum v0.26.3
+    Checking hmac v0.12.1
+    Checking rand_chacha v0.3.1
+    Checking async-global-executor v2.4.1
+    Checking kurbo v0.11.3
+    Checking gethostname v1.1.0
+    Checking rgb v0.8.53
+   Compiling stacker v0.1.25
+    Checking sync_wrapper v1.0.2
+    Checking kv-log-macro v1.0.7
+    Checking raw-cpuid v11.6.0
+    Checking spirv v0.3.0+sdk-1.3.268.0
+    Checking dirs-sys v0.3.7
+   Compiling num-derive v0.4.2
+   Compiling proc-macro-error-attr2 v2.0.0
+   Compiling simd_helpers v0.1.0
+   Compiling num-bigint-dig v0.8.6
+    Checking weezl v0.1.12
+    Checking raw-window-handle v0.6.2
+    Checking hexf-parse v0.2.1
+    Checking pin-utils v0.1.1
+   Compiling xim-parser v0.2.2
+    Checking unicode-ccc v0.4.0
+    Checking fastrand v1.9.0
+    Checking micromap v0.3.0
+    Checking bitflags v1.3.2
+    Checking outref v0.5.2
+    Checking new_debug_unreachable v1.0.6
+    Checking x11rb-protocol v0.13.2
+    Checking reborrow v0.5.5
+   Compiling noop_proc_macro v0.3.0
+    Checking unicode-bidi-mirroring v0.4.0
+    Checking unicode-bidi v0.3.18
+    Checking home v0.5.12
+    Checking option-ext v0.2.0
+    Checking zune-core v0.5.3
+    Checking siphasher v1.0.4
+    Checking pulp-wasm-simd-flag v0.1.1
+    Checking imgref v1.12.3
+    Checking tower-layer v0.3.3
+    Checking waker-fn v1.2.0
+    Checking vsimd v0.8.0
+    Checking uuid-simd v0.8.0
+    Checking futures-lite v1.13.0
+    Checking tower v0.5.3
+    Checking loop9 v0.1.5
+    Checking svgtypes v0.15.3
+    Checking zune-jpeg v0.5.15
+    Checking dirs-sys v0.4.1
+    Checking which v6.0.3
+    Checking rustybuzz v0.20.1
+    Checking x11rb v0.13.2
+    Checking png v0.17.16
+    Checking referencing v0.46.10
+    Checking ash-window v0.13.0
+    Checking async-std v1.13.2
+   Compiling proc-macro-error2 v2.0.1
+    Checking dirs v4.0.0
+   Compiling hidden-trait v0.1.2
+    Checking rand v0.8.8
+    Checking async_zip v0.0.17
+   Compiling gpui_util_macros v0.2.2
+    Checking rust-embed v8.13.0
+    Checking command-fds v0.3.3
+    Checking hyper-rustls v0.27.10
+    Checking git2 v0.20.4
+    Checking skrifa v0.44.0
+    Checking gpu-alloc-ash v0.7.1
+    Checking gpu-alloc v0.6.2
+    Checking fontdb v0.23.0
+    Checking serde_urlencoded v0.7.1
+    Checking fraction v0.15.4
+    Checking hashlink v0.11.1
+    Checking smol v2.0.2
+    Checking http-body-util v0.1.5
+    Checking fancy-regex v0.18.0
+    Checking rustls-pemfile v2.2.0
+    Checking tempfile v3.27.0
+    Checking tokio-socks v0.5.3
+    Checking jsonschema-regex v0.46.10
+    Checking zune-inflate v0.2.54
+    Checking avif-serialize v0.8.9
+    Checking email_address v0.2.9
+    Checking simplecss v0.2.2
+    Checking is-docker v0.2.0
+    Checking xattr v0.2.3 (/home/kedarmd/tmp/bodh-discussions-timeout/spikes/native-sequence/vendor/xattr)
+    Checking filetime v0.2.29
+    Checking lebe v0.5.3
+    Checking data-url v0.3.2
+    Checking fallible-iterator v0.3.0
+    Checking bytecount v0.6.9
+    Checking color_quant v1.1.0
+    Checking unicode-ccc v0.2.0
+    Checking xmlwriter v0.1.0
+   Compiling dtor-proc-macro v0.0.5
+    Checking yazi v0.2.2
+    Checking byteorder-lite v0.1.0
+    Checking imagesize v0.13.0
+    Checking ttf-parser v0.20.0
+    Checking ipnet v2.12.2
+    Checking unicode-bidi-mirroring v0.2.0
+    Checking fax v0.2.7
+    Checking data-encoding v2.11.1
+    Checking unicode-vo v0.1.0
+    Checking float_next_after v1.0.0
+    Checking pico-args v0.5.0
+    Checking take-until v0.2.0
+    Checking mint v0.5.9
+    Checking ttf-parser v0.21.1
+   Compiling pulldown-cmark v0.13.4
+    Checking zeno v0.3.3
+    Checking pxfm v0.1.30
+    Checking fallible-streaming-iterator v0.1.9
+    Checking shlex v1.3.0
+    Checking dunce v1.0.5
+    Checking gimli v0.34.0
+    Checking bit_field v0.10.3
+   Compiling convert_case v0.4.0
+    Checking num-cmp v0.1.0
+   Compiling zed-font-kit v0.14.1-zed
+    Checking addr2line v0.27.1
+    Checking jsonschema v0.46.10
+   Compiling derive_more v0.99.20
+    Checking exr v1.74.2
+    Checking moxcms v0.8.1
+    Checking gpui_util v0.2.2
+    Checking rusqlite v0.38.0
+    Checking rustybuzz v0.14.1
+    Checking swash v0.2.10
+    Checking fontdb v0.16.2
+    Checking blade-graphics v0.7.1
+    Checking usvg v0.45.1
+    Checking lyon_tessellation v1.0.23
+    Checking tiff v0.11.3
+    Checking zed-reqwest v0.12.15-zed
+    Checking image-webp v0.2.4
+    Checking dtor v0.0.6
+    Checking gif v0.14.2
+    Checking zed-async-tar v0.5.0-zed
+    Checking is-wsl v0.4.0
+    Checking ravif v0.13.0
+    Checking pathfinder_geometry v0.5.1
+   Compiling gpui v0.2.2
+   Compiling stacksafe-macro v0.1.4
+    Checking tiny-skia v0.11.4
+    Checking dirs v5.0.1
+    Checking pbkdf2 v0.12.2
+    Checking hkdf v0.12.4
+    Checking aes v0.8.4
+    Checking cbc v0.1.2
+    Checking lyon_algorithms v1.0.22
+    Checking ashpd v0.12.3
+    Checking xim-ctext v0.3.0
+    Checking png v0.18.1
+    Checking calloop v0.13.0
+    Checking wayland-protocols v0.31.2
+    Checking wayland-protocols v0.32.13
+    Checking md-5 v0.10.6
+   Compiling strum_macros v0.27.2
+    Checking nanorand v0.7.0
+    Checking qoi v0.4.1
+    Checking crossbeam-queue v0.3.14
+    Checking object v0.40.0
+   Compiling gpui_derive_refineable v0.2.2
+    Checking float-ord v0.3.2
+    Checking static_assertions v1.1.0
+    Checking hashbrown v0.14.5
+    Checking smol_str v0.2.2
+    Checking grid v0.18.0
+    Checking pollster v0.2.5
+    Checking unicode-linebreak v0.1.5
+    Checking rustc-demangle v0.1.28
+    Checking svg_fmt v0.4.5
+    Checking self_cell v1.3.0
+    Checking xkeysym v0.2.1
+    Checking unicode-segmentation v1.13.3
+    Checking atomic v0.5.3
+    Checking byteorder v1.5.0
+    Checking sys-locale v0.3.2
+   Compiling ctor-proc-macro v0.0.6
+    Checking rangemap v1.8.0
+    Checking cosmic-text v0.14.2
+    Checking ctor v0.4.3
+    Checking backtrace v0.3.77
+    Checking postage v0.5.0
+    Checking xkbcommon v0.8.0
+    Checking etagere v0.2.15
+    Checking taffy v0.9.0
+    Checking zed-xim v0.4.0-zed
+    Checking gpui_refineable v0.2.2
+    Checking ashpd v0.11.1
+    Checking image v0.25.10
+    Checking flume v0.11.1
+    Checking strum v0.27.2
+    Checking oo7 v0.5.0
+    Checking wayland-protocols-plasma v0.2.0
+    Checking calloop-wayland-source v0.3.0
+    Checking lyon v1.0.19
+    Checking resvg v0.45.1
+    Checking stacksafe v0.1.4
+    Checking gpui_http_client v0.2.2
+    Checking open v5.4.5
+    Checking blade-util v0.3.0
+    Checking bodh v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout)
+    Checking x11-clipboard v0.9.3
+    Checking wayland-cursor v0.31.14
+    Checking gpui_sum_tree v0.2.2
+    Checking gpui_semantic_version v0.2.2
+    Checking filedescriptor v0.8.3
+   Compiling gpui-macros v0.2.2
+    Checking num_cpus v1.17.0
+   Compiling blade-macros v0.3.0
+    Checking seahash v4.1.0
+    Checking inventory v0.3.25
+    Checking bodh-sequence-spike v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout/spikes/native-sequence)
+    Finished `dev` profile [unoptimized] target(s) in 3m 14s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+    Checking bodh-sequence-spike v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout/spikes/native-sequence)
+    Finished `dev` profile [unoptimized] target(s) in 1.98s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+   Compiling libc v0.2.191
+   Compiling bitflags v2.13.2
+   Compiling typeid v1.0.3
+   Compiling once_cell v1.21.4
+   Compiling erased-serde v0.4.11
+   Compiling serde_fmt v1.1.0
+   Compiling value-bag-serde1 v1.14.1
+   Compiling pin-project-lite v0.2.17
+   Compiling value-bag v1.14.1
+   Compiling smallvec v1.16.4
+   Compiling log v0.4.35
+   Compiling futures-core v0.3.34
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-utils v0.8.23
+   Compiling stable_deref_trait v1.2.1
+   Compiling futures-io v0.3.34
+   Compiling slab v0.4.12
+   Compiling linux-raw-sys v0.12.1
+   Compiling serde v1.0.229
+   Compiling bytemuck v1.25.2
+   Compiling zerofrom v0.1.8
+   Compiling getrandom v0.2.17
+   Compiling yoke v0.8.4
+   Compiling parking v2.2.1
+   Compiling zerovec v0.11.9
+   Compiling rustix v1.1.6
+   Compiling arrayvec v0.7.8
+   Compiling fastrand v2.5.0
+   Compiling tinystr v0.8.5
+   Compiling writeable v0.6.4
+   Compiling litemap v0.8.3
+   Compiling utf_types v1.0.0
+   Compiling utf8_iter v1.1.0
+   Compiling icu_locale_core v2.4.0
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling concurrent-queue v2.5.0
+   Compiling atomic-waker v1.1.2
+   Compiling futures-sink v0.3.34
+   Compiling scopeguard v1.2.0
+   Compiling simd-adler32 v0.3.10
+   Compiling icu_collections v2.4.0
+   Compiling icu_provider v2.4.0
+   Compiling futures-lite v2.6.1
+   Compiling event-listener v5.4.2
+   Compiling event-listener-strategy v0.5.4
+   Compiling generic-array v0.14.7
+   Compiling icu_properties_data v2.4.0
+   Compiling icu_normalizer_data v2.4.0
+   Compiling rand_core v0.6.4
+   Compiling libloading v0.8.9
+   Compiling adler2 v2.0.1
+   Compiling percent-encoding v2.3.2
+   Compiling icu_normalizer v2.4.0
+   Compiling icu_properties v2.4.0
+   Compiling polling v3.11.0
+   Compiling futures-channel v0.3.34
+   Compiling num-integer v0.1.47
+   Compiling async-task v4.7.1
+   Compiling idna_adapter v1.2.2
+   Compiling zeroize v1.9.1
+   Compiling idna v1.1.0
+   Compiling getrandom v0.3.4
+   Compiling miniz_oxide v0.9.1
+   Compiling async-channel v2.5.0
+   Compiling lock_api v0.4.14
+   Compiling subtle v2.6.1
+   Compiling futures-task v0.3.34
+   Compiling bytes v1.12.1
+   Compiling futures-util v0.3.34
+   Compiling async-io v2.6.0
+   Compiling crc32fast v1.5.4
+   Compiling crypto-common v0.1.7
+   Compiling piper v0.2.5
+   Compiling either v1.19.0
+   Compiling blocking v1.7.0
+   Compiling flate2 v1.1.10
+   Compiling num-bigint v0.4.8
+   Compiling form_urlencoded v1.2.2
+   Compiling async-lock v3.5.0
+   Compiling errno v0.3.14
+   Compiling regex-syntax v0.8.11
+   Compiling num-rational v0.4.2
+   Compiling signal-hook-registry v1.4.8
+   Compiling dlib v0.5.3
+   Compiling socket2 v0.6.5
+   Compiling mio v1.2.4
+   Compiling tracing-core v0.1.36
+   Compiling tracing v0.1.44
+   Compiling tokio v1.54.1
+   Compiling regex-automata v0.4.18
+   Compiling async-signal v0.2.14
+   Compiling crossbeam-epoch v0.9.21
+   Compiling thiserror v2.0.21
+   Compiling url v2.5.8
+   Compiling async-executor v1.14.1
+   Compiling block-buffer v0.10.4
+   Compiling ppv-lite86 v0.2.21
+   Compiling thiserror v1.0.69
+   Compiling digest v0.10.7
+   Compiling crossbeam-deque v0.8.8
+   Compiling async-process v2.5.0
+   Compiling spin v0.9.9
+   Compiling num-complex v0.4.6
+   Compiling ref-cast v1.0.27
+   Compiling rayon-core v1.13.0
+   Compiling wayland-sys v0.31.11
+   Compiling getrandom v0.4.3
+   Compiling anyhow v1.0.104
+   Compiling http v1.5.0
+   Compiling rustls-pki-types v1.15.1
+   Compiling downcast-rs v1.2.1
+   Compiling bit-vec v0.8.0
+   Compiling scoped-tls v1.0.1
+   Compiling tinyvec v1.13.3
+   Compiling wayland-backend v0.3.17
+   Compiling bit-set v0.8.0
+   Compiling equator v0.4.2
+   Compiling parking_lot_core v0.9.12
+   Compiling lazy_static v1.5.1
+   Compiling rand_core v0.9.5
+   Compiling num-iter v0.1.46
+   Compiling syn v3.0.9
+   Compiling untrusted v0.9.0
+   Compiling ring v0.17.14
+   Compiling zvariant_utils v4.2.0
+   Compiling wayland-client v0.31.15
+   Compiling rand_chacha v0.9.0
+   Compiling parking_lot v0.12.5
+   Compiling slotmap v1.1.1
+   Compiling const-random v0.1.18
+   Compiling aligned-vec v0.6.4
+   Compiling http-body v1.1.0
+   Compiling rayon v1.12.0
+   Compiling tokio-util v0.7.20
+   Compiling enumflags2 v0.7.12
+   Compiling async-fs v2.2.0
+   Compiling async-net v2.0.0
+   Compiling miniz_oxide v0.8.9
+   Compiling zcheapstr v1.2.0
+   Compiling half v2.7.1
+   Compiling euclid v0.22.14
+   Compiling memmap2 v0.9.12
+   Compiling allocator-api2 v0.2.21
+   Compiling roxmltree v0.20.0
+   Compiling try-lock v0.2.5
+   Compiling cpufeatures v0.2.17
+   Compiling fnv v1.0.7
+   Compiling linux-raw-sys v0.4.15
+   Compiling rustix v0.38.44
+   Compiling fontconfig-parser v0.5.8
+   Compiling h2 v0.4.20
+   Compiling want v0.3.2
+   Compiling hashbrown v0.16.1
+   Compiling pin-project v1.1.13
+   Compiling zvariant v5.15.1
+   Compiling v_frame v0.3.9
+   Compiling ahash v0.8.12
+   Compiling rand v0.9.5
+   Compiling httparse v1.10.1
+   Compiling rustls-webpki v0.103.16
+   Compiling num v0.4.3
+   Compiling regex v1.13.1
+   Compiling itertools v0.14.0
+   Compiling block-padding v0.3.3
+   Compiling fdeflate v0.3.7
+   Compiling as-slice v0.2.1
+   Compiling core_maths v0.1.1
+   Compiling compression-core v0.4.34
+   Compiling sha1_smol v1.0.1
+   Compiling float-cmp v0.9.0
+   Compiling core_detect v1.0.0
+   Compiling tower-service v0.3.3
+   Compiling deflate64 v0.1.12
+   Compiling unicode-properties v0.1.5
+   Compiling dyn-clone v1.0.20
+   Compiling ryu v1.0.23
+   Compiling simdutf8 v0.1.5
+   Compiling unicode-script v0.5.9
+   Compiling encoding_rs v0.8.44
+   Compiling schemars v1.2.3
+   Compiling compression-codecs v0.4.47
+   Compiling strict-num v0.1.1
+   Compiling uuid v1.29.0
+   Compiling profiling v1.0.18
+   Compiling ttf-parser v0.25.1
+   Compiling aligned v0.4.3
+   Compiling inout v0.1.4
+   Compiling rustls v0.23.46
+   Compiling zbus_names v4.3.5
+   Compiling hyper v1.12.0
+   Compiling ash v0.38.0+1.3.281
+   Compiling sha2 v0.10.9
+   Compiling lyon_geom v1.0.20
+   Compiling libz-sys v1.1.31
+   Compiling globset v0.4.21
+   Compiling futures-executor v0.3.34
+   Compiling async-broadcast v0.7.2
+   Compiling font-types v0.12.7
+   Compiling ordered-stream v0.2.0
+   Compiling gpu-alloc-types v0.3.1
+   Compiling no_std_io2 v0.9.4
+   Compiling nom v8.0.0
+   Compiling event-listener v2.5.3
+   Compiling base64 v0.22.1
+   Compiling borrow-or-share v0.2.4
+   Compiling openssl-probe v0.2.2
+   Compiling quick-error v2.0.1
+   Compiling hex v0.4.3
+   Compiling arrayref v0.3.9
+   Compiling as-raw-xcb-connection v1.0.1
+   Compiling y4m v0.8.0
+   Compiling xcursor v0.3.11
+   Compiling av-scenechange v0.14.1
+   Compiling tiny-skia-path v0.11.4
+   Compiling zbus v5.19.0
+   Compiling rustls-native-certs v0.8.5
+   Compiling fluent-uri v0.4.1
+   Compiling async-channel v1.9.0
+   Compiling av1-grain v0.2.5
+   Compiling bitstream-io v4.10.0
+   Compiling read-fonts v0.41.0
+   Compiling futures v0.3.34
+   Compiling rust-embed-utils v8.13.0
+   Compiling libgit2-sys v0.18.8+1.9.7
+   Compiling lyon_path v1.0.19
+   Compiling hyper-util v0.1.21
+   Compiling tokio-rustls v0.26.6
+   Compiling cipher v0.4.4
+   Compiling nix v0.31.3
+   Compiling async-compression v0.4.52
+   Compiling maybe-rayon v0.1.1
+   Compiling codespan-reporting v0.12.0
+   Compiling hmac v0.12.1
+   Compiling rand_chacha v0.3.1
+   Compiling async-global-executor v2.4.1
+   Compiling gethostname v1.1.0
+   Compiling kurbo v0.11.3
+   Compiling rgb v0.8.53
+   Compiling kv-log-macro v1.0.7
+   Compiling sync_wrapper v1.0.2
+   Compiling dirs-sys v0.3.7
+   Compiling raw-cpuid v11.6.0
+   Compiling spirv v0.3.0+sdk-1.3.268.0
+   Compiling option-ext v0.2.0
+   Compiling home v0.5.12
+   Compiling zune-core v0.5.3
+   Compiling siphasher v1.0.4
+   Compiling pulp-wasm-simd-flag v0.1.1
+   Compiling imgref v1.12.3
+   Compiling tower-layer v0.3.3
+   Compiling weezl v0.1.12
+   Compiling raw-window-handle v0.6.2
+   Compiling vsimd v0.8.0
+   Compiling waker-fn v1.2.0
+   Compiling unicode-ccc v0.4.0
+   Compiling micromap v0.3.0
+   Compiling bitflags v1.3.2
+   Compiling new_debug_unreachable v1.0.6
+   Compiling unicode-bidi v0.3.18
+   Compiling x11rb-protocol v0.13.2
+   Compiling reborrow v0.5.5
+   Compiling fastrand v1.9.0
+   Compiling unicode-bidi-mirroring v0.4.0
+   Compiling outref v0.5.2
+   Compiling pin-utils v0.1.1
+   Compiling async-std v1.13.2
+   Compiling uuid-simd v0.8.0
+   Compiling rustybuzz v0.20.1
+   Compiling futures-lite v1.13.0
+   Compiling rav1e v0.8.1
+   Compiling x11rb v0.13.2
+   Compiling pulp v0.22.3
+   Compiling referencing v0.46.10
+   Compiling png v0.17.16
+   Compiling ash-window v0.13.0
+   Compiling loop9 v0.1.5
+   Compiling tower v0.5.3
+   Compiling zune-jpeg v0.5.15
+   Compiling svgtypes v0.15.3
+   Compiling which v6.0.3
+   Compiling dirs-sys v0.4.1
+   Compiling naga v25.0.1
+   Compiling dirs v4.0.0
+   Compiling rand v0.8.8
+   Compiling async_zip v0.0.17
+   Compiling command-fds v0.3.3
+   Compiling hyper-rustls v0.27.10
+   Compiling skrifa v0.44.0
+   Compiling psm v0.1.32
+   Compiling rust-embed v8.13.0
+   Compiling pathfinder_simd v0.5.6
+   Compiling git2 v0.20.4
+   Compiling mime_guess v2.0.5
+   Compiling libsqlite3-sys v0.36.0
+   Compiling nix v0.29.0
+   Compiling unicode-general-category v1.1.0
+   Compiling serde_json_lenient v0.2.4
+   Compiling gpu-alloc-ash v0.7.1
+   Compiling gpu-alloc v0.6.2
+   Compiling fontdb v0.23.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling fraction v0.15.4
+   Compiling hashlink v0.11.1
+   Compiling gpui_collections v0.2.2
+   Compiling smol v2.0.2
+   Compiling http-body-util v0.1.5
+   Compiling fancy-regex v0.18.0
+   Compiling rustls-pemfile v2.2.0
+   Compiling tempfile v3.27.0
+   Compiling tokio-socks v0.5.3
+   Compiling jsonschema-regex v0.46.10
+   Compiling zune-inflate v0.2.54
+   Compiling avif-serialize v0.8.9
+   Compiling email_address v0.2.9
+   Compiling simplecss v0.2.2
+   Compiling xattr v0.2.3 (/home/kedarmd/tmp/bodh-discussions-timeout/spikes/native-sequence/vendor/xattr)
+   Compiling filetime v0.2.29
+   Compiling is-docker v0.2.0
+   Compiling bit_field v0.10.3
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling bytecount v0.6.9
+   Compiling unicode-ccc v0.2.0
+   Compiling shlex v1.3.0
+   Compiling lebe v0.5.3
+   Compiling data-url v0.3.2
+   Compiling gimli v0.34.0
+   Compiling color_quant v1.1.0
+   Compiling dunce v1.0.5
+   Compiling yazi v0.2.2
+   Compiling num-cmp v0.1.0
+   Compiling ttf-parser v0.20.0
+   Compiling xmlwriter v0.1.0
+   Compiling fallible-iterator v0.3.0
+   Compiling unicode-bidi-mirroring v0.2.0
+   Compiling data-encoding v2.11.1
+   Compiling byteorder-lite v0.1.0
+   Compiling imagesize v0.13.0
+   Compiling fax v0.2.7
+   Compiling unicode-vo v0.1.0
+   Compiling mint v0.5.9
+   Compiling ttf-parser v0.21.1
+   Compiling zeno v0.3.3
+   Compiling float_next_after v1.0.0
+   Compiling pico-args v0.5.0
+   Compiling pxfm v0.1.30
+   Compiling ipnet v2.12.2
+   Compiling take-until v0.2.0
+   Compiling gpui_util v0.2.2
+   Compiling moxcms v0.8.1
+   Compiling zed-reqwest v0.12.15-zed
+   Compiling rustybuzz v0.14.1
+   Compiling usvg v0.45.1
+   Compiling lyon_tessellation v1.0.23
+   Compiling swash v0.2.10
+   Compiling blade-graphics v0.7.1
+   Compiling tiff v0.11.3
+   Compiling image-webp v0.2.4
+   Compiling jsonschema v0.46.10
+   Compiling rusqlite v0.38.0
+   Compiling fontdb v0.16.2
+   Compiling addr2line v0.27.1
+   Compiling dtor v0.0.6
+   Compiling gif v0.14.2
+   Compiling exr v1.74.2
+   Compiling is-wsl v0.4.0
+   Compiling zed-async-tar v0.5.0-zed
+   Compiling ravif v0.13.0
+   Compiling pathfinder_geometry v0.5.1
+   Compiling stacker v0.1.25
+   Compiling num-bigint-dig v0.8.6
+   Compiling dirs v5.0.1
+   Compiling xim-parser v0.2.2
+   Compiling tiny-skia v0.11.4
+   Compiling pbkdf2 v0.12.2
+   Compiling hkdf v0.12.4
+   Compiling aes v0.8.4
+   Compiling cbc v0.1.2
+   Compiling lyon_algorithms v1.0.22
+   Compiling ashpd v0.12.3
+   Compiling freetype-sys v0.20.1
+   Compiling yeslogic-fontconfig-sys v6.0.1
+   Compiling xim-ctext v0.3.0
+   Compiling png v0.18.1
+   Compiling calloop v0.13.0
+   Compiling wayland-protocols v0.31.2
+   Compiling wayland-protocols v0.32.13
+   Compiling md-5 v0.10.6
+   Compiling nanorand v0.7.0
+   Compiling qoi v0.4.1
+   Compiling crossbeam-queue v0.3.14
+   Compiling object v0.40.0
+   Compiling atomic v0.5.3
+   Compiling byteorder v1.5.0
+   Compiling float-ord v0.3.2
+   Compiling smol_str v0.2.2
+   Compiling static_assertions v1.1.0
+   Compiling hashbrown v0.14.5
+   Compiling grid v0.18.0
+   Compiling unicode-linebreak v0.1.5
+   Compiling rustc-demangle v0.1.28
+   Compiling svg_fmt v0.4.5
+   Compiling self_cell v1.3.0
+   Compiling unicode-segmentation v1.13.3
+   Compiling pollster v0.2.5
+   Compiling xkeysym v0.2.1
+   Compiling sys-locale v0.3.2
+   Compiling rangemap v1.8.0
+   Compiling cosmic-text v0.14.2
+   Compiling xkbcommon v0.8.0
+   Compiling ctor v0.4.3
+   Compiling postage v0.5.0
+   Compiling backtrace v0.3.77
+   Compiling etagere v0.2.15
+   Compiling zed-xim v0.4.0-zed
+   Compiling taffy v0.9.0
+   Compiling zed-font-kit v0.14.1-zed
+   Compiling gpui_refineable v0.2.2
+   Compiling ashpd v0.11.1
+   Compiling image v0.25.10
+   Compiling flume v0.11.1
+   Compiling strum v0.27.2
+   Compiling oo7 v0.5.0
+   Compiling wayland-protocols-plasma v0.2.0
+   Compiling calloop-wayland-source v0.3.0
+   Compiling lyon v1.0.19
+   Compiling resvg v0.45.1
+   Compiling stacksafe v0.1.4
+   Compiling gpui_http_client v0.2.2
+   Compiling open v5.4.5
+   Compiling bodh v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout)
+   Compiling blade-util v0.3.0
+   Compiling pulldown-cmark v0.13.4
+   Compiling x11-clipboard v0.9.3
+   Compiling wayland-cursor v0.31.14
+   Compiling gpui_sum_tree v0.2.2
+   Compiling gpui_semantic_version v0.2.2
+   Compiling filedescriptor v0.8.3
+   Compiling num_cpus v1.17.0
+   Compiling seahash v4.1.0
+   Compiling inventory v0.3.25
+   Compiling gpui v0.2.2
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout/spikes/native-sequence)
+    Finished `test` profile [unoptimized] target(s) in 3m 23s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-f3f510e98280f1b4)
+
+running 17 tests
+test gh_prerequisite::tests::expands_tilde_checkout_paths_before_they_become_process_working_directories ... ok
+test gh_prerequisite::tests::invalid_checkout_path_has_its_own_error_code ... ok
+test gh_prerequisite::tests::resolver_expands_a_tilde_path_and_returns_an_absolute_checkout ... ok
+test overview::tests::a_failed_refresh_keeps_the_last_committed_view_for_the_same_context ... ok
+test overview::tests::overview_only_exposes_a_commit_bound_to_the_displayed_context ... ok
+test overview::tests::follow_up_rows_order_actionable_uncertain_and_resolved_and_resolve_current_findings ... ok
+test preferences::tests::navigation_preferences_persist_without_review_content ... ok
+test product_search_tests::browser_search_matches_title_number_author_and_lifecycle ... ok
+test overview::tests::non_aligned_assessments_are_significant_and_evidence_uses_exact_side_paths ... ok
+test repository_input::tests::modified_shortcuts_are_not_inserted_as_path_text ... ok
+test repository_input::tests::shifted_repository_letters_keep_the_typed_case ... ok
+test gh_prerequisite::tests::preflight_reports_a_missing_executable_separately ... ok
+test preferences::tests::repository_pr_lookup_returns_the_most_recent_saved_workspace ... ok
+test preferences::tests::old_navigation_preferences_load_with_default_review_positions ... ok
+test gh_prerequisite::tests::available_cli_result_keeps_the_executable_path_for_follow_up_calls ... ok
+test gh_prerequisite::tests::preflight_reports_the_installed_cli_version ... ok
+test preferences::tests::retention_cleanup_does_not_overwrite_concurrent_atomic_preference_saves ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-7843c083f6f61d81)
+
+running 8 tests
+test failed_save_retains_typed_text_and_success_keeps_newer_keystrokes ... ok
+test replacement_editor_restores_saved_text_and_keeps_preview_text_after_stale_save ... ok
+test restored_draft_is_clean_until_edited_and_new_draft_discard_is_local ... ok
+test full_markdown_becomes_safe_readable_blocks_with_inert_html_and_links ... ok
+test split_diff_pairs_replacements_and_keeps_side_specific_context_numbers ... ok
+test syntax_highlights_common_code_tokens_and_leaves_unknown_languages_plain ... ok
+test unified_diff_rows_track_both_side_lines_and_distinguish_changes ... ok
+test stale_draft_can_be_recovered_as_a_new_copy_without_overwriting_the_winner ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-eed3ec586d6198d8)
+
+running 6 tests
+test alternatives_share_one_conditional_frame ... ok
+test clicking_an_interaction_resolves_its_exact_immutable_source ... ok
+test long_participant_and_interaction_labels_expand_their_scene_rows ... ok
+test self_call_on_the_last_participant_stays_inside_the_scrollable_scene ... ok
+test viewport_culling_keeps_partial_rows_and_original_source_identity ... ok
+test every_visible_hit_resolves_in_order_across_conditionals_and_stress_layouts ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests bodh_sequence_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Checking bodh-sequence-spike v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout/spikes/native-sequence)
+    Finished `dev` profile [unoptimized] target(s) in 4.64s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+    Checking bodh-sequence-spike v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout/spikes/native-sequence)
+    Finished `dev` profile [unoptimized] target(s) in 3.73s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+   Compiling bodh-sequence-spike v0.1.0 (/home/kedarmd/tmp/bodh-discussions-timeout/spikes/native-sequence)
+    Finished `test` profile [unoptimized] target(s) in 17.87s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-c7f837ff6d89a660)
+
+running 17 tests
+test gh_prerequisite::tests::expands_tilde_checkout_paths_before_they_become_process_working_directories ... ok
+test gh_prerequisite::tests::invalid_checkout_path_has_its_own_error_code ... ok
+test gh_prerequisite::tests::preflight_reports_a_missing_executable_separately ... ok
+test overview::tests::a_failed_refresh_keeps_the_last_committed_view_for_the_same_context ... ok
+test overview::tests::non_aligned_assessments_are_significant_and_evidence_uses_exact_side_paths ... ok
+test preferences::tests::repository_pr_lookup_returns_the_most_recent_saved_workspace ... ok
+test overview::tests::overview_only_exposes_a_commit_bound_to_the_displayed_context ... ok
+test product_search_tests::browser_search_matches_title_number_author_and_lifecycle ... ok
+test overview::tests::follow_up_rows_order_actionable_uncertain_and_resolved_and_resolve_current_findings ... ok
+test repository_input::tests::modified_shortcuts_are_not_inserted_as_path_text ... ok
+test preferences::tests::old_navigation_preferences_load_with_default_review_positions ... ok
+test gh_prerequisite::tests::resolver_expands_a_tilde_path_and_returns_an_absolute_checkout ... ok
+test repository_input::tests::shifted_repository_letters_keep_the_typed_case ... ok
+test preferences::tests::navigation_preferences_persist_without_review_content ... ok
+test gh_prerequisite::tests::preflight_reports_the_installed_cli_version ... ok
+test gh_prerequisite::tests::available_cli_result_keeps_the_executable_path_for_follow_up_calls ... ok
+test preferences::tests::retention_cleanup_does_not_overwrite_concurrent_atomic_preference_saves ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+     Running unittests src/main.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/bodh_sequence_spike-08fda0a53953c2e1)
+
+running 20 tests
+test product::changed_file_presentation_tests::renames_show_the_new_filename_and_both_directories ... ok
+test product::changed_file_presentation_tests::deep_paths_keep_the_filename_and_directory_separate_for_two_line_rows ... ok
+test diagram_adapter::tests::changed_cues_require_an_exact_revision_path_and_line_intersection ... ok
+test diagram_adapter::tests::adapts_every_step_variant_in_declared_order_and_keeps_semantic_links ... ok
+test product::publication_recovery_ui_tests::only_confirmed_remote_objects_get_trusted_github_links ... ok
+test product::publication_recovery_ui_tests::discussion_retry_requires_settled_eligible_work_and_no_existing_retry ... ok
+test product::publication_recovery_ui_tests::recovery_states_keep_unknown_and_already_achieved_distinct ... ok
+test product::publication_recovery_ui_tests::retry_action_is_only_available_for_failed_history_without_unresolved_work ... ok
+test product::source_excerpt_for_anchor_tests::replacement_original_is_only_the_selected_line_from_a_wider_excerpt ... ok
+test product::source_switch_line_tests::patch_parser_represents_the_theme_change_as_base_and_head_rows ... ok
+test product::source_excerpt_for_anchor_tests::replacement_original_rejects_a_range_outside_the_loaded_source_identity ... ok
+test product::source_switch_line_tests::switching_a_context_line_keeps_its_corresponding_line ... ok
+test product::source_switch_line_tests::switching_an_added_line_maps_to_the_deleted_counterpart ... ok
+test product::source_switch_line_tests::switching_the_initial_hunk_preview_targets_the_changed_base_line ... ok
+test product::nested_scroll_tests::scrolling_inside_diagram_does_not_also_scroll_overview_page ... ok
+test product::keyboard_focus_tests::tab_and_shift_tab_move_focus_between_visible_controls ... ok
+test product::gh_prerequisite_tests::tilde_repository_is_expanded_before_the_pr_list_child_is_spawned ... ok
+test product::keyboard_focus_tests::home_button_activates_after_tab_focus ... ok
+test product::keyboard_focus_tests::opening_a_repository_keeps_tab_focus_in_the_pr_browser ... ok
+test product::keyboard_focus_tests::repository_pr_entry_resumes_the_saved_selection_instead_of_repreparing ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+
+     Running tests/manual_review.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/manual_review-add8e15be08533fa)
+
+running 8 tests
+test failed_save_retains_typed_text_and_success_keeps_newer_keystrokes ... ok
+test replacement_editor_restores_saved_text_and_keeps_preview_text_after_stale_save ... ok
+test restored_draft_is_clean_until_edited_and_new_draft_discard_is_local ... ok
+test split_diff_pairs_replacements_and_keeps_side_specific_context_numbers ... ok
+test stale_draft_can_be_recovered_as_a_new_copy_without_overwriting_the_winner ... ok
+test syntax_highlights_common_code_tokens_and_leaves_unknown_languages_plain ... ok
+test full_markdown_becomes_safe_readable_blocks_with_inert_html_and_links ... ok
+test unified_diff_rows_track_both_side_lines_and_distinguish_changes ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/navigation.rs (/home/kedarmd/tmp/bodh-issue-39-target/debug/deps/navigation-4d6ceeccd14c3dcf)
+
+running 6 tests
+test alternatives_share_one_conditional_frame ... ok
+test clicking_an_interaction_resolves_its_exact_immutable_source ... ok
+test long_participant_and_interaction_labels_expand_their_scene_rows ... ok
+test self_call_on_the_last_participant_stays_inside_the_scrollable_scene ... ok
+test viewport_culling_keeps_partial_rows_and_original_source_identity ... ok
+test every_visible_hit_resolves_in_order_across_conditionals_and_stress_layouts ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests bodh_sequence_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Validation passed: desktop

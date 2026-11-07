@@ -1,0 +1,29 @@
+Issue #15 discussion timeout fixture calibration — 2026-11-07
+Controlled test: tests/discussions.rs::nested_page_timeout_keeps_the_prior_page_durable
+The fixture returns a first root comment, then sleeps 3 seconds on the next nested page.
+Baseline operation deadline: 100 ms. Repeated focused-run results:
+  run 1: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.52s
+  run 2: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.49s
+  run 3: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.55s
+  run 4: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.51s
+  run 5: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.64s
+  run 6: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.97s
+  run 7: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.47s
+  run 8: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.60s
+  run 9: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.48s
+  run 10: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.52s
+
+Adjusted operation deadline: 1 second; controlled nested page still sleeps 3 seconds. Repeated focused-run results:
+  run 1: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.17s
+  run 2: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.17s
+  run 3: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.17s
+  run 4: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.18s
+  run 5: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.17s
+  run 6: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.18s
+  run 7: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.17s
+  run 8: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.17s
+  run 9: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.17s
+  run 10: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 1.17s
+
+Full discussion integration suite at 1 second: 15 passed, 0 failed (see execution record /home/kedarmd/tmp/bodh-discussions-timeout-fixed-suite.log).
+Full desktop validation on combined #39 UI + timeout fixture worktree passed; see VALIDATE-39-SPACING-FINAL-2026-11-07.log.
