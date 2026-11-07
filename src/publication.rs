@@ -12,10 +12,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    io::{Read, Write},
+    io::{self, Read, Write},
+    os::fd::AsRawFd,
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -1493,20 +1498,23 @@ fn run_gh_process(
         .map_err(|e| ProcessFailure::NotStarted(format!("Cannot start gh: {e}")))?;
     let out = child.stdout.take().expect("piped stdout");
     let err = child.stderr.take().expect("piped stderr");
-    let out_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = out.take(1_048_577).read_to_end(&mut bytes);
-        (result, bytes)
-    });
-    let err_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = err.take(65_537).read_to_end(&mut bytes);
-        (result, bytes)
-    });
+    if let Err(error) = set_nonblocking(&out).and_then(|()| set_nonblocking(&err)) {
+        kill_process_group(&mut child);
+        let _ = child.wait();
+        return Err(ProcessFailure::Uncertain(format!(
+            "Could not prepare bounded GitHub output readers: {error}"
+        )));
+    }
+    let stop_readers = Arc::new(AtomicBool::new(false));
+    let out_stop = Arc::clone(&stop_readers);
+    let err_stop = Arc::clone(&stop_readers);
+    let out_reader = std::thread::spawn(move || read_bounded_output(out, 1_048_577, out_stop));
+    let err_reader = std::thread::spawn(move || read_bounded_output(err, 65_537, err_stop));
     if let Some(input) = input
         && let Some(mut stdin) = child.stdin.take()
         && stdin.write_all(input.to_string().as_bytes()).is_err()
     {
+        stop_readers.store(true, Ordering::Release);
         kill_process_group(&mut child);
         let _ = child.wait();
         let _ = out_reader.join();
@@ -1518,6 +1526,7 @@ fn run_gh_process(
     let started = std::time::Instant::now();
     let status = loop {
         if control.check().is_err() || started.elapsed() >= timeout {
+            stop_readers.store(true, Ordering::Release);
             kill_process_group(&mut child);
             let _ = child.wait();
             let _ = out_reader.join();
@@ -1531,6 +1540,7 @@ fn run_gh_process(
             Ok(Some(status)) => break status,
             Ok(None) => std::thread::sleep(Duration::from_millis(20)),
             Err(e) => {
+                stop_readers.store(true, Ordering::Release);
                 kill_process_group(&mut child);
                 let _ = child.wait();
                 let _ = out_reader.join();
@@ -1541,12 +1551,32 @@ fn run_gh_process(
             }
         }
     };
-    let (_, stdout) = out_reader
+    while !out_reader.is_finished() || !err_reader.is_finished() {
+        if control.check().is_err() || started.elapsed() >= timeout {
+            stop_readers.store(true, Ordering::Release);
+            kill_process_group(&mut child);
+            let _ = child.wait();
+            let _ = out_reader.join();
+            let _ = err_reader.join();
+            return Err(ProcessFailure::Uncertain(
+                "Timed out or cancelled while collecting GitHub publication output; inspect remote state"
+                    .into(),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let (outcome, stdout) = out_reader
         .join()
         .map_err(|_| ProcessFailure::Uncertain("Could not read GitHub response".into()))?;
-    let (_, stderr) = err_reader
+    let (err_outcome, stderr) = err_reader
         .join()
         .map_err(|_| ProcessFailure::Uncertain("Could not read GitHub diagnostic".into()))?;
+    outcome.map_err(|error| {
+        ProcessFailure::Uncertain(format!("Could not read GitHub response: {error}"))
+    })?;
+    err_outcome.map_err(|error| {
+        ProcessFailure::Uncertain(format!("Could not read GitHub diagnostic: {error}"))
+    })?;
     if stdout.len() > 1_048_576 || stderr.len() > 65_536 {
         return Err(ProcessFailure::Uncertain(
             "GitHub response exceeded the supported size".into(),
@@ -1557,6 +1587,50 @@ fn run_gh_process(
         stdout,
         stderr,
     })
+}
+
+fn set_nonblocking<T: AsRawFd>(stream: &T) -> io::Result<()> {
+    let descriptor = stream.as_raw_fd();
+    let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(descriptor, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn read_bounded_output<R: Read>(
+    mut stream: R,
+    limit: usize,
+    stop: Arc<AtomicBool>,
+) -> (io::Result<()>, Vec<u8>) {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return (Ok(()), bytes);
+        }
+        let remaining = limit.saturating_sub(bytes.len()).min(buffer.len());
+        if remaining == 0 {
+            return (Ok(()), bytes);
+        }
+        match stream.read(&mut buffer[..remaining]) {
+            Ok(0) => return (Ok(()), bytes),
+            Ok(read) => {
+                bytes.extend_from_slice(&buffer[..read]);
+                if bytes.len() == limit {
+                    return (Ok(()), bytes);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return (Err(error), bytes),
+        }
+    }
 }
 fn kill_process_group(child: &mut std::process::Child) {
     unsafe {
@@ -1771,4 +1845,39 @@ fn now_ms() -> i64 {
 }
 fn bound(s: &str) -> String {
     s.chars().take(2048).collect()
+}
+
+#[cfg(test)]
+mod publication_process_tests {
+    use super::*;
+    use std::{os::unix::fs::PermissionsExt, time::Instant};
+
+    #[test]
+    fn output_drain_remains_bounded_after_direct_child_exits() {
+        let root = std::env::temp_dir().join(format!(
+            "bodh-publication-output-drain-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let executable = root.join("fake-gh");
+        std::fs::write(&executable, "#!/bin/sh\nsleep 5 &\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+
+        let started = Instant::now();
+        let result = run_gh_process(
+            &executable,
+            &root,
+            &[],
+            None,
+            &OperationControl::default(),
+            Duration::from_millis(200),
+        );
+
+        assert!(matches!(result, Err(ProcessFailure::Uncertain(_))));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

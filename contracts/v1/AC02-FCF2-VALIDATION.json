@@ -1,0 +1,12 @@
+{
+  "data": {
+    "context_id": "v1-4dd13471916f12029e8f5b162d671117c8d5ed751652330016e9686f0e1f6d49",
+    "diagram_count": 0,
+    "expected_generation": 0,
+    "finding_count": 1,
+    "valid": true,
+    "validation": "complete"
+  },
+  "ok": true,
+  "protocol_version": "1.0"
+}

@@ -1,0 +1,141 @@
+{
+  "schema_version": "1.0",
+  "context": {
+    "pr": {
+      "host": "github.com",
+      "owner": "kedarmd",
+      "repository": "bodh",
+      "number": 38
+    },
+    "context_id": "v1-4dd13471916f12029e8f5b162d671117c8d5ed751652330016e9686f0e1f6d49",
+    "base_sha": "7f19442b70d09214421ec3424ef7a80222e96b41",
+    "head_sha": "fcf2cba63b8dc3d99ad32b0b0e199197f232e81e",
+    "merge_base_sha": "7f19442b70d09214421ec3424ef7a80222e96b41"
+  },
+  "overview": {
+    "implementation_summary": "PR #38 integrates Bodh V1 review preparation, pinned evidence, local review state, native UI, and publication/recovery paths. This desktop-closed qualification used the prepared PR snapshot and found an unbounded wait in the GitHub review process output-drain path.",
+    "key_changes": [
+      {
+        "summary": "GitHub publication runs in a process group with piped stdout and stderr, then parses the acknowledged review response.",
+        "evidence": [
+          {
+            "source": {
+              "path": "src/publication.rs",
+              "revision": "head",
+              "start_line": 1481,
+              "end_line": 1504
+            },
+            "explanation": "The pinned implementation starts the CLI in a new process group and drains stdout/stderr on separate reader threads."
+          },
+          {
+            "source": {
+              "path": "src/publication.rs",
+              "revision": "head",
+              "start_line": 1518,
+              "end_line": 1549
+            },
+            "explanation": "The pinned implementation stops polling once the direct child exits, then joins both reader threads."
+          }
+        ]
+      }
+    ],
+    "intent_assessments": []
+  },
+  "findings": [
+    {
+      "id": "publication-output-drain-unbounded",
+      "title": "Publication can hang past its timeout while draining inherited pipes",
+      "severity": "medium",
+      "confidence": "high",
+      "summary": "The publication timeout stops being enforced after the direct `gh` process exits, before stdout and stderr reader threads are joined.",
+      "reason": "The command starts readers on piped stdout and stderr, and its polling loop enforces the timeout only while the direct child is running. If `gh` or a configured helper launches a descendant that inherits either pipe and then exits, the direct child is observed as complete but the descendant keeps the pipe open. The subsequent reader-thread join waits for EOF without a deadline, so the publication call can remain blocked indefinitely despite the configured timeout.",
+      "impact": "The Finish Review publication/reconciliation operation can hang instead of returning a confirmed, rejected, or uncertain outcome. This leaves the user unable to continue and prevents the UI from presenting its recovery state; the timeout guarantee does not cover this process-tree case.",
+      "evidence": [
+        {
+          "source": {
+            "path": "src/publication.rs",
+            "revision": "head",
+            "start_line": 1481,
+            "end_line": 1504
+          },
+          "explanation": "The CLI is spawned with piped output and each pipe reader uses read_to_end, which waits for EOF or its byte limit."
+        },
+        {
+          "source": {
+            "path": "src/publication.rs",
+            "revision": "head",
+            "start_line": 1518,
+            "end_line": 1549
+          },
+          "explanation": "The timeout loop polls only the direct child. After that child exits, both reader threads are joined with no timeout or process-group termination on the success path."
+        }
+      ],
+      "locations": [
+        {
+          "source": {
+            "path": "src/publication.rs",
+            "revision": "head",
+            "start_line": 1518,
+            "end_line": 1549
+          },
+          "primary": true
+        }
+      ],
+      "suggestions": [
+        {
+          "kind": "text_comment",
+          "id": "bound-output-drain",
+          "body": "Keep the deadline active through output collection and ensure descendants cannot keep the captured pipes open after the direct child exits (for example, terminate the process group before joining when the process contract permits, or use bounded/nonblocking pipe draining).",
+          "source": {
+            "path": "src/publication.rs",
+            "revision": "head",
+            "start_line": 1518,
+            "end_line": 1549
+          }
+        }
+      ],
+      "related_thread_ids": []
+    }
+  ],
+  "diagrams": [],
+  "follow_up": [],
+  "coverage": {
+    "examined_areas": [
+      "Prepared PR identity, pinned base/head/context, complete changed-file listing, PR description, complete discussion acquisition (zero threads), and previous-result availability.",
+      "GitHub review publication process lifecycle, timeout handling, captured stdout/stderr draining, and existing timeout test coverage.",
+      "Current integrated desktop validation evidence and recent changes since the previously recorded full Standards and Spec reviews."
+    ],
+    "checks": [
+      {
+        "name": "CARGO_BUILD_JOBS=2 ./scripts/validate desktop",
+        "status": "passed",
+        "details": "The complete local desktop runner passed on the current source snapshot; raw output is contracts/v1/VALIDATE-GH-PREFLIGHT-TIMEOUT-DETERMINISTIC-FINAL-2026-11-07.log."
+      },
+      {
+        "name": "GitHub workflow validation",
+        "status": "passed",
+        "details": "Current PR head fcf2cba has successful hosted push and pull-request workflows, runs 42328749959 and 42328753745; both core and Ubuntu desktop jobs completed successfully."
+      },
+      {
+        "name": "Bodh prepared-review validation",
+        "status": "not_run",
+        "details": "Candidate validation has not yet been run against this preparation."
+      }
+    ],
+    "excluded_areas": [
+      {
+        "area": "Native GUI workflow and further user interaction",
+        "reason": "The desktop was closed for this review; prior GUI observations are recorded separately and no new GUI was opened."
+      },
+      {
+        "area": "GitHub review publication or any remote mutation",
+        "reason": "No review/comment, approval, merge, or other publication operation was attempted."
+      }
+    ],
+    "limitations": [
+      "PR #38 is a 420-file integration and this candidate concentrates on the process timeout lifecycle and recent code-only changes; the earlier broad Standards and Spec reviews and current full local/hosted validation are supporting context, not a guarantee against every integration defect.",
+      "Discussions were acquired completely and contained zero threads; no prior generated result or protected local drafts existed in the isolated review database.",
+      "The inherited-pipe case is established from the process and reader lifecycle; it was not reproduced through a live GitHub operation."
+    ]
+  }
+}
