@@ -1709,54 +1709,56 @@ pub fn inspect_remote_review_with_gh(
     gh: &Path,
     control: &OperationControl,
 ) -> Result<RemoteReviewState, ContractError> {
-    let number = binding.context.pr.number.to_string();
-    let args = [
-        "pr",
-        "view",
-        number.as_str(),
-        "--json",
-        "id,headRefOid,baseRefOid,state,viewerPermission",
-    ];
-    let output = run_gh_process(
+    let query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){viewerPermission pullRequest(number:$number){id headRefOid baseRefOid state}}}";
+    let value = crate::discussion_acquisition::gh_graphql(
         gh,
-        Path::new(&binding.checkout),
-        &args,
-        None,
+        query,
+        crate::discussion_acquisition::GraphQlScope {
+            host: &binding.context.pr.host,
+            owner: &binding.context.pr.owner,
+            repository: &binding.context.pr.repository,
+            number: binding.context.pr.number,
+            thread_id: None,
+            after: None,
+        },
         control,
-        Duration::from_secs(15),
-    )
-    .map_err(|e| match e {
-        ProcessFailure::NotStarted(message) => ContractError::new("GH_UNAVAILABLE", &message, ""),
-        ProcessFailure::Uncertain(message) => ContractError::new("NETWORK_UNCERTAIN", &message, ""),
-    })?;
-    if !output.status.success() {
-        return Err(ContractError::new(
-            "GH_PREFLIGHT_FAILED",
-            &String::from_utf8_lossy(&output.stderr)
-                .chars()
-                .take(2048)
-                .collect::<String>(),
-            "",
-        ));
-    }
-    let value: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-        ContractError::new(
-            "GH_RESPONSE_INVALID",
-            "GitHub PR preflight returned invalid JSON",
-            "",
-        )
-    })?;
+    )?;
+    let repository = value
+        .get("data")
+        .and_then(|data| data.get("repository"))
+        .filter(|repository| !repository.is_null())
+        .ok_or_else(|| {
+            ContractError::new(
+                "GH_RESPONSE_INVALID",
+                "GitHub PR preflight omitted the repository",
+                "",
+            )
+        })?;
+    let value = repository
+        .get("pullRequest")
+        .filter(|pull_request| !pull_request.is_null())
+        .ok_or_else(|| {
+            ContractError::new(
+                "GH_RESPONSE_INVALID",
+                "GitHub PR preflight omitted the requested pull request",
+                "",
+            )
+        })?;
     let get = |key| value.get(key).and_then(Value::as_str).map(str::to_owned);
     let state = get("state").ok_or_else(|| {
         ContractError::new("GH_RESPONSE_INVALID", "PR preflight omitted state", "")
     })?;
-    let permission = get("viewerPermission").ok_or_else(|| {
-        ContractError::new(
-            "GH_RESPONSE_INVALID",
-            "PR preflight omitted viewer permission",
-            "",
-        )
-    })?;
+    let permission = repository
+        .get("viewerPermission")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            ContractError::new(
+                "GH_RESPONSE_INVALID",
+                "PR preflight omitted viewer permission",
+                "",
+            )
+        })?;
     let head_sha = get("headRefOid").ok_or_else(|| {
         ContractError::new("GH_RESPONSE_INVALID", "PR preflight omitted head SHA", "")
     })?;

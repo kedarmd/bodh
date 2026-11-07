@@ -701,7 +701,7 @@ fn rejection_is_definitive_but_timeout_after_request_is_unknown_and_not_retryabl
 }
 
 #[test]
-fn remote_preflight_uses_json_fields_and_retains_current_permission_observation() {
+fn remote_preflight_uses_graphql_and_retains_current_permission_observation() {
     let f = Fixture::new();
     let binding = PreparationStore::open(&f.state)
         .unwrap()
@@ -709,7 +709,7 @@ fn remote_preflight_uses_json_fields_and_retains_current_permission_observation(
         .unwrap();
     let fake = fake_gh(
         &f.root.join("preflight-gh"),
-        "printf '%s' '{\"id\":\"PR_node\",\"headRefOid\":\"head\",\"baseRefOid\":\"base\",\"state\":\"OPEN\",\"viewerPermission\":\"WRITE\"}'",
+        "printf '%s' '{\"data\":{\"repository\":{\"viewerPermission\":\"WRITE\",\"pullRequest\":{\"id\":\"PR_node\",\"headRefOid\":\"head\",\"baseRefOid\":\"base\",\"state\":\"OPEN\"}}}}'",
     );
     let remote =
         bodh::inspect_remote_review_with_gh(&binding, &fake, &OperationControl::default()).unwrap();

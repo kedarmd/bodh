@@ -15,7 +15,7 @@ fn lost_reply_acknowledgment_stays_unknown_after_reply_permission_is_lost() {
     let (root, state, preparation_id, head, base) = fixture();
     let calls = root.join("gh-calls");
     let script = r#"case "$*" in
-  *viewerPermission*) printf '%s' '{"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"HEAD_SHA","baseRefOid":"BASE_SHA","viewerPermission":"READ"}}}}' ;;
+  *headRefOid*) printf '%s' '{"data":{"repository":{"pullRequest":{"state":"OPEN","headRefOid":"HEAD_SHA","baseRefOid":"BASE_SHA"}}}}' ;;
   *viewerCanReply*) printf '%s' '{"data":{"node":{"id":"thread-1","isResolved":false,"viewerCanReply":false,"viewerCanResolve":false,"viewerCanUnresolve":false}}}' ;;
   *comments\(first:100\)*) printf '%s' '{"data":{"viewer":{"login":"reviewer"},"node":{"comments":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":456,"body":"exact reply","createdAt":"2026-11-06T00:00:00Z","author":{"login":"reviewer"},"replyTo":{"databaseId":123}}]}}}' ;;
   *) echo 'unexpected query' >&2; exit 2 ;;
@@ -269,7 +269,7 @@ fn reader_fixture(
     std::fs::write(&thread_path, serde_json::to_vec(&thread).unwrap()).unwrap();
     std::fs::write(&comments_path, serde_json::to_vec(&comments).unwrap()).unwrap();
     let script = format!(
-        "case \"$*\" in\n  *viewerPermission*) cat '{}' ;;\n  *viewerCanReply*) cat '{}' ;;\n  *comments*) cat '{}' ;;\n  *) echo 'unexpected query' >&2; exit 2 ;;\nesac",
+        "case \"$*\" in\n  *headRefOid*) cat '{}' ;;\n  *viewerCanReply*) cat '{}' ;;\n  *comments*) cat '{}' ;;\n  *) echo 'unexpected query' >&2; exit 2 ;;\nesac",
         pr_path.display(),
         thread_path.display(),
         comments_path.display()

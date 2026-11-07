@@ -49,7 +49,7 @@ fn fake_gh(root: &Path, reply_allowed: bool, resolve_allowed: bool) -> PathBuf {
     let body = format!(
         r#"#!/bin/sh
 case "$*" in
-  *node\(id:*) printf '%s' '{{"data":{{"node":{{"comments":{{"totalCount":1,"pageInfo":{{"hasNextPage":false,"endCursor":"c1"}},"nodes":[{{"id":"comment-root","body":"root text","replyTo":null}}]}}}}}}}}' ;;
+  *node\(id:*) printf '%s' '{{"data":{{"node":{{"comments":{{"totalCount":1,"pageInfo":{{"hasNextPage":false,"endCursor":"c1"}},"nodes":[{{"id":"comment-root","databaseId":"101","body":"root text","replyTo":null}}]}}}}}}}}' ;;
   *) printf '%s' '{{"data":{{"repository":{{"pullRequest":{{"reviewThreads":{{"totalCount":1,"pageInfo":{{"hasNextPage":false,"endCursor":"t1"}},"nodes":[{{"id":"thread-1","path":"src/lib.rs","line":12,"originalLine":8,"diffSide":"RIGHT","isResolved":false,"isOutdated":false,"viewerCanReply":{},"viewerCanResolve":{},"viewerCanUnresolve":true,"comments":{{"totalCount":1}}}}]}}}}}}}}}}' ;;
 esac
 "#,
@@ -317,7 +317,9 @@ fn stale_revision_and_remote_permission_loss_reject_without_mutating_pending_wor
 #[test]
 fn cli_reply_and_action_commands_return_revision_checked_json_without_remote_writes() {
     let (_root, state, prep) = populated();
-    let input = serde_json::json!({"thread_id":"thread-1","root_comment_id":"comment-root","body":"CLI local reply","expected_workspace_revision":0,"expected_draft_revision":0});
+    // Live observations have GraphQL node IDs, while reply publication uses
+    // GitHub's numeric REST comment ID. The numeric ID must validate too.
+    let input = serde_json::json!({"thread_id":"thread-1","root_comment_id":"101","body":"CLI local reply","expected_workspace_revision":0,"expected_draft_revision":0});
     let reply = invoke_cli(&prep, &state, "reply-save", &input);
     assert!(
         reply.status.success(),
@@ -326,7 +328,7 @@ fn cli_reply_and_action_commands_return_revision_checked_json_without_remote_wri
     );
     let envelope: serde_json::Value = serde_json::from_slice(&reply.stdout).unwrap();
     assert_eq!(envelope["ok"], true);
-    assert_eq!(envelope["data"]["reply"]["root_comment_id"], "comment-root");
+    assert_eq!(envelope["data"]["reply"]["root_comment_id"], "101");
     let input = serde_json::json!({"thread_id":"thread-1","action":"resolve","expected_workspace_revision":1,"expected_draft_revision":0});
     let action = invoke_cli(&prep, &state, "thread-action-stage", &input);
     assert!(

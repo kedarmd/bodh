@@ -1878,7 +1878,17 @@ fn root_comment_exists(thread: &serde_json::Value, root_id: &str) -> bool {
         .as_array()
         .into_iter()
         .flatten()
-        .any(|comment| comment["id"].as_str() == Some(root_id) && comment["replyTo"].is_null())
+        .any(|comment| {
+            // Discussion observations expose GraphQL node IDs as `id` and
+            // GitHub REST comment IDs as `databaseId`. Reply publication uses
+            // the latter, so validate the identifier the publisher consumes.
+            (comment["databaseId"].as_str() == Some(root_id)
+                || comment["databaseId"]
+                    .as_u64()
+                    .is_some_and(|id| id.to_string() == root_id)
+                || comment["id"].as_str() == Some(root_id))
+                && comment["replyTo"].is_null()
+        })
 }
 
 fn repaired_draft_id(

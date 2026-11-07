@@ -142,7 +142,7 @@ impl DiscussionPublisher for GhDiscussionPublisher {
         control: &OperationControl,
     ) -> Result<ThreadState, ContractError> {
         let binding = PreparationStore::open(&self.state)?.load(preparation_id)?;
-        let pr_query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state headRefOid baseRefOid viewerPermission}}}";
+        let pr_query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state headRefOid baseRefOid}}}";
         let scope = crate::discussion_acquisition::GraphQlScope {
             host: &binding.context.pr.host,
             owner: &binding.context.pr.owner,
