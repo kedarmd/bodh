@@ -7951,7 +7951,7 @@ impl Product {
                                 .h(px(48.))
                                 .min_h(px(48.))
                                 .w_full()
-                                .px_2()
+                                .px_3()
                                 .flex()
                                 .flex_col()
                                 .justify_center()
@@ -8044,7 +8044,7 @@ impl Product {
             .p_2()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap_0()
             .child(section_title("Changed files", p))
             .child(
                 div()
