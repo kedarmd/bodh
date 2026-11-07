@@ -17,4 +17,4 @@
 
 ## Remaining acceptance evidence
 
-The screenshots and user feedback confirm the native layout. A direct observed interaction of both **Confirm proposed relocation** and **reattach here** has not yet been recorded. The GitHub freshness action/banner fix has also not yet been directly checked in the live Changes workspace. Keep these explicit review items open until observed; do not treat build/test success as a substitute for those GUI interactions.
+The screenshots and user feedback confirm the native layout. The 2026-11-07 AC-07 isolated GUI replay directly observed the stale-head banner, the **Load Latest** warning that pending work stays on the current review, and that the old preparation's two local drafts remain attached to its old head after switching. It did not yet reach **Confirm proposed relocation** or **reattach here** in the native UI; those interactions remain open. The freshness observation used a copied local database and is not evidence of an external GitHub write.
